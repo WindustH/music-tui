@@ -29,7 +29,7 @@ wins over pane bindings in every view.
 | `j`/`k`, `up`/`down` | move selection |
 | `pgup`/`pgdn` | page up / down |
 | `home` / `G`/`end` | top / end |
-| `g` or `c` | jump to the currently playing song |
+| `g` `c` | jump to the currently playing song |
 | `enter` | play selected song |
 | `d` | remove selected song |
 | `D` | clear the queue |
