@@ -32,3 +32,20 @@ refreshes automatically after the write.
 
 Editing targets the song shown in the pane — the current song in a metadata
 pane, the detailed song in the detail view.
+
+### Multiple tag blocks
+
+Some files carry more than one tag block — most commonly WAV files with a
+legacy RIFF INFO block (single-byte encodings like GBK) next to an ID3v2
+block. MPD merges every block it can read and replaces undecodable bytes
+with `?`, so such files show up with `???` labels even though a clean
+value exists. music-tui:
+
+- always prefers the value without `?` when several are reported,
+- falls back to reading the file's tags directly (lofty) when every
+  reported value is suspect,
+- lists every tag block in the metadata pane (extra blocks appear with a
+  `riff Title:`-style prefix) so the corruption is visible,
+- writes edits to **every** tag block in the file, so whichever block MPD
+  prefers carries the corrected values. After a write, run `:update` if
+  MPD's database does not refresh on its own.

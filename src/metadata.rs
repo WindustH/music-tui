@@ -49,18 +49,47 @@ pub fn read_metadata(path: &Path) -> Result<Vec<MetadataEntry>, String> {
     push_file_entry(&mut entries, "bit depth", format!("{bits} bits"));
   }
 
-  let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-  match tag {
-    Some(tag) => {
-      for name in EDITABLE_TAGS {
-        let value = read_tag_value(tag, name).unwrap_or_default();
+  // Files can carry several tag blocks (e.g. WAV with a GBK RIFF INFO
+  // next to a clean ID3v2). The primary block becomes the editable
+  // `[metadata]` draft surface (group "tag"); every extra block is listed
+  // with a source prefix so corrupted duplicates are visible and —
+  // because writes hit every block — correctable.
+  let primary_type = tagged.primary_tag().map(|tag| tag.tag_type());
+  let mut blocks: Vec<&lofty::tag::Tag> = tagged.tags().iter().collect();
+  blocks.sort_by_key(|tag| Some(tag.tag_type()) != primary_type);
+  if blocks.is_empty() {
+    push_tag_entry(&mut entries, "Tags", "no tags".to_string());
+  }
+  for tag in blocks {
+    let is_primary = Some(tag.tag_type()) == primary_type;
+    for name in EDITABLE_TAGS {
+      let Some(value) = read_tag_value(tag, name) else {
+        continue;
+      };
+      if is_primary {
         push_tag_entry(&mut entries, name, value);
+      } else {
+        let label = tag_block_label(tag.tag_type());
+        entries.push(MetadataEntry {
+          group: format!("tag/{label}"),
+          name: format!("{label} {name}"),
+          value,
+        });
       }
     }
-    None => push_tag_entry(&mut entries, "Tags", "no tags".to_string()),
   }
 
   Ok(entries)
+}
+
+/// Short human label for a non-primary tag block.
+fn tag_block_label(tag_type: lofty::tag::TagType) -> String {
+  let debug = format!("{tag_type:?}").to_lowercase();
+  match debug.as_str() {
+    "riffinfo" => "riff".to_string(),
+    "vorbiscomments" => "vorbis".to_string(),
+    other => other.to_string(),
+  }
 }
 
 fn push_file_entry(entries: &mut Vec<MetadataEntry>, name: &str, value: String) {
@@ -150,32 +179,35 @@ pub fn metadata_changes(entries: &[MetadataEntry], edited: &str) -> Result<Vec<M
   Ok(changes)
 }
 
-/// Apply changes to the file's primary tag.
+/// Apply changes to every tag block in the file, so whichever block a
+/// reader (MPD) prefers carries the corrected values. Saving persists all
+/// blocks at once.
 pub fn write_metadata(path: &Path, changes: &[MetadataChange]) -> Result<usize, String> {
   if changes.is_empty() {
     return Ok(0);
   }
   let mut tagged = read_from_path(path).map_err(|error| format!("failed to read tags: {error}"))?;
-  let primary_type = tagged.primary_tag().map(|tag| tag.tag_type());
-
-  let edited = {
-    let tag = match tagged.primary_tag_mut() {
-      Some(tag) => tag,
-      None => {
-        let tag_type = primary_type
-          .unwrap_or_else(|| tagged.file_type().primary_tag_type());
-        tagged.insert_tag(lofty::tag::Tag::new(tag_type));
-        tagged.primary_tag_mut().expect("tag just inserted")
-      }
+  if tagged.tags().is_empty() {
+    let tag_type = tagged.file_type().primary_tag_type();
+    tagged.insert_tag(lofty::tag::Tag::new(tag_type));
+  }
+  let block_types: Vec<lofty::tag::TagType> = tagged.tags().iter().map(|tag| tag.tag_type()).collect();
+  for tag_type in block_types {
+    let Some(tag) = tagged.tag_mut(tag_type) else {
+      continue;
     };
     for change in changes {
       write_tag_value(tag, &change.tag, &change.new_value);
     }
-    tag.clone()
-  };
+  }
 
-  edited
-    .save_to_path(path, lofty::config::WriteOptions::default())
+  let mut file = std::fs::OpenOptions::new()
+    .read(true)
+    .write(true)
+    .open(path)
+    .map_err(|error| format!("failed to open file for writing: {error}"))?;
+  tagged
+    .save_to(&mut file, lofty::config::WriteOptions::default())
     .map_err(|error| format!("failed to write tags: {error}"))?;
   Ok(changes.len())
 }

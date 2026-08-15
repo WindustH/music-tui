@@ -18,13 +18,33 @@ fn looks_corrupted(value: &str) -> bool {
   value.contains('?') && !value.chars().any(char::is_alphanumeric)
 }
 
-/// Pick the first clean value, falling back to the first raw one.
+/// True for values likely produced by replacing non-UTF-8 bytes with `?`:
+/// a run of consecutive `?` (multi-byte encodings map one character to
+/// several `?`) or a fully corrupted value. Genuine titles like
+/// `Is This It?` still pass.
+fn looks_suspect(value: &str) -> bool {
+  value.contains("??") || looks_corrupted(value)
+}
+
+/// Pick the best value: prefer one without any `?`, then one that is not
+/// fully corrupted, then the first non-empty one.
 fn clean_value(values: &[String]) -> Option<&str> {
-  values
+  let non_empty: Vec<&str> = values
     .iter()
     .map(|value| value.trim())
-    .find(|value| !value.is_empty() && !looks_corrupted(value))
-    .or_else(|| values.first().map(|value| value.trim()))
+    .filter(|value| !value.is_empty())
+    .collect();
+  non_empty
+    .iter()
+    .copied()
+    .find(|value| !looks_suspect(value))
+    .or_else(|| {
+      non_empty
+        .iter()
+        .copied()
+        .find(|value| !looks_corrupted(value))
+    })
+    .or_else(|| non_empty.first().copied())
 }
 
 /// The best available title for `song` (skips `?`-corrupted duplicates).
@@ -46,13 +66,13 @@ fn queue_label(song: &Song) -> String {
   }
 }
 
-/// True when a lofty re-read could improve on the tags MPD reported: every
-/// title or artist value is corrupted/empty.
+/// True when a lofty re-read could improve on the tags MPD reported: no
+/// title or artist value is free of `?` (all suspect or empty).
 fn needs_fallback(titles: Option<&Vec<String>>, artists: Option<&Vec<String>>) -> bool {
   let bad = |values: Option<&Vec<String>>| match values {
     Some(values) => values
       .iter()
-      .all(|value| value.trim().is_empty() || looks_corrupted(value)),
+      .all(|value| value.trim().is_empty() || looks_suspect(value)),
     None => false, // missing tag: nothing better to read
   };
   bad(titles) || bad(artists)
@@ -122,21 +142,25 @@ impl App {
   }
 }
 
-/// Read title/artist straight from the file's tags with lofty.
+/// Read title/artist straight from the file's tags with lofty, searching
+/// every tag block (primary first): files can carry a corrupted legacy
+/// block (e.g. GBK RIFF INFO) next to a clean one (ID3v2).
 fn read_labels(path: &Path) -> (Option<String>, Option<String>) {
   let Ok(tagged) = lofty::read_from_path(path) else {
     return (None, None);
   };
-  let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-  let title = tag
-    .and_then(|tag| tag.title())
-    .map(|value| value.into_owned())
-    .filter(|value| !looks_corrupted(value));
-  let artist = tag
-    .and_then(|tag| tag.artist())
-    .map(|value| value.into_owned())
-    .filter(|value| !looks_corrupted(value));
-  (title, artist)
+  let primary_type = tagged.primary_tag().map(|tag| tag.tag_type());
+  let mut blocks: Vec<&lofty::tag::Tag> = tagged.tags().iter().collect();
+  blocks.sort_by_key(|tag| Some(tag.tag_type()) != primary_type);
+  let pick =
+    |read: fn(&lofty::tag::Tag) -> Option<std::borrow::Cow<'_, str>>| -> Option<String> {
+      blocks
+        .iter()
+        .flat_map(|tag| read(tag))
+        .find(|value| !looks_suspect(value) && !value.trim().is_empty())
+        .map(|value| value.into_owned())
+    };
+  (pick(|tag| tag.title()), pick(|tag| tag.artist()))
 }
 
 #[cfg(test)]
@@ -159,6 +183,14 @@ mod tests {
   }
 
   #[test]
+  fn clean_value_skips_partially_corrupted() {
+    // `???, Lara???` mixes corruption with kept ASCII words — it must
+    // lose against the fully clean duplicate from the other tag block.
+    let values = vec!["???, Lara???".to_string(), "周杰伦 / Lara梁心颐".to_string()];
+    assert_eq!(clean_value(&values), Some("周杰伦 / Lara梁心颐"));
+  }
+
+  #[test]
   fn clean_value_falls_back_to_first() {
     let values = vec!["?????".to_string()];
     assert_eq!(clean_value(&values), Some("?????"));
@@ -167,10 +199,13 @@ mod tests {
   #[test]
   fn all_corrupted_requests_fallback() {
     let titles = vec!["?????".to_string()];
-    let artists = vec!["???".to_string()];
+    let artists = vec!["???, Lara???".to_string()];
     assert!(needs_fallback(Some(&titles), Some(&artists)));
     let good = vec!["Is This It?".to_string()];
     assert!(!needs_fallback(Some(&good), None));
     assert!(!needs_fallback(None, None));
+    // A clean duplicate anywhere keeps MPD's copy usable.
+    let mixed = vec!["???".to_string(), "珊瑚海".to_string()];
+    assert!(!needs_fallback(Some(&mixed), None));
   }
 }
