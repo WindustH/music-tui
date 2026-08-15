@@ -51,6 +51,7 @@ impl Default for KeymapConfig {
           key("pgup", "queue_page_up", "Move selection one page up"),
           key("pageup", "queue_page_up", "Move selection one page up"),
           key(["g", "c"], "queue_goto_playing", "Jump to the currently playing song"),
+          key(["g", "g"], "queue_top", "Move selection to top"),
           key("home", "queue_top", "Move selection to top"),
           key("G", "queue_end", "Move selection to end"),
           key("end", "queue_end", "Move selection to end"),
