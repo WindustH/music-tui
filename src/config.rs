@@ -598,11 +598,10 @@ fn toml_field_key(line: &str) -> Option<&str> {
 
 /// Expand a leading `~` in a path using $HOME.
 pub fn expand_home(path: &str) -> PathBuf {
-  if let Some(rest) = path.strip_prefix("~/") {
-    if let Some(home) = env_path("HOME") {
+  if let Some(rest) = path.strip_prefix("~/")
+    && let Some(home) = env_path("HOME") {
       return home.join(rest);
     }
-  }
   PathBuf::from(path)
 }
 

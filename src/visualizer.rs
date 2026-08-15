@@ -164,8 +164,8 @@ fn compute_spectrum(
     let start_bin = ((start / nyquist) * bins as f32).floor().max(1.0) as usize;
     let end_bin = (((end / nyquist) * bins as f32).ceil() as usize).clamp(start_bin + 1, bins);
     let mut peak = 0.0f32;
-    for bin in start_bin..end_bin {
-      let magnitude = buffer[bin].norm() * 2.0 / window as f32;
+    for sample in &buffer[start_bin..end_bin] {
+      let magnitude = sample.norm() * 2.0 / window as f32;
       peak = peak.max(magnitude);
     }
     let db = 20.0 * (peak + 1e-7).log10();

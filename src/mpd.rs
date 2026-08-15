@@ -323,9 +323,9 @@ async fn run_command(client: &Client, command: MpdCommand) {
       .map_err(|error| error.to_string()),
     MpdCommand::NudgeSeek(delta) => {
       let mode = if delta >= 0 {
-        SeekMode::Forward(Duration::from_secs(delta.unsigned_abs() as u64))
+        SeekMode::Forward(Duration::from_secs(delta.unsigned_abs()))
       } else {
-        SeekMode::Backward(Duration::from_secs(delta.unsigned_abs() as u64))
+        SeekMode::Backward(Duration::from_secs(delta.unsigned_abs()))
       };
       client
         .command(Seek(mode))

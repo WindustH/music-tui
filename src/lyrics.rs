@@ -104,11 +104,10 @@ pub fn load(
   artist: Option<&str>,
   title: Option<&str>,
 ) -> Result<Lyrics, String> {
-  if let Some(path) = sibling_lrc_path(file) {
-    if let Ok(body) = std::fs::read_to_string(&path) {
+  if let Some(path) = sibling_lrc_path(file)
+    && let Ok(body) = std::fs::read_to_string(&path) {
       return parse(&body);
     }
-  }
 
   let song_stem = file
     .file_stem()
@@ -134,11 +133,10 @@ pub fn load(
   let tagged = read_from_path(file).map_err(|error| format!("failed to read tags: {error}"))?;
   if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
     for key in [ItemKey::Lyrics] {
-      if let Some(body) = tag.get_string(&key) {
-        if !body.trim().is_empty() {
+      if let Some(body) = tag.get_string(&key)
+        && !body.trim().is_empty() {
           return parse(body);
         }
-      }
     }
   }
 

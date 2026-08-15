@@ -14,6 +14,7 @@ pub const STATE_FILE: &str = "state.toml";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct PersistedState {
   /// Active tab index (clamped to the configured tabs on restore).
   pub tab: usize,
@@ -23,15 +24,6 @@ pub struct PersistedState {
   pub queue_selected: Option<usize>,
 }
 
-impl Default for PersistedState {
-  fn default() -> Self {
-    Self {
-      tab: 0,
-      lyrics_follow: None,
-      queue_selected: None,
-    }
-  }
-}
 
 impl PersistedState {
   pub fn load(cache_dir: &Path) -> Self {
