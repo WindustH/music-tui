@@ -4,14 +4,27 @@ use super::*;
 
 impl App {
   pub(crate) fn request_metadata_editor(&mut self) {
-    // In the detail view the editor targets the detailed song; everywhere
-    // else it targets the playing song.
+    // Editor target: the detailed song in the detail view, the selected
+    // queue row when the queue is focused, otherwise the playing song.
     let (url, path, entries) = if let Some(detail) = self.detail.as_ref() {
       (
         detail.url.clone(),
         detail.path.clone(),
         detail.metadata.clone(),
       )
+    } else if self.main_pane() == PaneKind::Queue
+      && let Some(position) = self
+        .queue_state
+        .selected()
+        .and_then(|row| self.filtered_position(row))
+      && let Some(song) = self.queue.get(position)
+    {
+      let url = song.song.url.to_string();
+      let Some(path) = self.song_path(&url) else {
+        self.set_message("song is not under music_dir");
+        return;
+      };
+      (url, path, None)
     } else {
       let Some(url) = self.current_song_url() else {
         self.set_message("nothing is playing");

@@ -41,11 +41,10 @@ block. MPD merges every block it can read and replaces undecodable bytes
 with `?`, so such files show up with `???` labels even though a clean
 value exists. music-tui:
 
-- always prefers the value without `?` when several are reported,
-- falls back to reading the file's tags directly (lofty) when every
-  reported value is suspect,
 - lists every tag block in the metadata pane (extra blocks appear with a
-  `riff Title:`-style prefix) so the corruption is visible,
+  `riff Title:`-style prefix) so duplicated or corrupted values are
+  visible,
 - writes edits to **every** tag block in the file, so whichever block MPD
-  prefers carries the corrected values. After a write, run `:update` if
-  MPD's database does not refresh on its own.
+  prefers carries the corrected values,
+- asks MPD to update the file's database entry right after a successful
+  write, so the queue picks up the fixed tags without a manual `:update`.

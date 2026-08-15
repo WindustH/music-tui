@@ -40,11 +40,7 @@ impl App {
           self.on_song_changed();
         }
         self.sync_hover_view();
-        self.scan_queue_labels();
         true
-      }
-      MpdEvent::TagFallback { url, title, artist } => {
-        self.apply_tag_fallback(&url, title, artist)
       }
     }
   }

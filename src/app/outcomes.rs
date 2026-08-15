@@ -108,7 +108,12 @@ impl App {
         {
           hover.metadata = None;
           let path = hover.path.clone();
-          self.spawn_metadata_read(outcome.song_url, path);
+          self.spawn_metadata_read(outcome.song_url.clone(), path);
+        }
+        // Ask MPD to re-read the file so its database (and the queue
+        // labels) pick up the corrected tags without a manual :update.
+        if !outcome.song_url.starts_with("file://") {
+          self.mpdc(MpdCommand::UpdateUri(outcome.song_url));
         }
         true
       }

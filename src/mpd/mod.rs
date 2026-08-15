@@ -56,6 +56,8 @@ pub enum MpdCommand {
   DeleteAt(usize),
   AddUri(String),
   Rescan,
+  /// Incremental database update for one URI (used after tag writes).
+  UpdateUri(String),
   ArmInterrupt(InterruptSession),
 }
 

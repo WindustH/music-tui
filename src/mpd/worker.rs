@@ -226,6 +226,10 @@ async fn run_command(client: &Client, command: MpdCommand) {
       .command(commands::Rescan::new())
       .await
       .map(|_| ()).map_err(|error| error.to_string()),
+    MpdCommand::UpdateUri(uri) => client
+      .command(commands::Update::new().uri(&uri))
+      .await
+      .map(|_| ()).map_err(|error| error.to_string()),
     MpdCommand::ArmInterrupt(_) => Ok(()),
   };
   if let Err(error) = outcome {

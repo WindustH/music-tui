@@ -34,6 +34,7 @@ wins over pane bindings in every view.
 | `d` | remove selected song |
 | `D` | clear the queue |
 | `i` | open detail view for the selected song |
+| `e` | edit the selected song's tags in `$EDITOR` |
 | `/` | filter the queue (enter keeps, `esc` clears) |
 
 ## Lyrics pane

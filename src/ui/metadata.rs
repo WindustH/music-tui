@@ -9,7 +9,7 @@ pub(super) fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, s
   }
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Metadata;
-  let title = if is_main { "metadata (e edit)" } else { "metadata" };
+  let title = "metadata";
   let block = pane_block(app, title, is_main);
   let inner = block.inner(area);
   frame.render_widget(block, area);
