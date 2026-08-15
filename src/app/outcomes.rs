@@ -173,7 +173,43 @@ impl App {
 
   pub fn handle_spectrum(&mut self, bars: Vec<u8>) -> bool {
     self.spectrum = bars;
+    self.request_visualizer_frame();
     self.tab_contains(PaneKind::Visualizer)
+  }
+
+  pub fn handle_visualizer_frame(&mut self, lines: Vec<ratatui::text::Line<'static>>) -> bool {
+    self.visualizer_lines = Some(lines);
+    self.tab_contains(PaneKind::Visualizer)
+  }
+
+  /// Record the visualizer pane size observed while drawing; a change
+  /// re-renders the band lines off-thread.
+  pub(crate) fn note_visualizer_geometry(&mut self, width: u16, height: u16) {
+    if self.visualizer_geometry != Some((width, height)) {
+      self.visualizer_geometry = Some((width, height));
+      self.request_visualizer_frame();
+    }
+  }
+
+  /// Hand the latest spectrum to the band-render worker (no-op while the
+  /// pane has no size or no data yet).
+  pub(crate) fn request_visualizer_frame(&mut self) {
+    let Some(renderer) = self.visualizer_renderer.as_ref() else {
+      return;
+    };
+    let Some((width, height)) = self.visualizer_geometry else {
+      return;
+    };
+    if self.spectrum.is_empty() {
+      return;
+    }
+    let theme = &self.settings.theme;
+    let colors = crate::visualizer::VisualizerColors {
+      low: theme.color(&theme.visualizer_low),
+      mid: theme.color(&theme.visualizer_mid),
+      high: theme.color(&theme.visualizer_high),
+    };
+    renderer.render(width, height, self.spectrum.clone(), colors);
   }
 
   pub fn handle_tick(&mut self) -> bool {

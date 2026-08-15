@@ -118,6 +118,12 @@ pub struct App {
   pub(crate) detail_layout: PaneLayout,
   /// Visualizer worker handle (reports pane width for band allocation).
   pub(crate) visualizer: Option<crate::visualizer::VisualizerHandle>,
+  /// Off-thread band renderer; layout + styled lines happen on a worker.
+  pub(crate) visualizer_renderer: Option<crate::visualizer::BandRendererHandle>,
+  /// Last visualizer pane size seen while drawing.
+  pub(crate) visualizer_geometry: Option<(u16, u16)>,
+  /// Latest precomputed visualizer lines ready to blit.
+  pub(crate) visualizer_lines: Option<Vec<ratatui::text::Line<'static>>>,
   /// Scroll position of the f1 key-help dialog.
   pub help_scroll: usize,
   /// Maximum scroll of the key-help dialog, updated at draw time.
@@ -218,6 +224,9 @@ impl App {
       tag_fallbacks_done: HashSet::new(),
       has_hover_panes: false,
       visualizer: None,
+      visualizer_renderer: None,
+      visualizer_geometry: None,
+      visualizer_lines: None,
       help_scroll: 0,
       max_help_scroll: 0,
       lyrics_pane_areas: Vec::new(),

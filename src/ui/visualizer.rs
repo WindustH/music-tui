@@ -1,12 +1,11 @@
-//! Spectrum visualizer pane rendering: the analysis band count follows the
-//! pane width (one band per column, capped by `visualizer.bars`); wider
-//! panes give every band an equal-width strip, with the remainder spread
-//! as gaps so the full width is used.
+//! Spectrum visualizer pane rendering: the heavy work (band layout and
+//! styled-line construction) happens on the band-render worker thread; the
+//! UI thread only records the pane geometry and blits the precomputed
+//! lines cell by cell (no per-frame allocation).
 
 use super::*;
 
 pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect) {
-  let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Visualizer;
   let block = pane_block(app, "visualizer", is_main);
   let inner = block.inner(area);
@@ -15,87 +14,44 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
     return;
   }
 
-  // Keep the analysis band count in sync with the pane width.
+  // Keep the analysis band count in sync with the pane width, and let the
+  // app re-render the band lines off-thread when the geometry changes.
   if let Some(visualizer) = app.visualizer.as_ref() {
     visualizer.set_columns(inner.width as usize);
   }
+  app.note_visualizer_geometry(inner.width, inner.height);
 
-  if app.spectrum.is_empty() {
+  let Some(lines) = app.visualizer_lines.as_ref() else {
+    let theme = &app.settings.theme;
     frame.render_widget(
       Paragraph::new("waiting for audio on the mpd fifo…")
         .style(Style::default().fg(theme.color(&theme.muted))),
       inner,
     );
     return;
-  }
+  };
 
-  // Equal-width strips: while the pane is narrower than the band count
-  // every column is its own band; wider panes group neighboring bands so
-  // each strip keeps the same width, and the remainder becomes evenly
-  // spread gaps (the full width is always used).
-  let bars = &app.spectrum;
-  let height = inner.height as usize;
-  let layout = crate::visualizer::band_layout(inner.width as usize, bars.len().max(1));
+  blit_lines(frame, inner, lines);
+}
 
-  let values: Vec<u8> = (0..layout.strips)
-    .map(|strip| {
-      let start = strip * bars.len() / layout.strips;
-      let end = ((strip + 1) * bars.len() / layout.strips).max(start + 1);
-      bars[start..end.min(bars.len())]
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0)
-    })
-    .collect();
-
-  // Full-height vertical bars: '█' for fully filled rows, a partial block
-  // at the top edge, empty cells above — ncmpcpp style, bottom-aligned.
-  let fraction_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
-  let left = " ".repeat(layout.left_margin);
-  let right = " ".repeat(layout.right_margin);
-  let mut lines: Vec<Line> = Vec::with_capacity(height);
-  for row in 0..height {
-    let from_bottom = height - 1 - row;
-    let mut spans: Vec<Span> = Vec::with_capacity(inner.width as usize);
-    if !left.is_empty() {
-      spans.push(Span::raw(left.clone()));
-    }
-    for value in &values {
-      let value = (*value).min(100) as usize;
-      let full = value * height / 100; // fully filled rows below the tip
-      let remainder = value * height % 100; // fraction of the tip row
-      let (ch, lit) = if from_bottom < full {
-        ('█', true)
-      } else if from_bottom == full && value > 0 {
-        let index = (remainder * fraction_chars.len() / 100).max(1);
-        (
-          fraction_chars[(index - 1).min(fraction_chars.len() - 1)],
-          true,
-        )
-      } else {
-        (' ', false)
-      };
-      let color = if value < 34 {
-        theme.color(&theme.visualizer_low)
-      } else if value < 67 {
-        theme.color(&theme.visualizer_mid)
-      } else {
-        theme.color(&theme.visualizer_high)
-      };
-      let style = if lit {
-        Style::default().fg(color)
-      } else {
-        Style::default()
-      };
-      for _ in 0..layout.strip_width {
-        spans.push(Span::styled(ch.to_string(), style));
+/// Write precomputed lines straight into the frame buffer. Lines are built
+/// for the exact pane width (block elements and spaces are single-cell), so
+/// no wrapping, measuring or cloning is needed.
+fn blit_lines(frame: &mut Frame, area: Rect, lines: &[Line]) {
+  let buffer = frame.buffer_mut();
+  let right = area.x + area.width;
+  for (row, line) in lines.iter().enumerate().take(area.height as usize) {
+    let mut x = area.x;
+    'spans: for span in &line.spans {
+      for ch in span.content.chars() {
+        if x >= right {
+          break 'spans;
+        }
+        if let Some(cell) = buffer.cell_mut((x, area.y + row as u16)) {
+          cell.set_char(ch).set_style(span.style);
+        }
+        x += 1;
       }
     }
-    if !right.is_empty() {
-      spans.push(Span::raw(right.clone()));
-    }
-    lines.push(Line::from(spans));
   }
-  frame.render_widget(Paragraph::new(lines), inner);
 }

@@ -16,6 +16,8 @@ pub enum AsyncEvent {
   Cover(CoverOutcome),
   Render(RenderOutcome),
   Spectrum(Vec<u8>),
+  /// Precomputed visualizer pane lines from the band-render worker.
+  VisualizerFrame(Vec<ratatui::text::Line<'static>>),
 }
 
 #[derive(Debug)]

@@ -9,10 +9,15 @@ use std::{
   sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
+    mpsc as std_mpsc,
   },
   time::{Duration, Instant},
 };
 
+use ratatui::{
+  style::{Color, Style},
+  text::{Line, Span},
+};
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use tokio::sync::mpsc;
 
@@ -46,9 +51,11 @@ impl VisualizerHandle {
 }
 
 /// How `bands` analysis bands map onto `width` columns: every band gets an
-/// equal-width strip, the strip count is chosen to minimize
-/// `leftover / strips` (leftover = width % strips), and the leftover is
-/// split onto the left/right margins so the visualization is centered.
+/// equal-width strip. The strip count is chosen to minimize
+/// `(leftover + 1) / strips` — the `+1` keeps a zero-leftover split from
+/// dominating (it would otherwise beat every denser split and shrink the
+/// band count) — and the leftover is split onto the left/right margins so
+/// the visualization is centered.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BandLayout {
   /// Number of band strips rendered.
@@ -63,8 +70,8 @@ pub(crate) struct BandLayout {
 pub(crate) fn band_layout(width: usize, bands: usize) -> BandLayout {
   let width = width.max(1);
   let max_strips = width.min(bands.max(1));
-  // Exact search: minimize leftover/strips, prefer more strips on ties
-  // (e.g. an exact divisor of the width wins with ratio 0).
+  // Exact search: minimize (leftover + 1)/strips, prefer more strips on
+  // ties (e.g. an exact divisor of the width wins with the smallest term).
   let mut best = (f32::INFINITY, 1usize);
   for strips in 1..=max_strips {
     // A single strip trivially zeroes the ratio; skip it unless it is the
@@ -73,7 +80,7 @@ pub(crate) fn band_layout(width: usize, bands: usize) -> BandLayout {
       continue;
     }
     let leftover = width % strips;
-    let ratio = leftover as f32 / strips as f32;
+    let ratio = (leftover + 1) as f32 / strips as f32;
     if ratio < best.0 || (ratio == best.0 && strips > best.1) {
       best = (ratio, strips);
     }
@@ -279,6 +286,139 @@ fn run(
   }
 }
 
+/// Resolved band colors handed to the render worker.
+#[derive(Clone, Copy)]
+pub(crate) struct VisualizerColors {
+  pub low: Color,
+  pub mid: Color,
+  pub high: Color,
+}
+
+struct BandRenderRequest {
+  width: u16,
+  height: u16,
+  bars: Vec<u8>,
+  colors: VisualizerColors,
+}
+
+/// Sender half of the off-thread band renderer: layout + styled-line
+/// construction for the visualizer pane happens on a worker thread so the
+/// UI thread only blits precomputed lines.
+pub struct BandRendererHandle {
+  tx: std_mpsc::Sender<BandRenderRequest>,
+}
+
+impl BandRendererHandle {
+  pub fn render(&self, width: u16, height: u16, bars: Vec<u8>, colors: VisualizerColors) {
+    let _ = self.tx.send(BandRenderRequest {
+      width,
+      height,
+      bars,
+      colors,
+    });
+  }
+}
+
+/// Spawn the band-render worker. It coalesces pending requests (only the
+/// latest is rendered) and answers with [`AsyncEvent::VisualizerFrame`].
+pub fn spawn_band_renderer(events: mpsc::UnboundedSender<AsyncEvent>) -> BandRendererHandle {
+  let (tx, rx) = std_mpsc::channel::<BandRenderRequest>();
+  std::thread::Builder::new()
+    .name("music-tui-visualizer-render".to_string())
+    .spawn(move || {
+      while let Ok(mut request) = rx.recv() {
+        while let Ok(next) = rx.try_recv() {
+          request = next;
+        }
+        let lines = build_band_lines(
+          request.width as usize,
+          request.height as usize,
+          &request.bars,
+          &request.colors,
+        );
+        if events.send(AsyncEvent::VisualizerFrame(lines)).is_err() {
+          return;
+        }
+      }
+    })
+    .expect("failed to spawn visualizer render thread");
+  BandRendererHandle { tx }
+}
+
+/// Build the pane content: equal-width band strips laid out by
+/// [`band_layout`], rendered as full-height vertical bars with a partial
+/// block at the tip — ncmpcpp style, bottom-aligned.
+pub(crate) fn build_band_lines(
+  width: usize,
+  height: usize,
+  bars: &[u8],
+  colors: &VisualizerColors,
+) -> Vec<Line<'static>> {
+  if width == 0 || height == 0 || bars.is_empty() {
+    return Vec::new();
+  }
+  let layout = band_layout(width, bars.len());
+  let values: Vec<u8> = (0..layout.strips)
+    .map(|strip| {
+      let start = strip * bars.len() / layout.strips;
+      let end = ((strip + 1) * bars.len() / layout.strips).max(start + 1);
+      bars[start..end.min(bars.len())]
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0)
+    })
+    .collect();
+
+  let fraction_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+  let left = " ".repeat(layout.left_margin);
+  let right = " ".repeat(layout.right_margin);
+  let mut lines: Vec<Line> = Vec::with_capacity(height);
+  for row in 0..height {
+    let from_bottom = height - 1 - row;
+    let mut spans: Vec<Span> = Vec::with_capacity(width);
+    if !left.is_empty() {
+      spans.push(Span::raw(left.clone()));
+    }
+    for value in &values {
+      let value = (*value).min(100) as usize;
+      let full = value * height / 100; // fully filled rows below the tip
+      let remainder = value * height % 100; // fraction of the tip row
+      let (ch, lit) = if from_bottom < full {
+        ('█', true)
+      } else if from_bottom == full && value > 0 {
+        let index = (remainder * fraction_chars.len() / 100).max(1);
+        (
+          fraction_chars[(index - 1).min(fraction_chars.len() - 1)],
+          true,
+        )
+      } else {
+        (' ', false)
+      };
+      let color = if value < 34 {
+        colors.low
+      } else if value < 67 {
+        colors.mid
+      } else {
+        colors.high
+      };
+      let style = if lit {
+        Style::default().fg(color)
+      } else {
+        Style::default()
+      };
+      for _ in 0..layout.strip_width {
+        spans.push(Span::styled(ch.to_string(), style));
+      }
+    }
+    if !right.is_empty() {
+      spans.push(Span::raw(right.clone()));
+    }
+    lines.push(Line::from(spans));
+  }
+  lines
+}
+
 fn open_fifo(path: &str) -> IoResult<std::fs::File> {
   use std::os::unix::fs::OpenOptionsExt;
   let file = std::fs::OpenOptions::new()
@@ -380,6 +520,37 @@ mod tests {
     let layout = band_layout(4, 256);
     assert_eq!(layout.strips, 4);
     assert_eq!(layout.strip_width, 1);
+  }
+
+  #[test]
+  fn zero_leftover_does_not_override_band_count() {
+    // 135 = 45 x 3: scoring `leftover / strips` would lock onto the
+    // zero-leftover 45 strips and drop the band count; `(leftover + 1)`
+    // lets the denser 134 single-column bands win (one margin column).
+    let layout = band_layout(135, 134);
+    assert_eq!(layout.strips, 134);
+    assert_eq!(layout.strip_width, 1);
+    assert_eq!(layout.left_margin, 0);
+    assert_eq!(layout.right_margin, 1);
+  }
+
+  #[test]
+  fn band_lines_fill_exact_width() {
+    let colors = VisualizerColors {
+      low: Color::Green,
+      mid: Color::Yellow,
+      high: Color::Red,
+    };
+    let lines = build_band_lines(10, 5, &vec![100u8; 10], &colors);
+    assert_eq!(lines.len(), 5);
+    let width: usize = lines[0]
+      .spans
+      .iter()
+      .map(|span| span.content.chars().count())
+      .sum();
+    assert_eq!(width, 10);
+    // Fully lit band: every column of the bottom row is a block.
+    assert!(lines[4].spans.iter().all(|span| span.content.contains('█')));
   }
 
   #[test]

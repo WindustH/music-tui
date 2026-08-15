@@ -110,6 +110,7 @@ async fn run_tui(
   let (tx, mut rx) = mpsc::unbounded_channel::<AsyncEvent>();
   let mpd = mpd::spawn_mpd_worker(settings.config.mpd.clone(), tx.clone());
   let visualizer = visualizer::spawn_visualizer(settings.config.visualizer.clone(), tx.clone());
+  let band_renderer = visualizer::spawn_band_renderer(tx.clone());
 
   let input_enabled = Arc::new(AtomicBool::new(true));
   let input_generation = Arc::new(AtomicU64::new(0));
@@ -120,6 +121,7 @@ async fn run_tui(
   let mut tui = Tui::new(protocol_reset)?;
   let mut app = App::new(settings, mpd, tx.clone(), initial_notice, interrupt);
   app.visualizer = Some(visualizer.clone());
+  app.visualizer_renderer = Some(band_renderer);
   app.restore_state(state::PersistedState::load(&app.settings.cache_dir));
   let mut saved_state = app.snapshot_state();
   let mut needs_draw = true;
@@ -200,6 +202,7 @@ fn handle_async_event(
     AsyncEvent::Cover(outcome) => app.handle_cover_outcome(outcome),
     AsyncEvent::Render(outcome) => renderer.finish(outcome),
     AsyncEvent::Spectrum(bars) => app.handle_spectrum(bars),
+    AsyncEvent::VisualizerFrame(lines) => app.handle_visualizer_frame(lines),
   }
 }
 
