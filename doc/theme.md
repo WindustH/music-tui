@@ -19,6 +19,7 @@ progress = "cyan"              # filled part of the seek band
 progress_background = "gray"   # unfilled part
 
 lyrics_active = "light_yellow" # active lyric line / sung karaoke prefix
+library_highlight = "light_yellow" # filter keyword matches in queue/library rows
 
 visualizer_low = "green"       # bars by magnitude
 visualizer_mid = "yellow"

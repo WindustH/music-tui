@@ -42,6 +42,7 @@ impl Default for KeymapConfig {
     Self {
       queue: KeymapSection {
         keymap: vec![
+          key("esc", "back", "Clear filter or return to first tab"),
           key("f1", "help", "Show queue key bindings"),
           key("j", "queue_down", "Move selection down"),
           key("down", "queue_down", "Move selection down"),
@@ -66,6 +67,7 @@ impl Default for KeymapConfig {
       },
       library: KeymapSection {
         keymap: vec![
+          key("esc", "back", "Clear filter or return to first tab"),
           key("f1", "help", "Show library key bindings"),
           key("j", "library_down", "Move selection down"),
           key("down", "library_down", "Move selection down"),

@@ -94,18 +94,46 @@ fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize
   } else {
     Span::raw("  ")
   };
-  let main = if artist.is_empty() {
-    Span::styled(title, Style::default().fg(theme.color(&theme.foreground)))
+  let filter = app.queue_filter.as_deref();
+  let base = Style::default().fg(theme.color(&theme.foreground));
+  let highlight = Style::default()
+    .fg(theme.color(&theme.library_highlight))
+    .add_modifier(Modifier::BOLD);
+  let text = if artist.is_empty() {
+    title
   } else {
-    Span::styled(
-      format!("{title} — {artist}"),
-      Style::default().fg(theme.color(&theme.foreground)),
-    )
+    format!("{title} — {artist}")
+  };
+  let main_spans = match filter.and_then(|needle| find_substring(&text, needle)) {
+    Some((start, end)) => vec![
+      Span::styled(text[..start].to_string(), base),
+      Span::styled(text[start..end].to_string(), highlight),
+      Span::styled(text[end..].to_string(), base),
+    ],
+    None => vec![Span::styled(text, base)],
   };
   let duration = song
     .song
     .duration
     .map(format_duration_line)
     .unwrap_or_default();
-  Line::from(vec![marker, main, Span::raw(" "), Span::styled(duration, Style::default().fg(theme.color(&theme.muted)))])
+  let mut spans = vec![marker];
+  spans.extend(main_spans);
+  spans.push(Span::raw(" "));
+  spans.push(Span::styled(duration, Style::default().fg(theme.color(&theme.muted))));
+  Line::from(spans)
+}
+
+/// Case-insensitive substring range (byte offsets) that lands on char
+/// boundaries of `text`. Lowercasing can change lengths for a few code
+/// points; in that case no highlight is returned.
+fn find_substring(text: &str, needle: &str) -> Option<(usize, usize)> {
+  if needle.is_empty() {
+    return None;
+  }
+  let lowered = text.to_lowercase();
+  let needle_lowered = needle.to_lowercase();
+  let start = lowered.find(&needle_lowered)?;
+  let end = start + needle_lowered.len();
+  (text.is_char_boundary(start) && text.is_char_boundary(end)).then_some((start, end))
 }

@@ -12,7 +12,10 @@ pub(crate) use framework_tui::{
 };
 pub(crate) use mpd_client::commands::SingleMode;
 pub(crate) use mpd_client::responses::{Song, SongInQueue, Status};
-pub(crate) use ratatui::{layout::Rect, widgets::ListState};
+pub(crate) use ratatui::{
+  layout::Rect,
+  widgets::{ListState, TableState},
+};
 pub(crate) use tokio::sync::mpsc;
 pub(crate) use tracing::debug;
 
@@ -116,7 +119,7 @@ pub struct App {
   pub(crate) library: Vec<crate::library_db::LibraryTrack>,
   pub(crate) library_rows: Vec<crate::library_db::TrackMatch>,
   pub(crate) library_filter: Option<String>,
-  pub(crate) library_state: ListState,
+  pub(crate) library_state: TableState,
   pub(crate) library_pane_areas: Vec<Rect>,
   pub(crate) library_bar_areas: Vec<Rect>,
   pub(crate) library_bar_dragging: bool,
@@ -246,7 +249,7 @@ impl App {
       library: Vec::new(),
       library_rows: Vec::new(),
       library_filter: None,
-      library_state: ListState::default(),
+      library_state: TableState::default(),
       library_pane_areas: Vec::new(),
       library_bar_areas: Vec::new(),
       library_bar_dragging: false,

@@ -33,6 +33,9 @@ pub struct LibraryTrack {
 }
 
 /// Open (creating if needed) the library database.
+/// Bump when the derivation logic changes so cached rows rescan.
+const LIBRARY_DB_VERSION: i64 = 1;
+
 pub fn open_db(db_path: &Path) -> Result<Connection> {
   if let Some(parent) = db_path.parent() {
     std::fs::create_dir_all(parent)
@@ -65,6 +68,12 @@ pub fn open_db(db_path: &Path) -> Result<Connection> {
     );
     "#,
   )?;
+  let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+  if version != LIBRARY_DB_VERSION {
+    // Older rows were derived with different fallback logic; rescan them.
+    connection.execute("DELETE FROM tracks", [])?;
+    connection.pragma_update(None, "user_version", LIBRARY_DB_VERSION)?;
+  }
   Ok(connection)
 }
 
@@ -140,8 +149,16 @@ pub fn scan_roots(
       } else {
         track.lyrics
       };
+      // Untagged files still follow the usual "NN. artist - title"
+      // filename convention; derive artist/title from the stem.
+      let (derived_artist, derived_title) = derive_from_filename(&track.filename);
+      let artist = if track.artist.is_empty() {
+        derived_artist
+      } else {
+        track.artist
+      };
       let title = if track.title.is_empty() {
-        track.filename.clone()
+        derived_title
       } else {
         track.title
       };
@@ -150,7 +167,7 @@ pub fn scan_roots(
           "UPDATE tracks SET title=?1, artist=?2, album=?3, genre=?4, filename=?5,
              duration_secs=?6, lyrics=?7, mtime=?8 WHERE id=?9",
           rusqlite::params![
-            title, track.artist, track.album, track.genre, track.filename,
+            title, artist, track.album, track.genre, track.filename,
             track.duration_secs, lyrics, mtime as i64, id
           ],
         )?;
@@ -159,7 +176,7 @@ pub fn scan_roots(
           "INSERT INTO tracks (root_id, rel_path, title, artist, album, genre, filename,
              duration_secs, lyrics, mtime) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
           rusqlite::params![
-            root_id, rel, title, track.artist, track.album, track.genre, track.filename,
+            root_id, rel, title, artist, track.album, track.genre, track.filename,
             track.duration_secs, lyrics, mtime as i64
           ],
         )?;
@@ -281,6 +298,38 @@ fn walk(root: &Path, recursive: bool) -> Vec<PathBuf> {
   out
 }
 
+/// Split a filename stem like `2. ARForest - Your Way` into
+/// `(artist, title)` for untagged files. Leading track numbers
+/// (`2. `, `03 - `, `7_`) are dropped; the first ` - ` separates artist
+/// and title. Stems without a separator yield an empty artist.
+fn derive_from_filename(stem: &str) -> (String, String) {
+  let mut rest = stem.trim();
+  // Strip a leading track number: 1-3 digits followed by a separator run.
+  let digits = rest.chars().take_while(char::is_ascii_digit).count();
+  if (1..=3).contains(&digits) {
+    let after_digits = &rest[digits..];
+    let separators = after_digits
+      .chars()
+      .take_while(|ch| matches!(ch, ' ' | '.' | '-' | '_'))
+      .count();
+    if separators > 0 {
+      rest = after_digits[separators..].trim_start();
+    }
+  }
+  match rest.split_once(" - ") {
+    Some((artist, title)) => {
+      let artist = artist.trim();
+      let title = title.trim();
+      if artist.is_empty() || title.is_empty() {
+        (String::new(), rest.to_string())
+      } else {
+        (artist.to_string(), title.to_string())
+      }
+    }
+    None => (String::new(), rest.to_string()),
+  }
+}
+
 /// Read tags with lofty; None means the file could not be read at all.
 fn read_track(path: &Path) -> Option<LibraryTrack> {
   use lofty::prelude::*;
@@ -387,7 +436,7 @@ pub struct TrackMatch {
 /// Filter tracks by `query` over every field. The query is split on
 /// whitespace; every term must match somewhere (AND), and the reported
 /// field/range is the term-0 match with the best priority.
-pub fn filter_tracks(tracks: Vec<LibraryTrack>, query: &str) -> Vec<TrackMatch> {
+pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
   let terms: Vec<String> = query
     .split_whitespace()
     .map(str::to_lowercase)
@@ -434,7 +483,11 @@ pub fn filter_tracks(tracks: Vec<LibraryTrack>, query: &str) -> Vec<TrackMatch> 
     }
     if all_terms_match {
       let (field, range) = best.unwrap_or((TrackField::Title, (0, 0)));
-      out.push(TrackMatch { track, field, range });
+      out.push(TrackMatch {
+        track: track.clone(),
+        field,
+        range,
+      });
     }
   }
   out.sort_by(|a, b| {
@@ -463,6 +516,28 @@ pub fn highlight_range(haystack: &str, needle: &str) -> Option<(usize, usize)> {
 mod tests {
   use super::*;
 
+  #[test]
+  fn derive_from_filename_splits_artist_title() {
+    assert_eq!(
+      derive_from_filename("2. ARForest - Your Way(credits)"),
+      ("ARForest".to_string(), "Your Way(credits)".to_string())
+    );
+    assert_eq!(
+      derive_from_filename("03 - Taylor Swift - Mine"),
+      ("Taylor Swift".to_string(), "Mine".to_string())
+    );
+    // No separator: keep the stem as the title, artist stays empty.
+    assert_eq!(
+      derive_from_filename("夏末递归定义"),
+      (String::new(), "夏末递归定义".to_string())
+    );
+    // Track number is part of the title when there is no separator.
+    assert_eq!(
+      derive_from_filename("7. Intro"),
+      (String::new(), "Intro".to_string())
+    );
+  }
+
   fn track(title: &str, artist: &str, lyrics: &str) -> LibraryTrack {
     LibraryTrack {
       title: title.to_string(),
@@ -478,7 +553,7 @@ mod tests {
       track("夜的第七章", "周杰伦", "夜曲不停写"),
       track("以父之名", "周杰伦", ""),
     ];
-    let hits = filter_tracks(tracks, "夜曲");
+    let hits = filter_tracks(&tracks, "夜曲");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].field, TrackField::Lyrics);
     assert_eq!(hits[0].range, (0, "夜曲".len()));
@@ -490,7 +565,7 @@ mod tests {
       track("album-hit", "a", ""),   // title match
       track("song", "b", "album-hit in lyrics"),
     ];
-    let hits = filter_tracks(tracks, "album-hit");
+    let hits = filter_tracks(&tracks, "album-hit");
     assert_eq!(hits[0].field, TrackField::Title);
     assert_eq!(hits[1].field, TrackField::Lyrics);
   }
@@ -498,8 +573,8 @@ mod tests {
   #[test]
   fn filter_requires_every_term() {
     let tracks = vec![track("夜的第七章", "周杰伦", "")];
-    assert_eq!(filter_tracks(tracks.clone(), "夜 不存在").len(), 0);
-    assert_eq!(filter_tracks(tracks, "夜 第七").len(), 1);
+    assert_eq!(filter_tracks(&tracks, "夜 不存在").len(), 0);
+    assert_eq!(filter_tracks(&tracks, "夜 第七").len(), 1);
   }
 
   #[test]

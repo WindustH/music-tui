@@ -25,6 +25,7 @@ pub struct ThemeConfig {
   pub which_key_separator: String,
   pub which_key_separator_color: String,
   pub which_key_columns: u16,
+  pub library_highlight: String,
 }
 
 impl Default for ThemeConfig {
@@ -52,6 +53,7 @@ impl Default for ThemeConfig {
       which_key_separator: " -> ".to_string(),
       which_key_separator_color: "dark_gray".to_string(),
       which_key_columns: 3,
+      library_highlight: "yellow".to_string(),
     }
   }
 }

@@ -50,12 +50,16 @@ priority over pane bindings everywhere.
 
 - `queue` — the MPD current playlist. The playing song is marked with `▶`/`⏸`,
   filtered mode narrows the list as you type (`/`).
-- `library` — a local music library scanned by music-tui itself (SQLite).
-  Columns are configurable (`[library] columns`), `/` filters every field
-  (title, artist, album, genre, filename, lyrics) and highlights matches,
-  `enter` plays the selected track, `a` appends it, `i` opens the detail
-  view, `u` rescans. Both the queue and the library panes have a viewport
-  scrollbar on the right that can be dragged with the mouse.
+- `library` — a local music library scanned by music-tui itself (SQLite),
+  drawn as a calibre-tui style table: a bold header row, weighted columns
+  (`[library] columns`), an inverted hover bar, and per-field colors.
+  `/` filters every field (title, artist, album, genre, filename, lyrics)
+  and highlights matches (long fields scroll to the match), `esc` clears
+  the filter, `enter` plays the selected track, `a` appends it, `i` opens
+  the detail view, `u` rescans. Untagged files derive artist/title from
+  the usual `NN. artist - title` filename convention. Both the queue and
+  the library panes have a viewport scrollbar on the right that can be
+  dragged with the mouse.
 - `cover` — cover art for the currently playing song, aspect-correct and
   centered (see [Cover Rendering](cover-rendering.md)).
 - `lyrics` — synced or plain lyrics for the current song with auto-follow and

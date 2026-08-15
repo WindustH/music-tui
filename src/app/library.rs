@@ -23,25 +23,20 @@ impl App {
 
   pub(crate) fn recompute_library_filter(&mut self) {
     let query = self.library_filter.clone().unwrap_or_default();
-    let tracks = std::mem::take(&mut self.library);
     if query.trim().is_empty() {
-      self.library_rows = tracks
-        .into_iter()
+      self.library_rows = self
+        .library
+        .iter()
         .map(|track| crate::library_db::TrackMatch {
-          track,
+          track: track.clone(),
           field: crate::library_db::TrackField::Title,
           range: (0, 0),
         })
         .collect();
     } else {
-      self.library_rows = crate::library_db::filter_tracks(tracks, &query);
+      // `library` keeps the FULL list; rows are just the filtered view.
+      self.library_rows = crate::library_db::filter_tracks(&self.library, &query);
     }
-    // tracks moved into rows; restore the full list from rows
-    self.library = self
-      .library_rows
-      .iter()
-      .map(|matched| matched.track.clone())
-      .collect();
   }
 
   pub(crate) fn clear_library_filter(&mut self) {
@@ -57,7 +52,7 @@ impl App {
       return;
     }
     let selected = self.library_state.selected().unwrap_or(0).min(len - 1);
-    let mut state = ListState::default();
+    let mut state = TableState::default();
     state.select(Some(selected));
     self.library_state = state;
   }
@@ -68,7 +63,7 @@ impl App {
       return;
     }
     let row = row.min(len - 1);
-    let mut state = ListState::default();
+    let mut state = TableState::default();
     state.select(Some(row));
     self.library_state = state;
     self.sync_library_hover();
@@ -107,7 +102,7 @@ impl App {
     }
     let selected = self.library_state.selected().unwrap_or(next);
     let selected = selected.clamp(next, (next + height - 1).min(len - 1));
-    let mut state = ListState::default();
+    let mut state = TableState::default();
     state.select(Some(selected));
     self.library_state = state.with_offset(next);
     self.sync_library_hover();
