@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use crate::{
   app::App,
   event::{AsyncEvent, RenderedImage},
-  layout::{PaneKind, PaneLayout, SplitDir},
+  layout::{PaneKind, PaneLayout, PaneSource, SplitDir},
   render::CoverRenderStore,
   terminal::FrameOutput,
 };
@@ -160,7 +160,15 @@ fn draw_layout(
   overlays: &mut Vec<ProtocolOverlay>,
 ) {
   match layout {
-    PaneLayout::Pane(kind) => draw_pane(frame, app, renderer, tx, area, *kind, overlays),
+    PaneLayout::Pane(kind, source) => {
+      let ctx = PaneCtx {
+        frame,
+        renderer,
+        tx,
+        overlays,
+      };
+      draw_pane(app, area, *kind, *source, ctx)
+    }
     PaneLayout::Split {
       dir,
       ratio,
@@ -181,20 +189,33 @@ fn draw_layout(
   }
 }
 
+/// Everything a pane needs to draw itself; keeps the `draw_*_pane`
+/// signatures uniform and `draw_pane` under the clippy argument limit.
+pub(super) struct PaneCtx<'a, 'f> {
+  pub(super) frame: &'a mut Frame<'f>,
+  pub(super) renderer: &'a mut CoverRenderStore,
+  pub(super) tx: &'a mpsc::UnboundedSender<AsyncEvent>,
+  pub(super) overlays: &'a mut Vec<ProtocolOverlay>,
+}
+
 fn draw_pane(
-  frame: &mut Frame,
   app: &mut App,
-  renderer: &mut CoverRenderStore,
-  tx: &mpsc::UnboundedSender<AsyncEvent>,
   area: Rect,
   kind: PaneKind,
-  overlays: &mut Vec<ProtocolOverlay>,
+  source: PaneSource,
+  ctx: PaneCtx<'_, '_>,
 ) {
+  let PaneCtx {
+    frame,
+    renderer,
+    tx,
+    overlays,
+  } = ctx;
   match kind {
     PaneKind::Queue => draw_queue_pane(frame, app, area),
-    PaneKind::Cover => draw_cover_pane(frame, app, renderer, tx, area, overlays),
-    PaneKind::Lyrics => draw_lyrics_pane(frame, app, area),
-    PaneKind::Metadata => draw_metadata_pane(frame, app, area),
+    PaneKind::Cover => draw_cover_pane(frame, app, renderer, tx, area, source, overlays),
+    PaneKind::Lyrics => draw_lyrics_pane(frame, app, area, source),
+    PaneKind::Metadata => draw_metadata_pane(frame, app, area, source),
     PaneKind::Visualizer => draw_visualizer_pane(frame, app, area),
   }
 }

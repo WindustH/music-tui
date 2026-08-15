@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use mpd_client::{
-  commands::{Add, ClearQueue, Play, SetSingle, Status},
+  commands::{Add, ClearQueue, Play, SetSingle, Status, Update},
   commands::{SingleMode, SongPosition},
   responses::PlayState,
   Client,
@@ -14,8 +14,11 @@ use tracing::info;
 
 use crate::{
   cli::OpenArgs,
-  config::Settings,
-  library::{collect_audio_files, is_audio_file, path_to_uri, resolve_music_dir},
+  config::{MpdConfig, Settings},
+  library::{
+    collect_audio_files, ensure_link, file_uri, is_audio_file, is_socket_host, links_dir,
+    path_to_uri, resolve_music_dir,
+  },
   mpd::{InterruptSession, capture_interrupt_session, connect},
   playlist::{self, PlaylistKind},
 };
@@ -31,15 +34,16 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
     .canonicalize()
     .with_context(|| format!("failed to resolve {}", args.path.display()))?;
   let music_dir = resolve_music_dir(&settings.config.mpd)?;
-  let (client, _events) = connect(&settings.config.mpd)
+  let client = connect(&settings.config.mpd)
     .await
     .context("failed to connect to mpd")?;
+  let (client, _events) = client;
 
   if path.is_dir() {
     let notice = if args.mode == crate::cli::OpenMode::Append {
-      open_folder_append(&client, &path, &music_dir, args.recursive, args.no_play).await?
+      open_folder_append(&client, &path, &settings.config.mpd, &music_dir, args.recursive, args.no_play).await?
     } else {
-      open_folder(&client, &path, &music_dir, args.recursive, args.no_play).await?
+      open_folder(&client, &path, &settings.config.mpd, &music_dir, args.recursive, args.no_play).await?
     };
     return Ok(OpenOutcome { notice, interrupt: None });
   }
@@ -49,12 +53,12 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
   }
 
   if let Some(kind) = playlist::playlist_kind(&path) {
-    return open_playlist(&client, &path, kind, args, &music_dir)
+    return open_playlist(&client, &path, kind, args, &settings.config.mpd, &music_dir)
       .await
       .map(|notice| OpenOutcome { notice, interrupt: None });
   }
 
-  let uri = path_to_uri(&music_dir, &path)?;
+  let uri = resolve_open_uri(&client, &path, &settings.config.mpd, &music_dir).await?;
   let mut interrupt: Option<InterruptSession> = None;
   let notice = match () {
     _ if args.no_play => {
@@ -82,7 +86,7 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       let folder = path.parent().map(Path::to_path_buf).unwrap_or_else(|| music_dir.clone());
       let files = collect_audio_files(&folder, args.recursive)?;
       let target = files.iter().position(|file| file == &path);
-      let uris = uris_for(&music_dir, &files)?;
+      let uris = resolve_open_uris(&client, &files, &settings.config.mpd, &music_dir).await?;
       client.command(ClearQueue).await?;
       for file_uri in &uris {
         client.command(Add::uri(file_uri)).await?;
@@ -114,69 +118,151 @@ async fn open_playlist(
   path: &Path,
   kind: PlaylistKind,
   args: &OpenArgs,
+  mpd_config: &MpdConfig,
   music_dir: &Path,
 ) -> Result<String> {
   let _ = kind;
   let entries = playlist::parse_playlist(path).map_err(anyhow::Error::msg)?;
-  let mut uris = Vec::new();
+  let mut files = Vec::new();
   for entry in &entries {
     let Ok(resolved) = entry.canonicalize() else { continue };
     if !is_audio_file(&resolved) {
       continue;
     }
-    if let Ok(uri) = path_to_uri(music_dir, &resolved) {
-      uris.push(uri);
-    }
+    files.push(resolved);
   }
-  if uris.is_empty() {
+  if files.is_empty() {
     bail!("no playable entries in {}", short_name(path));
   }
+  let uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
   let skipped = entries.len() - uris.len();
   let name = short_name(path);
-  let mut notice = String::new();
   // `interrupt` previews a single song; for whole playlists the natural
   // default is a plain replace (folder-style).
   let replace = matches!(
     args.mode,
     crate::cli::OpenMode::Folder | crate::cli::OpenMode::Interrupt
   );
-  if replace {
+  let notice = if replace {
     client.command(ClearQueue).await?;
     for uri in &uris {
       client.command(Add::uri(uri)).await?;
     }
-    notice = format!("queued {} song(s) from {name}", uris.len());
     if !args.no_play {
       client.command(Play::song(SongPosition(0))).await?;
     }
+    format!("queued {} song(s) from {name}", uris.len())
   } else if args.mode == crate::cli::OpenMode::Next {
     let status = client.command(Status).await?;
     let start = status.current_song.map(|(position, _)| position.0 + 1).unwrap_or(0);
     for (offset, uri) in uris.iter().enumerate() {
       client.command(Add::uri(uri).at(start + offset)).await?;
     }
-    notice = format!("queued {} song(s) from {name} next", uris.len());
     if !args.no_play {
       maybe_start_if_idle(client).await?;
     }
+    format!("queued {} song(s) from {name} next", uris.len())
   } else {
     for uri in &uris {
       client.command(Add::uri(uri)).await?;
     }
-    notice = format!("appended {} song(s) from {name}", uris.len());
     if !args.no_play {
       maybe_start_if_idle(client).await?;
     }
-  }
+    format!("appended {} song(s) from {name}", uris.len())
+  };
+  let mut notice = notice;
   if skipped > 0 {
     notice.push_str(&format!(" ({skipped} entr{} skipped)", if skipped == 1 { "y" } else { "ies" }));
   }
   Ok(notice)
 }
 
+/// Resolve one file to a playable MPD uri: in-library paths keep their
+/// relative uri; outside paths become `file://` on socket connections or
+/// a bridged symlink (plus a db update) on TCP connections.
+async fn resolve_open_uri(
+  client: &Client,
+  path: &Path,
+  mpd_config: &MpdConfig,
+  music_dir: &Path,
+) -> Result<String> {
+  if let Ok(uri) = path_to_uri(music_dir, path) {
+    return Ok(uri);
+  }
+  let owned = path.to_path_buf();
+  resolve_outside_uris(client, &[owned], mpd_config, music_dir)
+    .await
+    .map(|mut uris| uris.remove(0))
+}
+
+/// Resolve a batch of files (mixed in/outside paths allowed).
+async fn resolve_open_uris(
+  client: &Client,
+  files: &[PathBuf],
+  mpd_config: &MpdConfig,
+  music_dir: &Path,
+) -> Result<Vec<String>> {
+  let inside: Vec<String> = files
+    .iter()
+    .filter_map(|file| path_to_uri(music_dir, file).ok())
+    .collect();
+  let outside: Vec<PathBuf> = files
+    .iter()
+    .filter(|file| path_to_uri(music_dir, file).is_err())
+    .cloned()
+    .collect();
+  if outside.is_empty() {
+    return Ok(inside);
+  }
+  let mut uris = resolve_outside_uris(client, &outside, mpd_config, music_dir).await?;
+  uris.extend(inside);
+  Ok(uris)
+}
+
+/// Files outside the library: `file://` when connected via socket, else a
+/// symlink bridge under `[mpd].link_dir` (default `<music_dir>/.music-tui-links`)
+/// plus a scoped database update.
+async fn resolve_outside_uris(
+  client: &Client,
+  outside: &[PathBuf],
+  mpd_config: &MpdConfig,
+  music_dir: &Path,
+) -> Result<Vec<String>> {
+  if is_socket_host(&mpd_config.host) {
+    return Ok(outside.iter().map(|path| file_uri(path)).collect());
+  }
+  let dir = links_dir(music_dir, &mpd_config.link_dir);
+  let mut links = Vec::with_capacity(outside.len());
+  for path in outside {
+    links.push(ensure_link(&dir, path).map_err(anyhow::Error::msg)?);
+  }
+  let dir_uri = path_to_uri(music_dir, &dir)?;
+  update_and_wait(client, &dir_uri).await?;
+  links
+    .iter()
+    .map(|link| path_to_uri(music_dir, link))
+    .collect::<std::result::Result<Vec<_>, _>>()
+}
+
+/// Send a scoped `update` and wait until MPD finishes (max ~15s).
+async fn update_and_wait(client: &Client, uri: &str) -> Result<()> {
+  client.command(Update::new().uri(uri)).await?;
+  let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+  while tokio::time::Instant::now() < deadline {
+    let status = client.command(Status).await?;
+    if status.update_job.is_none() {
+      return Ok(());
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+  }
+  bail!("timed out waiting for the database update")
+}
+
 async fn open_folder(
   client: &Client,
   folder: &Path,
+  mpd_config: &MpdConfig,
   music_dir: &Path,
   recursive: bool,
   no_play: bool,
@@ -185,7 +271,7 @@ async fn open_folder(
   if files.is_empty() {
     bail!("no audio files found under {}", folder.display());
   }
-  let uris = uris_for(music_dir, &files)?;
+  let uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
   client.command(ClearQueue).await?;
   for uri in &uris {
     client.command(Add::uri(uri)).await?;
@@ -202,6 +288,7 @@ async fn open_folder(
 async fn open_folder_append(
   client: &Client,
   folder: &Path,
+  mpd_config: &MpdConfig,
   music_dir: &Path,
   recursive: bool,
   no_play: bool,
@@ -210,7 +297,7 @@ async fn open_folder_append(
   if files.is_empty() {
     bail!("no audio files found under {}", folder.display());
   }
-  let uris = uris_for(music_dir, &files)?;
+  let uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
   for uri in &uris {
     client.command(Add::uri(uri)).await?;
   }
@@ -219,10 +306,6 @@ async fn open_folder_append(
     maybe_start_if_idle(client).await?;
   }
   Ok(notice)
-}
-
-fn uris_for(music_dir: &Path, files: &[PathBuf]) -> Result<Vec<String>> {
-  files.iter().map(|file| path_to_uri(music_dir, file)).collect()
 }
 
 async fn maybe_start_if_idle(client: &Client) -> Result<()> {

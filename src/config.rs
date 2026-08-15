@@ -40,7 +40,8 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MpdConfig {
-  /// MPD host. A path starting with `/` connects over a unix socket.
+  /// MPD host. A path starting with `/` (or `~`) connects over a unix
+  /// socket — required for playing `file://` songs outside the library.
   pub host: String,
   pub port: u16,
   /// Optional MPD password.
@@ -48,6 +49,9 @@ pub struct MpdConfig {
   /// Music library root used to read cover art and lyrics files. When empty,
   /// music-tui tries to read `music_directory` from ~/.config/mpd/mpd.conf.
   pub music_dir: Option<String>,
+  /// Directory for the symlink bridge used to queue files outside the
+  /// library on TCP connections. Empty = `<music_dir>/.music-tui-links`.
+  pub link_dir: String,
 }
 
 impl Default for MpdConfig {
@@ -57,6 +61,7 @@ impl Default for MpdConfig {
       port: 6600,
       password: None,
       music_dir: None,
+      link_dir: String::new(),
     }
   }
 }
@@ -134,19 +139,13 @@ impl Default for VisualizerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct PlaylistConfig {
   /// Directory for `:save` exports. Empty means the XDG state home
   /// (`~/.local/state/music-tui/playlists`).
   pub save_dir: String,
 }
 
-impl Default for PlaylistConfig {
-  fn default() -> Self {
-    Self {
-      save_dir: String::new(),
-    }
-  }
-}
 
 impl PlaylistConfig {
   /// Effective `:save` directory (`~` expanded; fallback: state home).
@@ -526,7 +525,7 @@ pub async fn write_bytes_atomic(path: &Path, body: &[u8]) -> Result<()> {
 pub fn config_comment(key: &str) -> Option<&'static str> {
   match key {
     "mpd" => Some("Connection settings for the MPD daemon."),
-    "mpd.host" => Some("MPD host. A path starting with / connects over a unix socket."),
+    "mpd.host" => Some("MPD host. A path starting with / or ~ (e.g. ~/.config/mpd/socket) connects over a unix socket, which enables playing files outside the music library via file:// uris."),
     "mpd.port" => Some("MPD TCP port."),
     "mpd.password" => Some("Optional MPD password."),
     "mpd.music_dir" => Some(

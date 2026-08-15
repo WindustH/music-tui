@@ -190,32 +190,52 @@ impl App {
         true
       }
       "lyrics_up" => {
-        self.lyrics_follow = false;
-        let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-        self.lyrics_cursor = Some(cursor.saturating_sub(1));
+        if self.hover_lyrics_active() {
+          self.scroll_hover_lyrics(-1);
+        } else {
+          self.lyrics_follow = false;
+          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
+          self.lyrics_cursor = Some(cursor.saturating_sub(1));
+        }
         true
       }
       "lyrics_down" => {
-        self.lyrics_follow = false;
-        let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-        let limit = self.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(1).saturating_sub(1);
-        self.lyrics_cursor = Some((cursor + 1).min(limit));
+        if self.hover_lyrics_active() {
+          self.scroll_hover_lyrics(1);
+        } else {
+          self.lyrics_follow = false;
+          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
+          let limit = self.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(1).saturating_sub(1);
+          self.lyrics_cursor = Some((cursor + 1).min(limit));
+        }
         true
       }
       "lyrics_page_up" => {
-        self.lyrics_follow = false;
-        let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-        self.lyrics_cursor = Some(cursor.saturating_sub(10));
+        if self.hover_lyrics_active() {
+          self.scroll_hover_lyrics(-10);
+        } else {
+          self.lyrics_follow = false;
+          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
+          self.lyrics_cursor = Some(cursor.saturating_sub(10));
+        }
         true
       }
       "lyrics_page_down" => {
-        self.lyrics_follow = false;
-        let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-        let limit = self.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(1).saturating_sub(1);
-        self.lyrics_cursor = Some((cursor + 10).min(limit));
+        if self.hover_lyrics_active() {
+          self.scroll_hover_lyrics(10);
+        } else {
+          self.lyrics_follow = false;
+          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
+          let limit = self.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(1).saturating_sub(1);
+          self.lyrics_cursor = Some((cursor + 10).min(limit));
+        }
         true
       }
       "lyrics_jump" => {
+        if self.hover_lyrics_active() {
+          self.set_message("hovered lyrics: song is not playing");
+          return true;
+        }
         // Enter: seek to the highlighted (cursor or active) lyric line and
         // resume auto-follow.
         let index = self
@@ -225,6 +245,10 @@ impl App {
         self.lyrics_seek_to(index)
       }
       "lyrics_follow" => {
+        if self.hover_lyrics_active() {
+          self.set_message("hovered lyrics: song is not playing");
+          return true;
+        }
         self.lyrics_follow = !self.lyrics_follow;
         if self.lyrics_follow {
           self.lyrics_cursor = None;

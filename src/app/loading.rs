@@ -26,6 +26,17 @@ impl App {
 
   pub(crate) fn request_lyrics(&mut self, url: String, path: PathBuf) {
     self.lyrics_url = url.clone();
+    let (artist, title) = self.current_song_tags();
+    self.spawn_lyrics_load(url, path, artist, title);
+  }
+
+  pub(crate) fn spawn_lyrics_load(
+    &self,
+    url: String,
+    path: PathBuf,
+    artist: Option<String>,
+    title: Option<String>,
+  ) {
     let extra_dirs: Vec<PathBuf> = self
       .settings
       .config
@@ -34,7 +45,6 @@ impl App {
       .iter()
       .map(|dir| expand_home(dir))
       .collect();
-    let (artist, title) = self.current_song_tags();
     let tx = self.events.clone();
     tokio::task::spawn_blocking(move || {
       let result = lyrics::load(&path, &extra_dirs, artist.as_deref(), title.as_deref());
@@ -88,6 +98,56 @@ impl App {
 
   pub(crate) fn song_path(&self, url: &str) -> Option<PathBuf> {
     self.music_dir.as_ref().map(|dir| uri_to_path(dir, url))
+  }
+
+  /// Refresh the `:hovered` data view for the queue's selected row. Cheap
+  /// no-op when the hovered song has not changed; loads metadata / cover /
+  /// lyrics lazily and only when some pane actually uses the source.
+  pub(crate) fn sync_hover_view(&mut self) {
+    if !self.has_hover_panes {
+      return;
+    }
+    let hovered = self
+      .queue_state
+      .selected()
+      .and_then(|row| self.filtered_position(row))
+      .and_then(|index| self.queue.get(index));
+    let Some(song) = hovered else {
+      self.hover = None;
+      return;
+    };
+    let url = song.song.url.to_string();
+    if self.hover.as_ref().is_some_and(|hover| hover.url == url) {
+      return;
+    }
+    let Some(path) = self.song_path(&url) else {
+      self.hover = None;
+      return;
+    };
+    let title = song
+      .song
+      .title()
+      .map(str::to_string)
+      .unwrap_or_else(|| url.clone());
+    let artist = song.song.artists().first().cloned();
+    let lyric_title = title.clone();
+    self.hover = Some(HoverView {
+      url: url.clone(),
+      path: path.clone(),
+      title,
+      metadata: None,
+      metadata_error: None,
+      metadata_scroll: 0,
+      cover: None,
+      cover_dims: None,
+      cover_error: None,
+      lyrics: None,
+      lyrics_error: None,
+      lyrics_scroll: 0,
+    });
+    self.spawn_metadata_read(url.clone(), path.clone());
+    self.spawn_cover_read(url.clone(), path.clone());
+    self.spawn_lyrics_load(url, path, artist, Some(lyric_title));
   }
 
 }

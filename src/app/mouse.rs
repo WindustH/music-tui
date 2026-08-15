@@ -38,9 +38,14 @@ impl App {
     // Clicking a synced lyric line seeks to its timestamp (only when the
     // click lands inside a lyrics pane, both rows and columns).
     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-      && let Some(index) = self.lyrics_index_at(mouse)
+      && let Some(area) = self.mouse_on_lyrics(mouse)
     {
-      let _ = self.lyrics_seek_to(index);
+      if self.hover_lyrics_pane(area) {
+        // Hovered lyrics have no playback state — nothing to seek.
+        self.set_message("hovered lyrics: song is not playing");
+      } else if let Some(index) = self.lyrics_index_at(mouse) {
+        let _ = self.lyrics_seek_to(index);
+      }
       return true;
     }
     match mouse.kind {
@@ -80,7 +85,7 @@ impl App {
         } else if self.mouse_on_queue(mouse).is_some() {
           self.scroll_queue_viewport(-3)
         } else if self.mouse_on_lyrics(mouse).is_some() {
-          self.scroll_lyrics_viewport(-3)
+          self.scroll_lyrics_wheel(-3)
         } else {
           false
         }
@@ -92,7 +97,7 @@ impl App {
         } else if self.mouse_on_queue(mouse).is_some() {
           self.scroll_queue_viewport(3)
         } else if self.mouse_on_lyrics(mouse).is_some() {
-          self.scroll_lyrics_viewport(3)
+          self.scroll_lyrics_wheel(3)
         } else {
           false
         }
@@ -116,6 +121,30 @@ impl App {
         && mouse.column >= area.x
         && mouse.column < area.x + area.width
     })
+  }
+
+  /// Whether the lyrics pane at `area` shows the hovered song (recorded at
+  /// draw time together with the area).
+  fn hover_lyrics_pane(&self, area: Rect) -> bool {
+    self
+      .lyrics_pane_sources
+      .iter()
+      .zip(self.lyrics_pane_areas.iter())
+      .any(|(source, pane)| *source == PaneSource::Hovered && *pane == area)
+  }
+
+  /// Wheel on a lyrics pane: scroll the hovered lyrics when that pane is
+  /// the hovered source, otherwise the playing lyrics.
+  fn scroll_lyrics_wheel(&mut self, delta: i32) -> bool {
+    if self.hover.as_ref().is_some_and(|hover| hover.lyrics.is_some())
+      && self
+        .lyrics_pane_sources.contains(&PaneSource::Hovered)
+    {
+      self.scroll_hover_lyrics(delta);
+      true
+    } else {
+      self.scroll_lyrics_viewport(delta)
+    }
   }
 
   /// Map a mouse position to the visible lyric line under it (rows and

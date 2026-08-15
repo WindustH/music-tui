@@ -4,6 +4,21 @@ use super::*;
 
 impl App {
   pub fn handle_lyrics_outcome(&mut self, outcome: LyricsOutcome) -> bool {
+    if let Some(hover) = self.hover.as_mut()
+      && hover.url == outcome.song_url
+    {
+      match outcome.result {
+        Ok(lyrics) => {
+          hover.lyrics = Some(lyrics);
+          hover.lyrics_error = None;
+        }
+        Err(error) => {
+          hover.lyrics = None;
+          hover.lyrics_error = Some(error);
+        }
+      }
+      return true;
+    }
     if outcome.song_url != self.lyrics_url {
       return false;
     }
@@ -22,6 +37,21 @@ impl App {
 
   pub fn handle_metadata_outcome(&mut self, outcome: MetadataOutcome) -> bool {
     let mut handled = false;
+    if let Some(hover) = self.hover.as_mut()
+      && hover.url == outcome.song_url
+    {
+      match &outcome.result {
+        Ok(entries) => {
+          hover.metadata = Some(entries.clone());
+          hover.metadata_error = None;
+        }
+        Err(error) => {
+          hover.metadata = None;
+          hover.metadata_error = Some(error.clone());
+        }
+      }
+      handled = true;
+    }
     if let Some(detail) = self.detail.as_mut()
       && detail.url == outcome.song_url
     {
@@ -74,6 +104,22 @@ impl App {
 
   pub fn handle_cover_outcome(&mut self, outcome: CoverOutcome) -> bool {
     let mut handled = false;
+    if let Some(hover) = self.hover.as_mut()
+      && hover.url == outcome.song_url
+    {
+      match &outcome.result {
+        Ok(path) => {
+          hover.cover_dims = outcome.dims;
+          hover.cover = Some(path.clone());
+          hover.cover_error = None;
+        }
+        Err(error) => {
+          hover.cover = None;
+          hover.cover_error = Some(error.clone());
+        }
+      }
+      handled = true;
+    }
     if let Some(detail) = self.detail.as_mut()
       && detail.url == outcome.song_url
     {

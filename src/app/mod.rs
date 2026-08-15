@@ -20,7 +20,7 @@ pub(crate) use crate::{
   config::{Settings, expand_home},
   cover, metadata,
   event::{AsyncEvent, CoverOutcome, LyricsOutcome, MpdEvent, MetadataOutcome, MetadataWriteOutcome},
-  layout::{PaneKind, PaneLayout, TabLayout, parse_detail, parse_tabs},
+  layout::{PaneKind, PaneLayout, PaneSource, TabLayout, parse_detail, parse_tabs},
   library::{resolve_music_dir, uri_to_path},
   keymap::KeymapConfig,
   lyrics::{self, Lyrics},
@@ -46,6 +46,7 @@ mod detail;
 pub(crate) mod mouse;
 
 pub use detail::DetailView;
+pub use detail::HoverView;
 
 pub struct App {
   pub settings: Settings,
@@ -97,6 +98,11 @@ pub struct App {
   pub cover_error: Option<String>,
   /// Secondary detail view for the selected queue entry (`i`).
   pub detail: Option<DetailView>,
+  /// Data view for the hovered queue row (`:hovered` pane source).
+  pub hover: Option<HoverView>,
+  /// Whether any configured pane uses the hovered data source (gates the
+  /// lazy loading in `sync_hover_view`).
+  pub(crate) has_hover_panes: bool,
   /// Layout tree for the secondary detail view (cover + metadata panes).
   pub(crate) detail_layout: PaneLayout,
   /// Visualizer worker handle (reports pane width for band allocation).
@@ -108,6 +114,10 @@ pub struct App {
   /// Inner screen areas of lyrics panes in the current tab, recorded at
   /// draw time so clicks can be mapped to lyric lines.
   pub lyrics_pane_areas: Vec<Rect>,
+  /// Data source of each recorded lyrics pane (parallel to
+  /// `lyrics_pane_areas`), so mouse handlers know whether a pane shows the
+  /// hovered song (no seek) or the playing song.
+  pub lyrics_pane_sources: Vec<PaneSource>,
   /// Screen areas of visible queue panes, recorded at draw time for mouse
   /// hit-testing (click to select, click again to play, wheel to move).
   pub queue_pane_areas: Vec<Rect>,
@@ -192,10 +202,13 @@ impl App {
       cover_dims: None,
       cover_error: None,
       detail: None,
+      hover: None,
+      has_hover_panes: false,
       visualizer: None,
       help_scroll: 0,
       max_help_scroll: 0,
       lyrics_pane_areas: Vec::new(),
+      lyrics_pane_sources: Vec::new(),
       queue_pane_areas: Vec::new(),
       tab_hit_areas: Vec::new(),
       lyrics_cursor: None,
@@ -208,6 +221,11 @@ impl App {
       help_bindings,
     };
     app.queue_state.select(Some(0));
+    app.has_hover_panes = app
+      .tabs
+      .iter()
+      .any(|tab| tab.layout.has_hovered_pane());
+    app.sync_hover_view();
     app
   }
 
@@ -236,6 +254,16 @@ impl App {
   /// The pane whose keymap receives keys on the active tab.
   pub fn main_pane(&self) -> PaneKind {
     self.current_tab().main
+  }
+
+  /// Data source of the main pane on the active tab (first pane matching
+  /// the main kind wins).
+  pub fn main_pane_source(&self) -> PaneSource {
+    self
+      .current_tab()
+      .layout
+      .source_of(self.main_pane())
+      .unwrap_or(PaneSource::Playing)
   }
 
   /// Does the active tab contain a pane of this kind?
@@ -324,6 +352,7 @@ impl App {
         if song_changed {
           self.on_song_changed();
         }
+        self.sync_hover_view();
         true
       }
     }
@@ -522,11 +551,49 @@ impl App {
       } else {
         detail.metadata_scroll.saturating_add(delta as usize)
       };
+    } else if self.main_pane() == PaneKind::Metadata
+      && self.main_pane_source() == PaneSource::Hovered
+      && let Some(hover) = self.hover.as_mut()
+    {
+      hover.metadata_scroll = if delta < 0 {
+        hover.metadata_scroll.saturating_sub(delta.unsigned_abs() as usize)
+      } else {
+        hover.metadata_scroll.saturating_add(delta as usize)
+      };
     } else if delta < 0 {
       self.metadata_scroll = self.metadata_scroll.saturating_sub(delta.unsigned_abs() as usize);
     } else {
       self.metadata_scroll = self.metadata_scroll.saturating_add(delta as usize);
     }
+  }
+
+  /// Whether the active tab's main lyrics pane reads the hovered song.
+  fn hover_lyrics_active(&self) -> bool {
+    self.main_pane() == PaneKind::Lyrics && self.main_pane_source() == PaneSource::Hovered
+  }
+
+  /// Scroll the hovered song's lyrics (plain list — no playback state).
+  fn scroll_hover_lyrics(&mut self, delta: i32) {
+    let Some(hover) = self.hover.as_mut() else { return };
+    let line_count = hover.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(0);
+    if line_count == 0 {
+      return;
+    }
+    let height = usize::from(
+      self
+        .lyrics_pane_areas
+        .iter()
+        .map(|area| area.height)
+        .max()
+        .unwrap_or(1)
+        .max(1),
+    );
+    let max_scroll = line_count.saturating_sub(height);
+    hover.lyrics_scroll = if delta < 0 {
+      hover.lyrics_scroll.saturating_sub(delta.unsigned_abs() as usize)
+    } else {
+      (hover.lyrics_scroll + delta as usize).min(max_scroll)
+    };
   }
 
 

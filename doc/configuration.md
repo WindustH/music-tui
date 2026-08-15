@@ -72,6 +72,23 @@ H(1:2, cover, V(2:1, lyrics, metadata))
 `main` names the pane that receives key input while the tab is active; it
 must appear in the tree (defaults to the first leaf).
 
+### Pane data sources
+
+The `cover`, `lyrics` and `metadata` panes take an optional `:source`
+suffix selecting which song they display:
+
+- `playing` (default) — the currently playing song
+- `hovered` — the song selected (hovered) in the queue
+
+```text
+H(2:1, queue, V(2:1, cover:hovered, lyrics:hovered))
+```
+
+A `:hovered` lyrics pane has no playback state: it renders as a plain
+scrollable list without sync highlighting, follow mode, or click-to-seek
+(those report "song is not playing"). Data for the hovered song loads
+lazily, only when some pane uses the source.
+
 ## Detail view layout
 
 `[layout].detail` configures the secondary detail view opened with `i`

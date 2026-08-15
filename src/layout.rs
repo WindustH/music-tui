@@ -11,6 +11,11 @@
 //! - `V(a:b, top, bottom)` splits vertically with the height shared `a:b`.
 //! - leaf panes: `queue`, `cover`, `lyrics`, `metadata`, `visualizer`.
 //!
+//! `cover`, `lyrics` and `metadata` panes take an optional **data source**
+//! suffix: `cover:hovered` shows the cover of the song hovered in the queue
+//! instead of the playing song (`lyrics:hovered` has no playback state, so
+//! it renders as a plain scrollable list). The default source is `playing`.
+//!
 //! A tab's keymap is decided by its **main pane** (see `TabLayout::main`):
 //! keys always dispatch to the main pane's bindings, which take priority over
 //! global bindings. Other panes in the same tab are display-only.
@@ -53,6 +58,30 @@ impl PaneKind {
   }
 }
 
+/// Where a display pane gets its song data from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
+pub enum PaneSource {
+  /// The song currently playing (the default).
+  #[default]
+  Playing,
+  /// The song hovered (selected) in the queue. Has no playback state:
+  /// lyrics render without sync highlight and seeking is disabled.
+  Hovered,
+}
+
+impl PaneSource {
+  pub fn parse(value: &str) -> Option<Self> {
+    match value.trim() {
+      "playing" => Some(Self::Playing),
+      "hovered" | "hover" => Some(Self::Hovered),
+      _ => None,
+    }
+  }
+
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitDir {
   /// Side-by-side split; children share the width.
@@ -63,7 +92,7 @@ pub enum SplitDir {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaneLayout {
-  Pane(PaneKind),
+  Pane(PaneKind, PaneSource),
   Split {
     dir: SplitDir,
     ratio: (u32, u32),
@@ -75,15 +104,35 @@ pub enum PaneLayout {
 impl PaneLayout {
   pub fn contains(&self, kind: PaneKind) -> bool {
     match self {
-      PaneLayout::Pane(pane) => *pane == kind,
+      PaneLayout::Pane(pane, _) => *pane == kind,
       PaneLayout::Split { first, second, .. } => first.contains(kind) || second.contains(kind),
     }
   }
 
   pub fn first_pane(&self) -> PaneKind {
     match self {
-      PaneLayout::Pane(kind) => *kind,
+      PaneLayout::Pane(kind, _) => *kind,
       PaneLayout::Split { first, .. } => first.first_pane(),
+    }
+  }
+
+  /// Source of the first pane matching `kind` (leftmost / topmost wins).
+  pub fn source_of(&self, kind: PaneKind) -> Option<PaneSource> {
+    match self {
+      PaneLayout::Pane(pane, source) => (*pane == kind).then_some(*source),
+      PaneLayout::Split { first, second, .. } => {
+        first.source_of(kind).or_else(|| second.source_of(kind))
+      }
+    }
+  }
+
+  /// Whether any pane uses the hovered data source.
+  pub fn has_hovered_pane(&self) -> bool {
+    match self {
+      PaneLayout::Pane(_, source) => *source == PaneSource::Hovered,
+      PaneLayout::Split { first, second, .. } => {
+        first.has_hovered_pane() || second.has_hovered_pane()
+      }
     }
   }
 }
@@ -129,7 +178,7 @@ pub fn parse_detail(spec: &str) -> Result<PaneLayout, String> {
 
 fn collect_panes(layout: &PaneLayout, panes: &mut Vec<PaneKind>) {
   match layout {
-    PaneLayout::Pane(kind) => panes.push(*kind),
+    PaneLayout::Pane(kind, _) => panes.push(*kind),
     PaneLayout::Split { first, second, .. } => {
       collect_panes(first, panes);
       collect_panes(second, panes);
@@ -172,7 +221,20 @@ fn parse_node(tokens: &mut Tokenizer) -> Result<PaneLayout, String> {
       let word = tokens.read_word();
       let kind = PaneKind::parse(&word)
         .ok_or_else(|| format!("unknown pane {word:?} (expected queue/cover/lyrics/metadata/visualizer)"))?;
-      Ok(PaneLayout::Pane(kind))
+      // Optional `:source` suffix on data panes (cover/lyrics/metadata).
+      let source = if tokens.peek() == Some(':') {
+        tokens.next();
+        let source_word = tokens.read_word();
+        let source = PaneSource::parse(&source_word)
+          .ok_or_else(|| format!("unknown source {source_word:?} (expected playing/hovered)"))?;
+        if !matches!(kind, PaneKind::Cover | PaneKind::Lyrics | PaneKind::Metadata) {
+          return Err(format!("pane {:?} does not take a data source", kind.title()));
+        }
+        source
+      } else {
+        PaneSource::Playing
+      };
+      Ok(PaneLayout::Pane(kind, source))
     }
     None => Err("unexpected end of layout".to_string()),
   }
@@ -293,7 +355,7 @@ mod tests {
   #[test]
   fn parses_single_pane() {
     let layout = parse_layout(" visualizer ").expect("valid layout");
-    assert_eq!(layout, PaneLayout::Pane(PaneKind::Visualizer));
+    assert_eq!(layout, PaneLayout::Pane(PaneKind::Visualizer, PaneSource::Playing));
   }
 
   #[test]
@@ -313,6 +375,24 @@ mod tests {
     assert!(tabs[0].layout.contains(PaneKind::Metadata));
     assert_eq!(tabs[1].main, PaneKind::Cover);
     assert!(tabs[1].layout.contains(PaneKind::Lyrics));
+  }
+
+  #[test]
+  fn parses_hovered_sources() {
+    let layout = parse_layout("V(2:1, cover:hovered, lyrics:hover)").expect("valid layout");
+    assert_eq!(layout.source_of(PaneKind::Cover), Some(PaneSource::Hovered));
+    assert_eq!(layout.source_of(PaneKind::Lyrics), Some(PaneSource::Hovered));
+    assert!(layout.has_hovered_pane());
+    let plain = parse_layout("cover").expect("valid layout");
+    assert_eq!(plain.source_of(PaneKind::Cover), Some(PaneSource::Playing));
+    assert!(!plain.has_hovered_pane());
+  }
+
+  #[test]
+  fn rejects_bad_sources() {
+    assert!(parse_layout("cover:nonsense").is_err());
+    assert!(parse_layout("queue:hovered").is_err());
+    assert!(parse_layout("visualizer:hovered").is_err());
   }
 
   #[test]

@@ -2,6 +2,25 @@
 
 use super::*;
 
+/// Data view for a song that is *not* playing: fed by the queue's hovered
+/// (selected) row through `:hovered` panes. Lyrics here have no playback
+/// state — no sync highlight, no auto-follow, no click-to-seek.
+pub struct HoverView {
+  pub url: String,
+  #[allow(dead_code)] // kept for parity with DetailView (future editor support)
+  pub path: PathBuf,
+  pub title: String,
+  pub metadata: Option<Vec<metadata::MetadataEntry>>,
+  pub metadata_error: Option<String>,
+  pub metadata_scroll: usize,
+  pub cover: Option<PathBuf>,
+  pub cover_dims: Option<(u32, u32)>,
+  pub cover_error: Option<String>,
+  pub lyrics: Option<crate::lyrics::Lyrics>,
+  pub lyrics_error: Option<String>,
+  pub lyrics_scroll: usize,
+}
+
 /// gallery-tui's image detail view: the sidebar always shows the playing
 /// song, details open as their own full-screen surface.
 pub struct DetailView {

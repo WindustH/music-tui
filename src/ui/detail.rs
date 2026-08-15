@@ -52,7 +52,7 @@ fn draw_detail_layout(
   layout: &PaneLayout,
 ) {
   match layout {
-    PaneLayout::Pane(kind) => match kind {
+    PaneLayout::Pane(kind, _) => match kind {
       PaneKind::Cover => draw_detail_cover(frame, ctx, area),
       PaneKind::Metadata => draw_detail_metadata(frame, ctx, area),
       // The config validator only admits cover/metadata panes here.

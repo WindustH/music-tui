@@ -2,7 +2,11 @@
 
 use super::*;
 
-pub(super) fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect) {
+pub(super) fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
+  if source == PaneSource::Hovered {
+    draw_hover_metadata_pane(frame, app, area);
+    return;
+  }
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Metadata;
   let title = if is_main { "metadata (e edit)" } else { "metadata" };
@@ -47,4 +51,44 @@ pub(super) fn metadata_line(app: &App, name: &str, value: &str) -> Line<'static>
     ),
     Span::styled(value.to_string(), Style::default().fg(theme.color(&theme.foreground))),
   ])
+}
+
+/// Metadata of the hovered queue row.
+fn draw_hover_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect) {
+  let theme = &app.settings.theme;
+  let is_main = app.main_pane() == PaneKind::Metadata;
+  let title = match &app.hover {
+    Some(hover) => format!("metadata · {}", hover.title),
+    None => "metadata (hovered)".to_string(),
+  };
+  let block = pane_block(app, &title, is_main);
+  let inner = block.inner(area);
+  frame.render_widget(block, area);
+  if inner.height == 0 {
+    return;
+  }
+  let Some(hover) = app.hover.as_ref() else {
+    frame.render_widget(
+      Paragraph::new("hover a queue entry").style(Style::default().fg(theme.color(&theme.muted))),
+      inner,
+    );
+    return;
+  };
+  let Some(entries) = hover.metadata.as_ref() else {
+    let hint = hover
+      .metadata_error
+      .clone()
+      .unwrap_or_else(|| "reading…".to_string());
+    frame.render_widget(
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      inner,
+    );
+    return;
+  };
+  let lines: Vec<Line> = entries
+    .iter()
+    .skip(hover.metadata_scroll)
+    .map(|entry| metadata_line(app, &entry.name, &entry.value))
+    .collect();
+  frame.render_widget(Paragraph::new(lines), inner);
 }

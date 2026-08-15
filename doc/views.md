@@ -52,6 +52,14 @@ priority over pane bindings everywhere.
 - `metadata` — tag and file properties of the current song, `e` edits.
 - `visualizer` — spectrum bars fed from the MPD fifo output.
 
+### Hovered data sources
+
+`cover`, `lyrics` and `metadata` panes accept a `:hovered` suffix (e.g.
+`layout = "H(2:1, queue, cover:hovered)"`) to display the queue's hovered
+row instead of the playing song. Hovered lyrics have no playback state —
+they render as a plain scrollable list (j/k scroll, no sync highlight, no
+seek). See [Configuration](configuration.md#pane-data-sources).
+
 ## Detail view
 
 Pressing `i` on a queue entry opens a secondary detail view (like opening an
