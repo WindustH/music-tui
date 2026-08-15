@@ -32,9 +32,9 @@ window = 2048         # FFT window, 256..=8192 (rounded to a power of two)
 
 - The band count follows the pane width: one band per column, capped at
   `bars` (default 256). The pane then picks a strip count that minimizes
-  `(leftover + 1) / strips` (every band gets an equal-width strip; the
-  `+1` keeps a zero-leftover split from shrinking the band count) and
-  centers the leftover columns as margins.
+  `(leftover + width/8) / strips` (every band gets an equal-width strip;
+  the proportional slack keeps a zero-leftover split from shrinking the
+  band count) and centers the leftover columns as margins.
 - Band layout and styled-line construction run on a worker thread
   (`spawn_band_renderer`); the UI thread only blits the finished lines.
 - Bands are log-spaced with a minimum step of one FFT bin: where a pure

@@ -52,10 +52,12 @@ impl VisualizerHandle {
 
 /// How `bands` analysis bands map onto `width` columns: every band gets an
 /// equal-width strip. The strip count is chosen to minimize
-/// `(leftover + 1) / strips` — the `+1` keeps a zero-leftover split from
-/// dominating (it would otherwise beat every denser split and shrink the
-/// band count) — and the leftover is split onto the left/right margins so
-/// the visualization is centered.
+/// `(leftover + slack) / strips` where `slack` grows with the available
+/// width (its 1/8, at least 1) — the slack keeps a zero-leftover split
+/// from dominating (it would otherwise beat every denser split and shrink
+/// the band count) while the proportional term tracks the pane size. The
+/// leftover is split onto the left/right margins so the visualization is
+/// centered.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BandLayout {
   /// Number of band strips rendered.
@@ -70,8 +72,11 @@ pub(crate) struct BandLayout {
 pub(crate) fn band_layout(width: usize, bands: usize) -> BandLayout {
   let width = width.max(1);
   let max_strips = width.min(bands.max(1));
-  // Exact search: minimize (leftover + 1)/strips, prefer more strips on
-  // ties (e.g. an exact divisor of the width wins with the smallest term).
+  // Exact search: minimize (leftover + slack)/strips with a slack that
+  // grows with the width (its 1/8, at least 1); prefer more strips on
+  // ties (e.g. an exact divisor of the width wins with the smallest
+  // leftover term).
+  let slack = (width as f32 / 8.0).max(1.0);
   let mut best = (f32::INFINITY, 1usize);
   for strips in 1..=max_strips {
     // A single strip trivially zeroes the ratio; skip it unless it is the
@@ -80,7 +85,7 @@ pub(crate) fn band_layout(width: usize, bands: usize) -> BandLayout {
       continue;
     }
     let leftover = width % strips;
-    let ratio = (leftover + 1) as f32 / strips as f32;
+    let ratio = (leftover as f32 + slack) / strips as f32;
     if ratio < best.0 || (ratio == best.0 && strips > best.1) {
       best = (ratio, strips);
     }
@@ -472,7 +477,8 @@ mod tests {
 
   #[test]
   fn exact_divisor_minimizes_leftover() {
-    // 300 columns, 256 bands: 150 strips of 2 leave no leftover at all.
+    // 300 columns, 256 bands: 150 strips of 2 keep the bars wide with no
+    // leftover; the slack still prefers them over 256 cramped strips.
     let layout = band_layout(300, 256);
     assert_eq!(layout.strips, 150);
     assert_eq!(layout.strip_width, 2);
@@ -481,23 +487,26 @@ mod tests {
   }
 
   #[test]
-  fn large_divisor_beats_max_strips() {
-    // 262 = 2 x 131: 131 strips of 2 beat 256 strips with 6 leftover.
+  fn proportional_slack_prefers_denser_bands() {
+    // 262 = 2 x 131 with zero leftover, but the width-proportional slack
+    // makes the denser 256 single-column bands (6 leftover as margins)
+    // score better: (0 + 32.75)/131 vs (6 + 32.75)/256.
     let layout = band_layout(262, 256);
-    assert_eq!(layout.strips, 131);
-    assert_eq!(layout.strip_width, 2);
+    assert_eq!(layout.strips, 256);
+    assert_eq!(layout.strip_width, 1);
+    assert_eq!(layout.left_margin, 3);
+    assert_eq!(layout.right_margin, 3);
   }
 
   #[test]
   fn leftover_centers_with_margins() {
-    // 263 is prime: the best split is 131 strips of 2 (leftover 1, ratio
-    // 1/131 beats 256 strips with leftover 7); the single leftover column
-    // becomes a right-side margin so the bars stay centered.
+    // 263 is prime: the slack favors the densest split — 256 strips of 1
+    // with the 7 leftover columns centered as margins.
     let layout = band_layout(263, 256);
-    assert_eq!(layout.strips, 131);
-    assert_eq!(layout.strip_width, 2);
-    assert_eq!(layout.left_margin, 0);
-    assert_eq!(layout.right_margin, 1);
+    assert_eq!(layout.strips, 256);
+    assert_eq!(layout.strip_width, 1);
+    assert_eq!(layout.left_margin, 3);
+    assert_eq!(layout.right_margin, 4);
     assert_eq!(
       layout.strips * layout.strip_width + layout.left_margin + layout.right_margin,
       263
@@ -524,9 +533,10 @@ mod tests {
 
   #[test]
   fn zero_leftover_does_not_override_band_count() {
-    // 135 = 45 x 3: scoring `leftover / strips` would lock onto the
-    // zero-leftover 45 strips and drop the band count; `(leftover + 1)`
-    // lets the denser 134 single-column bands win (one margin column).
+    // 135 = 45 x 3: a fixed +1 or zero-slack score would lock onto the
+    // zero-leftover 45 strips and drop the band count; the proportional
+    // slack lets the denser 134 single-column bands win (one margin
+    // column).
     let layout = band_layout(135, 134);
     assert_eq!(layout.strips, 134);
     assert_eq!(layout.strip_width, 1);
