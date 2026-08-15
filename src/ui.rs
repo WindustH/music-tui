@@ -3,18 +3,20 @@
 use std::time::Duration;
 
 use framework_tui::{
-  CompletionListStyle, KeyHelpDialogStyle, KeyHint, KeyHintsStyle, PromptLineStyle,
-  draw_completion_list, draw_key_help_dialog, draw_key_hints, draw_prompt_line,
+  CompletionListStyle, KeyHelpDialogStyle, KeyHintsStyle, PopupDialogStyle, PromptLineStyle,
+  draw_completion_list, draw_key_help_dialog_scrolled, draw_key_hints, draw_prompt_line,
+  key_hint_columns, key_hint_rows,
 };
 use img_tui::ProtocolOverlay;
 use mpd_client::commands::SingleMode;
 use mpd_client::responses::{PlayState, SongInQueue};
 use ratatui::{
   Frame,
+  buffer::CellDiffOption,
   layout::{Alignment, Constraint, Layout, Rect},
   style::{Modifier, Style},
   text::{Line, Span},
-  widgets::{Block, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, Wrap},
+  widgets::{Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, Wrap},
 };
 use tokio::sync::mpsc;
 
@@ -34,20 +36,50 @@ pub fn draw(
 ) -> FrameOutput {
   let area = frame.area();
 
+  // Footer height grows with the pending which-key hints (pdf-tui style).
+  let hints: Vec<framework_tui::KeyHint> = if app.show_help {
+    Vec::new()
+  } else {
+    app.dispatcher
+      .hints()
+      .iter()
+      .map(|hint| framework_tui::KeyHint {
+        key: hint.key.clone(),
+        label: hint.label.clone(),
+      })
+      .collect()
+  };
+  let hint_rows = if hints.is_empty() {
+    0
+  } else {
+    key_hint_rows(
+      hints.len(),
+      key_hint_columns(usize::from(app.settings.theme.which_key_columns), area.width),
+    ) as u16
+  };
+
   let [tab_bar, content, footer] = Layout::vertical([
     Constraint::Length(1),
     Constraint::Min(0),
-    Constraint::Length(3),
+    Constraint::Length(3 + hint_rows),
   ])
   .areas(area);
+
+  app.lyrics_pane_areas.clear();
+  app.queue_pane_areas.clear();
 
   draw_tab_bar(frame, app, tab_bar);
 
   let mut overlays = Vec::new();
   let tab = app.current_tab().clone();
-  draw_layout(frame, app, renderer, tx, content, &tab.layout, &mut overlays);
+  if let Some(detail) = app.detail.as_ref() {
+    // Secondary detail view: replaces the tab content (gallery-tui style).
+    draw_detail_view(frame, app, detail, renderer, tx, content, &mut overlays);
+  } else {
+    draw_layout(frame, app, renderer, tx, content, &tab.layout, &mut overlays);
+  }
 
-  let mut cursor_position = draw_footer(frame, app, footer);
+  let mut cursor_position = draw_footer(frame, app, footer, &hints);
 
   if let Some(completion) = app.command_state.completion()
     && app.prompt.is_some()
@@ -76,19 +108,51 @@ pub fn draw(
   }
 
   if app.show_help {
+    let theme = &app.settings.theme;
+    let background = theme.color(&theme.background);
+    let base = Style::default()
+      .fg(theme.color(&theme.foreground))
+      .bg(background);
+    let help_style = KeyHelpDialogStyle {
+      popup: PopupDialogStyle {
+        base,
+        border: Style::default()
+          .fg(theme.color(&theme.border))
+          .bg(background),
+        max_height: area.height.saturating_sub(2).clamp(8, 34),
+        ..PopupDialogStyle::default()
+      },
+      key: Style::default()
+        .fg(theme.color(&theme.accent))
+        .bg(background)
+        .add_modifier(Modifier::BOLD),
+      description: base,
+      muted: Style::default()
+        .fg(theme.color(&theme.muted))
+        .bg(background),
+      ..KeyHelpDialogStyle::default()
+    };
     let entries = app
       .bindings()
       .help_entries_filtered(framework_tui::KeyContext::Browser, |_| true);
-    draw_key_help_dialog(
+    if let Some(popup) = draw_key_help_dialog_scrolled(
       frame,
       area,
       &format!("keybindings: {}", app.current_tab().name),
       &entries,
-      &KeyHelpDialogStyle::default(),
-    );
+      &help_style,
+      app.help_scroll,
+    ) {
+      // Content = entries + close hint; visible rows sit between borders.
+      let visible = popup.height.saturating_sub(2) as usize;
+      app.max_help_scroll = (entries.len() + 1).saturating_sub(visible);
+      app.help_scroll = app.help_scroll.min(app.max_help_scroll);
+    }
+    // pdf-tui behavior: modals suppress transient protocol output —
+    // otherwise a kitty/sixel cover keeps floating above the dialog.
+    overlays.clear();
+    cursor_position = None;
   }
-
-  let _ = cursor_position.take();
 
   FrameOutput {
     overlays,
@@ -99,16 +163,26 @@ pub fn draw(
   }
 }
 
-fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
+fn hint_rows_for(hints: &[framework_tui::KeyHint], width: u16) -> u16 {
+  if hints.is_empty() {
+    return 0;
+  }
+  key_hint_rows(hints.len(), key_hint_columns(3, width)) as u16
+}
+
+fn draw_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
   let border = Style::default().fg(theme.color(&theme.border));
+  app.tab_hit_areas.clear();
   let mut spans = Vec::new();
+  let mut column = area.x;
   for (index, tab) in app.tabs.iter().enumerate() {
     if index > 0 {
       spans.push(Span::styled(" │ ", border));
+      column += 3;
     }
     let active = index == app.tab;
-    let label = format!(" {} {} ", index + 1, tab.name);
+    let label = format!(" {} ", tab.name);
     let style = if active {
       Style::default()
         .fg(theme.color(&theme.accent))
@@ -116,12 +190,18 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
     } else {
       Style::default().fg(theme.color(&theme.muted))
     };
+    // Record the hit rectangle for mouse-based tab switching.
+    if app.tab_hit_areas.len() < 9 {
+      app.tab_hit_areas.push(Rect {
+        x: column,
+        y: area.y,
+        width: label.chars().count() as u16,
+        height: 1,
+      });
+    }
+    column += label.chars().count() as u16;
     spans.push(Span::styled(label, style));
   }
-  spans.push(Span::styled(
-    "  ←/→ switch tabs",
-    Style::default().fg(theme.color(&theme.muted)),
-  ));
   frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -194,12 +274,17 @@ fn pane_block(app: &App, title: &str, is_main: bool) -> Block<'static> {
 fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Queue;
-  let block = pane_block(app, &format!("queue ({})", app.queue.len()), is_main);
+  let title = match app.queue_filter.as_deref() {
+    Some(filter) => format!("queue {}/{} · /{filter}", app.queue_filter_matches.len(), app.queue.len()),
+    None => format!("queue ({})", app.queue.len()),
+  };
+  let block = pane_block(app, &title, is_main);
   let inner = block.inner(area);
   frame.render_widget(block, area);
   if inner.height == 0 || inner.width == 0 {
     return;
   }
+  app.queue_pane_areas.push(inner);
 
   if app.queue.is_empty() {
     let hint = if app.connection_error.is_some() {
@@ -215,6 +300,14 @@ fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     return;
   }
+  if app.queue_filter_matches.is_empty() {
+    let hint = format!("no matches for /{}", app.queue_filter.as_deref().unwrap_or_default());
+    frame.render_widget(
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      inner,
+    );
+    return;
+  }
 
   let (position, _) = app
     .status
@@ -224,10 +317,10 @@ fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let playing = position.map(|pos| pos.0);
 
   let items: Vec<ListItem> = app
-    .queue
+    .queue_filter_matches
     .iter()
-    .enumerate()
-    .map(|(index, song)| ListItem::new(queue_line(app, index, song, playing)))
+    .filter_map(|position| app.queue.get(*position).map(|song| (position, song)))
+    .map(|(position, song)| ListItem::new(queue_line(app, *position, song, playing)))
     .collect();
 
   let list = List::new(items).highlight_style(
@@ -239,7 +332,7 @@ fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
 
   let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
     .style(Style::default().fg(theme.color(&theme.border)));
-  let mut state = ratatui::widgets::ScrollbarState::new(app.queue.len())
+  let mut state = ratatui::widgets::ScrollbarState::new(app.queue_filter_matches.len())
     .position(app.queue_state.selected().unwrap_or(0));
   frame.render_stateful_widget(scrollbar, area, &mut state);
 }
@@ -294,13 +387,31 @@ fn draw_cover_pane(
     return;
   }
 
-  // Center the artwork as a square that fits the pane.
-  let side = inner.width.min(inner.height);
-  let image_area = Rect {
-    x: inner.x + (inner.width - side) / 2,
-    y: inner.y + (inner.height - side) / 2,
-    width: side,
-    height: side,
+  // Center the artwork: fit the intrinsic aspect ratio inside the pane,
+  // converting through cell pixels (same math as gallery-tui's
+  // `fit_image_rect` — cells are taller than they are wide).
+  let (cell_width, cell_height) = renderer.cell_pixels();
+  let image_area = match app.cover_dims {
+    Some((image_width, image_height)) if image_width > 0 && image_height > 0 => {
+      let max_pixel_width = f64::from(inner.width) * f64::from(cell_width.max(1));
+      let max_pixel_height = f64::from(inner.height) * f64::from(cell_height.max(1));
+      let scale = (max_pixel_width / f64::from(image_width))
+        .min(max_pixel_height / f64::from(image_height))
+        .max(0.0);
+      let fitted_width = ((f64::from(image_width) * scale) / f64::from(cell_width.max(1)))
+        .round()
+        .clamp(1.0, f64::from(inner.width)) as u16;
+      let fitted_height = ((f64::from(image_height) * scale) / f64::from(cell_height.max(1)))
+        .round()
+        .clamp(1.0, f64::from(inner.height)) as u16;
+      Rect {
+        x: inner.x + inner.width.saturating_sub(fitted_width) / 2,
+        y: inner.y + inner.height.saturating_sub(fitted_height) / 2,
+        width: fitted_width,
+        height: fitted_height,
+      }
+    }
+    _ => inner,
   };
 
   let current_url = app.current_song_url().unwrap_or_default();
@@ -328,6 +439,8 @@ fn draw_cover_pane(
           fingerprint,
           erase,
         }) => {
+          // Keep the TUI from touching cells under the protocol image.
+          reserve_protocol_area(frame, image_area);
           overlays.push(ProtocolOverlay {
             area: image_area,
             mode: *mode,
@@ -360,13 +473,29 @@ fn draw_cover_pane(
   }
 }
 
+fn reserve_protocol_area(frame: &mut Frame, area: Rect) {
+  let buffer = frame.buffer_mut();
+  for y in area.y..area.y.saturating_add(area.height) {
+    for x in area.x..area.x.saturating_add(area.width) {
+      if let Some(cell) = buffer.cell_mut((x, y)) {
+        cell.set_diff_option(CellDiffOption::Skip);
+      }
+    }
+  }
+}
+
 fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Lyrics;
-  let block = pane_block(app, "lyrics", is_main);
+  let title = if app.lyrics_follow {
+    "lyrics (follow)"
+  } else {
+    "lyrics (manual · enter jump)"
+  };
+  let block = pane_block(app, title, is_main);
   let inner = block.inner(area);
   frame.render_widget(block, area);
-  if inner.height == 0 {
+  if inner.height == 0 || inner.width == 0 {
     return;
   }
 
@@ -382,41 +511,218 @@ fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     return;
   };
 
-  let elapsed = app.elapsed();
-  let active = lyrics.active_index(Duration::from_secs_f64(elapsed));
+  let elapsed = Duration::from_secs_f64(app.elapsed());
+  let active = lyrics.active_index(elapsed);
+  let karaoke = lyrics.karaoke(elapsed);
+  let cursor = (!app.lyrics_follow).then_some(app.lyrics_cursor).flatten();
 
-  if app.lyrics_follow
-    && let Some(active) = active
-  {
-    let target = active.saturating_sub(inner.height as usize / 2);
-    app.lyrics_scroll = target as u16;
-  }
-  let scroll = app.lyrics_scroll as usize;
-
-  let lines: Vec<Line> = match lyrics {
-    crate::lyrics::Lyrics::Synced(lines) => lines
-      .iter()
-      .skip(scroll)
-      .enumerate()
-      .map(|(row, line)| {
-        let is_active = Some(row + scroll) == active;
-        let style = if is_active {
-          Style::default()
-            .fg(theme.color(&theme.lyrics_active))
-            .add_modifier(Modifier::BOLD)
-        } else {
-          Style::default().fg(theme.color(&theme.foreground))
-        };
-        Line::styled(line.text.clone(), style)
-      })
-      .collect(),
-    crate::lyrics::Lyrics::Plain(lines) => lines
-      .iter()
-      .skip(scroll)
-      .map(|line| Line::styled(line.clone(), Style::default().fg(theme.color(&theme.foreground))))
-      .collect(),
+  // Scrolling: follow centers the active line; manual keeps the stored
+  // viewport offset and only adjusts it to keep the pointer visible
+  // (viewport is the source of truth, the pointer passively follows).
+  let scroll = if app.lyrics_follow {
+    active
+      .map(|active| active.saturating_sub(inner.height as usize / 2))
+      .unwrap_or(app.lyrics_scroll as usize)
+  } else {
+    let mut scroll = app.lyrics_scroll as usize;
+    if let Some(cursor) = cursor
+      && cursor < scroll
+    {
+      scroll = cursor;
+    } else if let Some(cursor) = cursor
+      && cursor >= scroll + inner.height as usize
+    {
+      scroll = cursor + 1 - inner.height as usize;
+    }
+    scroll
   };
+  app.lyrics_scroll = scroll as u16;
+  app.lyrics_pane_areas.push(inner);
+
+  let line_count = lyrics.line_count();
+  let mut lines: Vec<Line> = Vec::new();
+  for row in 0..inner.height as usize {
+    let index = scroll + row;
+    if index >= line_count {
+      break;
+    }
+    let is_active = active == Some(index);
+    let is_cursor = cursor == Some(index);
+    let mut spans: Vec<Span> = Vec::new();
+    if is_cursor {
+      spans.push(Span::styled(
+        "❯ ",
+        Style::default()
+          .fg(theme.color(&theme.accent))
+          .add_modifier(Modifier::BOLD),
+      ));
+    } else {
+      spans.push(Span::raw("  "));
+    }
+
+    let text = lyrics.line(index).unwrap_or_default();
+    let sung = if is_active { karaoke.map(|(_, sung)| sung).unwrap_or(0) } else { 0 };
+    if is_active && sung > 0 {
+      // Karaoke: sung prefix highlighted, remainder in the base style.
+      let chars: Vec<char> = text.chars().collect();
+      let split = sung.min(chars.len());
+      spans.push(Span::styled(
+        chars[..split].iter().collect::<String>(),
+        Style::default()
+          .fg(theme.color(&theme.lyrics_active))
+          .add_modifier(Modifier::BOLD),
+      ));
+      spans.push(Span::styled(
+        chars[split..].iter().collect::<String>(),
+        Style::default().fg(theme.color(&theme.foreground)),
+      ));
+    } else {
+      let style = if is_active {
+        Style::default()
+          .fg(theme.color(&theme.foreground))
+          .add_modifier(Modifier::BOLD)
+      } else {
+        Style::default().fg(theme.color(&theme.muted))
+      };
+      spans.push(Span::styled(text.to_string(), style));
+    }
+    lines.push(Line::from(spans));
+  }
   frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+/// Secondary detail surface for a queue entry (`i`): cover on top,
+/// metadata below — the sidebar data stays untouched.
+fn draw_detail_view(
+  frame: &mut Frame,
+  app: &App,
+  detail: &crate::app::DetailView,
+  renderer: &mut CoverRenderStore,
+  tx: &mpsc::UnboundedSender<AsyncEvent>,
+  area: Rect,
+  overlays: &mut Vec<ProtocolOverlay>,
+) {
+  let theme = &app.settings.theme;
+  let block = Block::default()
+    .borders(Borders::ALL)
+    .border_style(Style::default().fg(theme.color(&theme.accent)))
+    .title(format!(" detail: {} ", detail.title))
+    .title_alignment(Alignment::Center);
+  let inner = block.inner(area);
+  frame.render_widget(block, area);
+  if inner.width < 2 || inner.height < 2 {
+    return;
+  }
+  let [cover_area, metadata_area] =
+    Layout::vertical([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)]).areas(inner);
+
+  // --- cover (same fitting math as the cover pane) ---
+  let (cell_width, cell_height) = renderer.cell_pixels();
+  let image_area = match detail.cover_dims {
+    Some((image_width, image_height)) if image_width > 0 && image_height > 0 => {
+      let max_pixel_width = f64::from(cover_area.width) * f64::from(cell_width.max(1));
+      let max_pixel_height = f64::from(cover_area.height) * f64::from(cell_height.max(1));
+      let scale = (max_pixel_width / f64::from(image_width))
+        .min(max_pixel_height / f64::from(image_height))
+        .max(0.0);
+      let fitted_width = ((f64::from(image_width) * scale) / f64::from(cell_width.max(1)))
+        .round()
+        .clamp(1.0, f64::from(cover_area.width)) as u16;
+      let fitted_height = ((f64::from(image_height) * scale) / f64::from(cell_height.max(1)))
+        .round()
+        .clamp(1.0, f64::from(cover_area.height)) as u16;
+      Rect {
+        x: cover_area.x + cover_area.width.saturating_sub(fitted_width) / 2,
+        y: cover_area.y + cover_area.height.saturating_sub(fitted_height) / 2,
+        width: fitted_width,
+        height: fitted_height,
+      }
+    }
+    _ => cover_area,
+  };
+  match detail.cover.as_ref() {
+    Some(path) => {
+      renderer.request(path, image_area.width, image_area.height, tx);
+      match renderer.get(path, image_area.width, image_area.height) {
+        Some(RenderedImage::Symbols { text, .. }) => {
+          frame.render_widget(
+            Paragraph::new(text.clone()).wrap(Wrap { trim: false }),
+            image_area,
+          );
+        }
+        Some(RenderedImage::Protocol {
+          mode,
+          data,
+          refresh,
+          placement,
+          fingerprint,
+          erase,
+        }) => {
+          reserve_protocol_area(frame, image_area);
+          overlays.push(ProtocolOverlay {
+            area: image_area,
+            mode: *mode,
+            data: data.clone(),
+            refresh: refresh.clone(),
+            placement: placement.clone(),
+            fingerprint: *fingerprint,
+            erase: erase.clone(),
+          });
+        }
+        None => {
+          frame.render_widget(
+            Paragraph::new("rendering cover…")
+              .style(Style::default().fg(theme.color(&theme.muted)))
+              .alignment(Alignment::Center),
+            cover_area,
+          );
+        }
+      }
+    }
+    None => {
+      let hint = detail
+        .cover_error
+        .clone()
+        .unwrap_or_else(|| "no cover".to_string());
+      frame.render_widget(
+        Paragraph::new(hint)
+          .style(Style::default().fg(theme.color(&theme.muted)))
+          .alignment(Alignment::Center),
+        cover_area,
+      );
+    }
+  }
+
+  // --- metadata ---
+  let metadata_block = Block::default()
+    .borders(Borders::ALL)
+    .border_style(Style::default().fg(theme.color(&theme.border)))
+    .title(" metadata (e edit · i close) ");
+  let metadata_inner = metadata_block.inner(metadata_area);
+  frame.render_widget(metadata_block, metadata_area);
+  if metadata_inner.height == 0 {
+    return;
+  }
+  match detail.metadata.as_ref() {
+    Some(entries) => {
+      let lines: Vec<Line> = entries
+        .iter()
+        .skip(detail.metadata_scroll as usize)
+        .map(|entry| metadata_line(app, &entry.name, &entry.value))
+        .collect();
+      frame.render_widget(Paragraph::new(lines), metadata_inner);
+    }
+    None => {
+      let hint = detail
+        .metadata_error
+        .clone()
+        .unwrap_or_else(|| "reading metadata…".to_string());
+      frame.render_widget(
+        Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+        metadata_inner,
+      );
+    }
+  }
 }
 
 fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -485,35 +791,104 @@ fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     return;
   }
 
-  let chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-  let mut spans = Vec::with_capacity(app.spectrum.len());
-  for value in &app.spectrum {
-    let value = (*value).min(100) as usize;
-    let index = if value == 0 { 0 } else { (value * chars.len() / 100).min(chars.len() - 1) };
-    let color = if value < 34 {
-      theme.color(&theme.visualizer_low)
-    } else if value < 67 {
-      theme.color(&theme.visualizer_mid)
-    } else {
-      theme.color(&theme.visualizer_high)
-    };
-    spans.push(Span::styled(chars[index].to_string(), Style::default().fg(color)));
+  // Resample the configured bar count to the pane width so the visualization
+  // always spans the full available area (max of each source range).
+  let bars = &app.spectrum;
+  let columns = inner.width as usize;
+  let values: Vec<u8> = (0..columns)
+    .map(|column| {
+      let start = column * bars.len() / columns;
+      let end = ((column + 1) * bars.len() / columns).max(start + 1);
+      bars[start..end.min(bars.len())]
+        .iter()
+        .map(|value| *value)
+        .max()
+        .unwrap_or(0)
+    })
+    .collect();
+
+  // Full-height vertical bars: '█' for fully filled rows, a partial block
+  // at the top edge, empty cells above — ncmpcpp style, bottom-aligned.
+  let height = inner.height as usize;
+  let fraction_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+  let mut lines: Vec<Line> = Vec::with_capacity(height);
+  for row in 0..height {
+    let from_bottom = height - 1 - row;
+    let mut spans = Vec::with_capacity(columns);
+    for value in &values {
+      let value = (*value).min(100) as usize;
+      let full = value * height / 100; // fully filled rows below the tip
+      let remainder = value * height % 100; // fraction of the tip row
+      let (ch, lit) = if from_bottom < full {
+        ('█', true)
+      } else if from_bottom == full && value > 0 {
+        let index = (remainder * fraction_chars.len() / 100).max(1);
+        (
+          fraction_chars[(index - 1).min(fraction_chars.len() - 1)],
+          true,
+        )
+      } else {
+        (' ', false)
+      };
+      let color = if value < 34 {
+        theme.color(&theme.visualizer_low)
+      } else if value < 67 {
+        theme.color(&theme.visualizer_mid)
+      } else {
+        theme.color(&theme.visualizer_high)
+      };
+      let style = if lit {
+        Style::default().fg(color)
+      } else {
+        Style::default()
+      };
+      spans.push(Span::styled(ch.to_string(), style));
+    }
+    lines.push(Line::from(spans));
   }
-  let line = Line::from(spans);
-  let text_height = 1u16;
-  let centered = Rect {
-    x: inner.x,
-    y: inner.y + inner.height.saturating_sub(text_height) / 2,
-    width: inner.width,
-    height: text_height,
-  };
-  frame.render_widget(Paragraph::new(line), centered);
+  frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_footer(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> {
+fn draw_footer(
+  frame: &mut Frame,
+  app: &mut App,
+  area: Rect,
+  hints: &[framework_tui::KeyHint],
+) -> Option<(u16, u16)> {
   let theme = &app.settings.theme;
-  let [status_line, input_line, band_line] =
-    Layout::vertical([Constraint::Length(1); 3]).areas(area);
+  let [hints_area, status_line, input_line, band_line] = Layout::vertical([
+    Constraint::Length(hint_rows_for(hints, area.width)),
+    Constraint::Length(1),
+    Constraint::Length(1),
+    Constraint::Length(1),
+  ])
+  .areas(area);
+
+  // --- which-key hints (pending key sequences) ---
+  if !hints.is_empty() {
+    draw_key_hints(
+      frame,
+      hints,
+      hints_area,
+      &KeyHintsStyle {
+        base: Style::default()
+          .fg(theme.color(&theme.which_key_foreground))
+          .bg(theme.color(&theme.which_key_background)),
+        key: Style::default()
+          .fg(theme.color(&theme.which_key_key))
+          .bg(theme.color(&theme.which_key_background))
+          .add_modifier(Modifier::BOLD),
+        separator: Style::default()
+          .fg(theme.color(&theme.which_key_separator_color))
+          .bg(theme.color(&theme.which_key_background)),
+        description: Style::default()
+          .fg(theme.color(&theme.which_key_description))
+          .bg(theme.color(&theme.which_key_background)),
+        separator_text: theme.which_key_separator.clone(),
+        columns: key_hint_columns(usize::from(theme.which_key_columns), area.width),
+      },
+    );
+  }
 
   // --- status line ---
   let mut spans = Vec::new();
@@ -590,33 +965,9 @@ fn draw_footer(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16
       ))),
       input_line,
     );
-  } else {
-  let hints = vec![
-    KeyHint { key: "←/→".to_string(), label: "switch tab".to_string() },
-    KeyHint { key: "1-9".to_string(), label: "go to tab".to_string() },
-    KeyHint { key: "space".to_string(), label: "play/pause".to_string() },
-    KeyHint { key: "n/p".to_string(), label: "next/prev".to_string() },
-    KeyHint { key: "+-".to_string(), label: "volume".to_string() },
-    KeyHint { key: ":".to_string(), label: "command".to_string() },
-    KeyHint { key: "f1".to_string(), label: "help".to_string() },
-    KeyHint { key: "q".to_string(), label: "quit".to_string() },
-  ];
-  draw_key_hints(
-    frame,
-    &hints,
-    input_line,
-    &KeyHintsStyle {
-      base: Style::default().fg(theme.color(&theme.foreground)),
-      key: Style::default()
-        .fg(theme.color(&theme.accent))
-        .add_modifier(Modifier::BOLD),
-      separator: Style::default().fg(theme.color(&theme.muted)),
-      description: Style::default().fg(theme.color(&theme.muted)),
-      separator_text: " · ".to_string(),
-      columns: 4,
-    },
-  );
   }
+  // No static hint line: keys follow the user's keymap, discoverable via
+  // the f1 help dialog instead.
 
   // Paint the band last: the theme borrow above must end before handing
   // `app` over as mutable.

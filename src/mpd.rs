@@ -57,8 +57,6 @@ pub enum MpdCommand {
   AddUri(String),
   Rescan,
   ArmInterrupt(InterruptSession),
-  DisarmInterrupt,
-  Refresh,
 }
 
 #[derive(Clone)]
@@ -179,9 +177,6 @@ async fn run_session(
         match command {
           MpdCommand::ArmInterrupt(session) => {
             state.interrupt = Some(session);
-          }
-          MpdCommand::DisarmInterrupt => {
-            state.interrupt = None;
           }
           command => {
             if command_touches_queue(&command) {
@@ -359,7 +354,7 @@ async fn run_command(client: &Client, command: MpdCommand) {
       .command(commands::Rescan::new())
       .await
       .map(|_| ()).map_err(|error| error.to_string()),
-    MpdCommand::ArmInterrupt(_) | MpdCommand::DisarmInterrupt | MpdCommand::Refresh => Ok(()),
+    MpdCommand::ArmInterrupt(_) => Ok(()),
   };
   if let Err(error) = outcome {
     warn!(%error, "mpd command failed");
@@ -391,24 +386,4 @@ pub async fn capture_interrupt_session(client: &Client) -> anyhow::Result<Interr
   })
 }
 
-/// Queue files for `open`; returns a human-readable notice.
-#[allow(clippy::too_many_arguments)]
-pub async fn queue_open_target(
-  client: &Client,
-  uris: &[String],
-  play_position: Option<usize>,
-) -> anyhow::Result<String> {
-  client.command(ClearQueue).await?;
-  let mut added = 0usize;
-  for uri in uris {
-    client.command(Add::uri(uri)).await?;
-    added += 1;
-  }
-  if let Some(position) = play_position {
-    client
-      .command(Play::song(SongPosition(position.min(added.saturating_sub(1)))))
-      .await?;
-  }
-  Ok(format!("queued {added} song(s)"))
-}
 

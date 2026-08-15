@@ -27,14 +27,6 @@ pub enum PaneKind {
 }
 
 impl PaneKind {
-  pub const ALL: [PaneKind; 5] = [
-    PaneKind::Queue,
-    PaneKind::Cover,
-    PaneKind::Lyrics,
-    PaneKind::Metadata,
-    PaneKind::Visualizer,
-  ];
-
   pub fn parse(value: &str) -> Option<Self> {
     match value.trim() {
       "queue" => Some(Self::Queue),

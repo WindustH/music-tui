@@ -22,7 +22,6 @@ pub struct Settings {
   pub config: AppConfig,
   pub keymap: KeymapConfig,
   pub theme: ThemeConfig,
-  pub config_path: PathBuf,
   pub cache_dir: PathBuf,
 }
 
@@ -207,7 +206,7 @@ impl TabConfig {
   fn playing() -> Self {
     Self {
       name: "playing".to_string(),
-      layout: "V(2:1, cover, lyrics)".to_string(),
+      layout: "H(1:2, cover, lyrics)".to_string(),
       main: Some("cover".to_string()),
     }
   }
@@ -286,7 +285,6 @@ pub async fn load_or_create() -> Result<Settings> {
     config,
     keymap,
     theme,
-    config_path,
     cache_dir,
   })
 }
@@ -376,10 +374,22 @@ impl NormalizeConfigDefaults for AppConfig {
   fn normalize_defaults(&mut self) {
     AppConfig::normalize_defaults(self);
   }
+
+  fn validate(&self) -> Result<(), String> {
+    AppConfig::validate(self)
+  }
+
+  fn to_config_toml(&self) -> Result<String> {
+    app_config_toml(self)
+  }
 }
 
 impl NormalizeConfigDefaults for ThemeConfig {
-  fn normalize_defaults(&mut self) {}
+  fn normalize_defaults(&mut self) {
+    if self.which_key_columns == 0 {
+      self.which_key_columns = 3;
+    }
+  }
 }
 
 async fn write_keymap_default(path: &Path, default: KeymapConfig) -> Result<KeymapConfig> {

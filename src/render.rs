@@ -43,6 +43,10 @@ impl CoverRenderStore {
 
   /// Request a render for `path` unless it is already shown or in flight.
   /// Returns true when the request was queued.
+  pub fn cell_pixels(&self) -> (u16, u16) {
+    self.native_config.cell_pixels.unwrap_or((8, 16))
+  }
+
   pub fn request(&mut self, path: &Path, width: u16, height: u16, tx: &mpsc::UnboundedSender<AsyncEvent>) -> bool {
     let cache_key = render_cache_key(path, width, height, &self.native_config);
     if self.entries.contains_key(&cache_key) || self.in_flight.contains(&cache_key) {
@@ -88,12 +92,6 @@ impl CoverRenderStore {
         false
       }
     }
-  }
-
-  pub fn clear(&mut self) {
-    self.entries.clear();
-    self.order.clear();
-    self.in_flight.clear();
   }
 }
 

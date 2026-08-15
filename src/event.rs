@@ -49,6 +49,8 @@ pub struct MetadataWriteOutcome {
 pub struct CoverOutcome {
   pub song_url: String,
   pub result: Result<PathBuf, String>,
+  /// Intrinsic pixel dimensions of the cover, read next to `find_cover`.
+  pub dims: Option<(u32, u32)>,
 }
 
 #[derive(Debug)]

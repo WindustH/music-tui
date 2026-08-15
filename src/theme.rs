@@ -18,6 +18,13 @@ pub struct ThemeConfig {
   pub visualizer_low: String,
   pub visualizer_mid: String,
   pub visualizer_high: String,
+  pub which_key_background: String,
+  pub which_key_foreground: String,
+  pub which_key_key: String,
+  pub which_key_description: String,
+  pub which_key_separator: String,
+  pub which_key_separator_color: String,
+  pub which_key_columns: u16,
 }
 
 impl Default for ThemeConfig {
@@ -38,6 +45,13 @@ impl Default for ThemeConfig {
       visualizer_low: "green".to_string(),
       visualizer_mid: "yellow".to_string(),
       visualizer_high: "red".to_string(),
+      which_key_background: "black".to_string(),
+      which_key_foreground: "white".to_string(),
+      which_key_key: "light_cyan".to_string(),
+      which_key_description: "light_magenta".to_string(),
+      which_key_separator: " -> ".to_string(),
+      which_key_separator_color: "dark_gray".to_string(),
+      which_key_columns: 3,
     }
   }
 }

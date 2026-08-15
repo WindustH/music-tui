@@ -14,6 +14,7 @@ mod metadata;
 mod mpd;
 mod open;
 mod render;
+mod state;
 mod terminal;
 mod theme;
 mod ui;
@@ -117,6 +118,8 @@ async fn run_tui(
   let mut renderer = CoverRenderStore::new(render_config, native_config, render_modes);
   let mut tui = Tui::new(protocol_reset)?;
   let mut app = App::new(settings, mpd, tx.clone(), initial_notice, interrupt);
+  app.restore_state(state::PersistedState::load(&app.settings.cache_dir));
+  let mut saved_state = app.snapshot_state();
   let mut needs_draw = true;
 
   loop {
@@ -153,9 +156,21 @@ async fn run_tui(
     while let Ok(message) = rx.try_recv() {
       needs_draw |= handle_async_event(message, &input_generation, &mut app, &mut renderer);
     }
+
+    // Persist UI state whenever it changed (tab, follow, selection) —
+    // crash-safe via atomic rename, cheap enough to run per event batch.
+    let current_state = app.snapshot_state();
+    if current_state != saved_state {
+      current_state.save(&app.settings.cache_dir);
+      saved_state = current_state;
+    }
   }
   visualizer.stop();
   tui.restore()?;
+  let final_state = app.snapshot_state();
+  if final_state != saved_state {
+    final_state.save(&app.settings.cache_dir);
+  }
   Ok(())
 }
 
