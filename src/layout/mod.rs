@@ -29,6 +29,7 @@ mod parser;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaneKind {
   Queue,
+  Library,
   Cover,
   Lyrics,
   Metadata,
@@ -39,6 +40,7 @@ impl PaneKind {
   pub fn parse(value: &str) -> Option<Self> {
     match value.trim() {
       "queue" => Some(Self::Queue),
+      "library" => Some(Self::Library),
       "cover" => Some(Self::Cover),
       "lyrics" => Some(Self::Lyrics),
       "metadata" => Some(Self::Metadata),
@@ -50,6 +52,7 @@ impl PaneKind {
   pub fn title(self) -> &'static str {
     match self {
       PaneKind::Queue => "queue",
+      PaneKind::Library => "library",
       PaneKind::Cover => "cover",
       PaneKind::Lyrics => "lyrics",
       PaneKind::Metadata => "metadata",
@@ -69,16 +72,20 @@ pub enum PaneSource {
   /// The song currently playing (the default).
   #[default]
   Playing,
-  /// The song hovered (selected) in the queue. Has no playback state:
+  /// The song hovered (selected) in the queue pane. No playback state:
   /// lyrics render without sync highlight and seeking is disabled.
-  Hovered,
+  QueueHovered,
+  /// The track hovered (selected) in the library pane. No playback state
+  /// either.
+  LibraryHovered,
 }
 
 impl PaneSource {
   pub fn parse(value: &str) -> Option<Self> {
     match value.trim() {
       "playing" => Some(Self::Playing),
-      "hovered" | "hover" => Some(Self::Hovered),
+      "queue-hovered" | "queue" | "hovered" | "hover" => Some(Self::QueueHovered),
+      "library-hovered" | "library" | "lib" => Some(Self::LibraryHovered),
       _ => None,
     }
   }
@@ -138,12 +145,12 @@ impl PaneLayout {
     }
   }
 
-  /// Whether any pane uses the hovered data source.
-  pub fn has_hovered_pane(&self) -> bool {
+  /// Whether any pane uses the given data source.
+  pub fn has_source(&self, source: PaneSource) -> bool {
     match self {
-      PaneLayout::Pane(_, source) => *source == PaneSource::Hovered,
+      PaneLayout::Pane(_, pane_source) => *pane_source == source,
       PaneLayout::Split { first, second, .. } => {
-        first.has_hovered_pane() || second.has_hovered_pane()
+        first.has_source(source) || second.has_source(source)
       }
     }
   }
@@ -253,23 +260,26 @@ mod tests {
   #[test]
   fn default_config_parses() {
     let tabs = parse_tabs(&LayoutConfig::default()).expect("default layouts");
-    assert_eq!(tabs.len(), 5);
+    assert_eq!(tabs.len(), 6);
     assert_eq!(tabs[0].main, PaneKind::Queue);
     assert!(tabs[0].layout.contains(PaneKind::Cover));
     assert!(tabs[0].layout.contains(PaneKind::Metadata));
-    assert_eq!(tabs[1].main, PaneKind::Cover);
-    assert!(tabs[1].layout.contains(PaneKind::Lyrics));
+    assert_eq!(tabs[1].main, PaneKind::Library);
+    assert!(tabs[1].layout.contains(PaneKind::Cover));
+    assert!(tabs[1].layout.contains(PaneKind::Metadata));
+    assert_eq!(tabs[2].main, PaneKind::Cover);
+    assert!(tabs[2].layout.contains(PaneKind::Lyrics));
   }
 
   #[test]
   fn parses_hovered_sources() {
     let layout = parse_layout("V(2:1, cover:hovered, lyrics:hover)").expect("valid layout");
-    assert_eq!(layout.source_of(PaneKind::Cover), Some(PaneSource::Hovered));
-    assert_eq!(layout.source_of(PaneKind::Lyrics), Some(PaneSource::Hovered));
-    assert!(layout.has_hovered_pane());
+    assert_eq!(layout.source_of(PaneKind::Cover), Some(PaneSource::QueueHovered));
+    assert_eq!(layout.source_of(PaneKind::Lyrics), Some(PaneSource::QueueHovered));
+    assert!(layout.has_source(PaneSource::QueueHovered));
     let plain = parse_layout("cover").expect("valid layout");
     assert_eq!(plain.source_of(PaneKind::Cover), Some(PaneSource::Playing));
-    assert!(!plain.has_hovered_pane());
+    assert!(!plain.has_source(PaneSource::QueueHovered));
   }
 
   #[test]

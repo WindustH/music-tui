@@ -3,8 +3,8 @@
 use super::*;
 
 pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
-  if source == PaneSource::Hovered {
-    draw_hover_lyrics_pane(frame, app, area);
+  if matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) {
+    draw_hover_lyrics_pane(frame, app, area, source);
     return;
   }
   let theme = &app.settings.theme;
@@ -116,10 +116,10 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
 
 /// Lyrics for the hovered song: no playback state, so no sync highlight,
 /// no follow, no cursor — a plain scrollable list (wheel / j-k style keys).
-fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect) {
+fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Lyrics;
-  let title = match &app.hover {
+  let title = match app.hover_view(source) {
     Some(hover) => format!("lyrics · {}", hover.title),
     None => "lyrics (hovered)".to_string(),
   };
@@ -129,8 +129,8 @@ fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   if inner.height == 0 || inner.width == 0 {
     return;
   }
-  let Some(hover) = app.hover.as_mut() else {
-    let hint = "hover a queue entry";
+  let Some(hover) = app.hover_view(source) else {
+    let hint = "hover a queue or library entry";
     frame.render_widget(
       Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
       inner,

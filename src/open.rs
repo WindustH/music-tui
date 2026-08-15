@@ -181,7 +181,7 @@ async fn open_playlist(
 /// Resolve one file to a playable MPD uri: in-library paths keep their
 /// relative uri; outside paths become `file://` on socket connections or
 /// a bridged symlink (plus a db update) on TCP connections.
-async fn resolve_open_uri(
+pub(crate) async fn resolve_open_uri(
   client: &Client,
   path: &Path,
   mpd_config: &MpdConfig,
@@ -319,7 +319,7 @@ async fn open_folder_append(
   Ok(notice)
 }
 
-async fn maybe_start_if_idle(client: &Client) -> Result<()> {
+pub(crate) async fn maybe_start_if_idle(client: &Client) -> Result<()> {
   let status = client.command(Status).await?;
   if status.state == PlayState::Stopped {
     client.command(Play::current()).await?;

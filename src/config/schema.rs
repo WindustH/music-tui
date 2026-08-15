@@ -116,6 +116,43 @@ pub struct PlaylistConfig {
   pub save_dir: String,
 }
 
+/// Column shown in the library pane: a track field plus a width weight.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryColumn {
+  /// Track field: `title` / `artist` / `album` / `genre` / `filename` /
+  /// `duration`.
+  pub field: String,
+  /// Relative width weight (columns share the width by weight).
+  pub width: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LibraryConfig {
+  /// Music source directories for the library database (music-tui scans
+  /// and indexes these itself; they may differ from MPD's music dir).
+  pub paths: Vec<String>,
+  /// Columns shown in the library pane, in order.
+  pub columns: Vec<LibraryColumn>,
+  /// Scan subdirectories recursively (the common case).
+  pub recursive: bool,
+}
+
+impl Default for LibraryConfig {
+  fn default() -> Self {
+    Self {
+      paths: Vec::new(),
+      columns: vec![
+        LibraryColumn { field: "title".to_string(), width: 4 },
+        LibraryColumn { field: "artist".to_string(), width: 3 },
+        LibraryColumn { field: "album".to_string(), width: 3 },
+        LibraryColumn { field: "duration".to_string(), width: 1 },
+      ],
+      recursive: true,
+    }
+  }
+}
+
 
 impl PlaylistConfig {
   /// Effective `:save` directory (`~` expanded; fallback: state home).
@@ -177,6 +214,7 @@ impl LayoutConfig {
       detail: layout::DEFAULT_DETAIL_LAYOUT.to_string(),
       tabs: vec![
         TabConfig::playlist(),
+        TabConfig::library(),
         TabConfig::playing(),
         TabConfig::metadata(),
         TabConfig::lyrics(),
@@ -204,6 +242,15 @@ impl TabConfig {
       name: "playlist".to_string(),
       layout: "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))".to_string(),
       main: Some("queue".to_string()),
+    }
+  }
+
+  fn library() -> Self {
+    Self {
+      name: "library".to_string(),
+      layout: "H(2:1, library, V(2:1, cover:library-hovered, metadata:library-hovered))"
+        .to_string(),
+      main: Some("library".to_string()),
     }
   }
 

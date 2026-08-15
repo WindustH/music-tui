@@ -25,8 +25,8 @@ pub use comments::app_config_toml;
 pub use paths::{detect_music_dir, expand_home};
 use paths::{app_cache_dir, app_config_dir};
 pub use schema::{
-  BehaviorConfig, LayoutConfig, LyricsConfig, MpdConfig, PlaylistConfig, RenderConfig, TabConfig,
-  VisualizerConfig,
+  BehaviorConfig, LayoutConfig, LibraryColumn, LibraryConfig, LyricsConfig, MpdConfig,
+  PlaylistConfig, RenderConfig, TabConfig, VisualizerConfig,
 };
 
 #[derive(Debug, Clone)]
@@ -46,6 +46,7 @@ pub struct AppConfig {
   pub visualizer: VisualizerConfig,
   pub lyrics: LyricsConfig,
   pub playlist: PlaylistConfig,
+  pub library: LibraryConfig,
   pub layout: LayoutConfig,
 }
 pub async fn load_or_create() -> Result<Settings> {

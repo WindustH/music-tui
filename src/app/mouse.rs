@@ -50,6 +50,16 @@ impl App {
     }
     match mouse.kind {
       MouseEventKind::Down(MouseButton::Left) => {
+        // Queue scrollbar: jump the viewport proportionally and arm
+        // dragging (the thumb follows the pointer while held).
+        if let Some(track) = self.mouse_on_queue_bar(mouse) {
+          self.queue_bar_dragging = true;
+          return self.queue_bar_jump(mouse, track);
+        }
+        if let Some(track) = self.mouse_on_library_bar(mouse) {
+          self.library_bar_dragging = true;
+          return self.library_bar_jump(mouse, track);
+        }
         if let Some(row) = self.queue_row_index(mouse) {
           // Click selects; clicking the already-selected row (or a quick
           // second click) plays it — double-click without the timer.
@@ -58,6 +68,15 @@ impl App {
             self.play_selected_queue_row();
           } else {
             self.select_queue_row(row);
+          }
+          return true;
+        }
+        if let Some(row) = self.library_row_index(mouse) {
+          let selected = self.library_state.selected();
+          if selected == Some(row) {
+            self.library_play_selected();
+          } else {
+            self.select_library_row(row);
           }
           return true;
         }
@@ -71,12 +90,33 @@ impl App {
         if self.band_scrubbing {
           return self.seek_to_band_column(mouse.column);
         }
+        if self.queue_bar_dragging
+          && let Some(track) = self
+            .queue_bar_areas
+            .iter()
+            .find(|area| mouse.row >= area.y && mouse.row < area.y + area.height)
+            .copied()
+        {
+          return self.queue_bar_jump(mouse, track);
+        }
+        if self.library_bar_dragging
+          && let Some(track) = self
+            .library_bar_areas
+            .iter()
+            .find(|area| mouse.row >= area.y && mouse.row < area.y + area.height)
+            .copied()
+        {
+          return self.library_bar_jump(mouse, track);
+        }
         false
       }
       MouseEventKind::Up(MouseButton::Left) => {
-        let was_scrubbing = self.band_scrubbing;
+        let was_active =
+          self.band_scrubbing || self.queue_bar_dragging || self.library_bar_dragging;
         self.band_scrubbing = false;
-        was_scrubbing
+        self.queue_bar_dragging = false;
+        self.library_bar_dragging = false;
+        was_active
       }
       MouseEventKind::ScrollUp => {
         if self.mouse_on_band(mouse) {
@@ -84,6 +124,8 @@ impl App {
           true
         } else if self.mouse_on_queue(mouse).is_some() {
           self.scroll_queue_viewport(-3)
+        } else if self.mouse_on_library(mouse).is_some() {
+          self.scroll_library_viewport(-3)
         } else if self.mouse_on_lyrics(mouse).is_some() {
           self.scroll_lyrics_wheel(-3)
         } else {
@@ -96,6 +138,8 @@ impl App {
           true
         } else if self.mouse_on_queue(mouse).is_some() {
           self.scroll_queue_viewport(3)
+        } else if self.mouse_on_library(mouse).is_some() {
+          self.scroll_library_viewport(3)
         } else if self.mouse_on_lyrics(mouse).is_some() {
           self.scroll_lyrics_wheel(3)
         } else {
@@ -106,6 +150,11 @@ impl App {
         if let Some(row) = self.queue_row_index(mouse) {
           self.select_queue_row(row);
           self.play_selected_queue_row();
+          return true;
+        }
+        if let Some(row) = self.library_row_index(mouse) {
+          self.select_library_row(row);
+          self.library_play_selected();
           return true;
         }
         false
@@ -130,15 +179,25 @@ impl App {
       .lyrics_pane_sources
       .iter()
       .zip(self.lyrics_pane_areas.iter())
-      .any(|(source, pane)| *source == PaneSource::Hovered && *pane == area)
+      .any(|(source, pane)| matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) && *pane == area)
   }
 
   /// Wheel on a lyrics pane: scroll the hovered lyrics when that pane is
   /// the hovered source, otherwise the playing lyrics.
   fn scroll_lyrics_wheel(&mut self, delta: i32) -> bool {
-    if self.hover.as_ref().is_some_and(|hover| hover.lyrics.is_some())
-      && self
-        .lyrics_pane_sources.contains(&PaneSource::Hovered)
+    let hovered_pane = self
+      .lyrics_pane_sources
+      .iter()
+      .any(|source| matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered));
+    if hovered_pane
+      && (self
+        .hover
+        .as_ref()
+        .is_some_and(|hover| hover.lyrics.is_some())
+        || self
+          .library_hover
+          .as_ref()
+          .is_some_and(|hover| hover.lyrics.is_some()))
     {
       self.scroll_hover_lyrics(delta);
       true
@@ -162,25 +221,75 @@ impl App {
     if len == 0 {
       return false;
     }
-    let height = self
+    let height = self.queue_viewport_height();
+    let next = ((self.queue_state.offset() as i32) + delta).clamp(
+      0,
+      len.saturating_sub(height) as i32,
+    ) as usize;
+    self.set_queue_viewport(next)
+  }
+
+  /// Viewport height of the (first) queue pane.
+  fn queue_viewport_height(&self) -> usize {
+    self
       .queue_pane_areas
       .first()
       .map(|area| area.height as usize)
       .filter(|height| *height > 0)
-      .unwrap_or(1);
-    let offset = self.queue_state.offset() as i32;
-    let max_offset = len.saturating_sub(height) as i32;
-    let next = (offset + delta).clamp(0, max_offset.max(0)) as usize;
+      .unwrap_or(1)
+  }
+
+  /// Set the queue viewport offset absolutely, clamping the selection
+  /// into the new window (selection follows the viewport).
+  fn set_queue_viewport(&mut self, next: usize) -> bool {
+    let len = self.visible_len();
+    if len == 0 {
+      return false;
+    }
+    let height = self.queue_viewport_height();
+    let max_offset = len.saturating_sub(height);
+    let next = next.min(max_offset);
     if next == self.queue_state.offset() {
       return false;
     }
-    // Selection follows the viewport: clamp it into the new window.
     let selected = self.queue_state.selected().unwrap_or(next);
     let selected = selected.clamp(next, (next + height - 1).min(len - 1));
     let mut state = ratatui::widgets::ListState::default();
     state.select(Some(selected));
     self.queue_state = state.with_offset(next);
     true
+  }
+
+  /// Scrollbar hit test: the pointer must be on the recorded track.
+  fn mouse_on_queue_bar(&self, mouse: MouseEvent) -> Option<Rect> {
+    self.queue_bar_areas.iter().copied().find(|area| {
+      mouse.column >= area.x
+        && mouse.column < area.x + area.width
+        && mouse.row >= area.y
+        && mouse.row < area.y + area.height
+    })
+  }
+
+  /// Map a scrollbar click/drag to a viewport offset: the thumb center
+  /// follows the pointer, proportionally over the whole content.
+  fn queue_bar_jump(&mut self, mouse: MouseEvent, track: Rect) -> bool {
+    let len = self.visible_len();
+    if len == 0 {
+      return false;
+    }
+    let height = self.queue_viewport_height();
+    let track_span = track.height.saturating_sub(1) as f64;
+    let ratio = if track_span <= 0.0 {
+      0.0
+    } else {
+      (mouse.row.saturating_sub(track.y) as f64 / track_span).clamp(0.0, 1.0)
+    };
+    let target_center = ratio * (len.saturating_sub(1)) as f64;
+    let next = (target_center - height as f64 / 2.0).round().clamp(
+      0.0,
+      len.saturating_sub(height) as f64,
+    ) as usize;
+    self.set_queue_viewport(next)
   }
 
   /// Wheel-scroll over lyrics: leaves follow mode and pans the text window.
@@ -259,6 +368,22 @@ impl App {
         && mouse.column >= area.x
         && mouse.column < area.x + area.width
     })
+  }
+
+  fn mouse_on_library(&self, mouse: MouseEvent) -> Option<Rect> {
+    self.library_pane_areas.iter().copied().find(|area| {
+      mouse.row >= area.y
+        && mouse.row < area.y + area.height
+        && mouse.column >= area.x
+        && mouse.column < area.x + area.width
+    })
+  }
+
+  /// Map a screen position to the visible library row under it.
+  fn library_row_index(&self, mouse: MouseEvent) -> Option<usize> {
+    let area = self.mouse_on_library(mouse)?;
+    let row = (mouse.row - area.y) as usize + self.library_state.offset();
+    (row < self.library_visible_len()).then_some(row)
   }
 
   /// Map a screen position to the visible queue row under it.

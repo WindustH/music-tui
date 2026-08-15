@@ -19,6 +19,21 @@ impl App {
       }
       return true;
     }
+    if let Some(hover) = self.library_hover.as_mut()
+      && hover.url == outcome.song_url
+    {
+      match outcome.result {
+        Ok(lyrics) => {
+          hover.lyrics = Some(lyrics);
+          hover.lyrics_error = None;
+        }
+        Err(error) => {
+          hover.lyrics = None;
+          hover.lyrics_error = Some(error);
+        }
+      }
+      return true;
+    }
     if outcome.song_url != self.lyrics_url {
       return false;
     }
@@ -67,6 +82,21 @@ impl App {
       }
       handled = true;
     }
+    if let Some(hover) = self.library_hover.as_mut()
+      && hover.url == outcome.song_url
+    {
+      match &outcome.result {
+        Ok(entries) => {
+          hover.metadata = Some(entries.clone());
+          hover.metadata_error = None;
+        }
+        Err(error) => {
+          hover.metadata = None;
+          hover.metadata_error = Some(error.clone());
+        }
+      }
+      handled = true;
+    }
     if outcome.song_url == self.metadata_url {
       match outcome.result {
         Ok(entries) => {
@@ -104,6 +134,13 @@ impl App {
           self.spawn_metadata_read(outcome.song_url.clone(), path);
         }
         if let Some(hover) = self.hover.as_mut()
+          && hover.url == outcome.song_url
+        {
+          hover.metadata = None;
+          let path = hover.path.clone();
+          self.spawn_metadata_read(outcome.song_url.clone(), path);
+        }
+        if let Some(hover) = self.library_hover.as_mut()
           && hover.url == outcome.song_url
         {
           hover.metadata = None;
@@ -154,6 +191,22 @@ impl App {
         Err(error) => {
           detail.cover = None;
           detail.cover_error = Some(error.clone());
+        }
+      }
+      handled = true;
+    }
+    if let Some(hover) = self.library_hover.as_mut()
+      && hover.url == outcome.song_url
+    {
+      match &outcome.result {
+        Ok(path) => {
+          hover.cover_dims = outcome.dims;
+          hover.cover = Some(path.clone());
+          hover.cover_error = None;
+        }
+        Err(error) => {
+          hover.cover = None;
+          hover.cover_error = Some(error.clone());
         }
       }
       handled = true;

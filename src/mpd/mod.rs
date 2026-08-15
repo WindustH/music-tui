@@ -55,6 +55,13 @@ pub enum MpdCommand {
   ClearQueue,
   DeleteAt(usize),
   AddUri(String),
+  /// Play (or append) a local file from the library pane. The path is
+  /// resolved to an MPD URI (music dir relative, `file://`, or symlink
+  /// bridge) before being added to the queue.
+  PlayLibrary {
+    path: std::path::PathBuf,
+    append: bool,
+  },
   Rescan,
   /// Incremental database update for one URI (used after tag writes).
   UpdateUri(String),
@@ -86,7 +93,9 @@ pub fn spawn_mpd_worker(
           let address = describe_address(&config);
           info!(%address, "connected to mpd");
           let _ = events.send(AsyncEvent::Mpd(MpdEvent::Connected(address)));
-          if let Err(error) = run_session(&client, &mut connection_events, &mut rx, &events).await {
+          if let Err(error) =
+            run_session(&client, &mut connection_events, &mut rx, &events, &config).await
+          {
             warn!(%error, "mpd session ended");
           }
           let _ = events.send(AsyncEvent::Mpd(MpdEvent::ConnectionLost(

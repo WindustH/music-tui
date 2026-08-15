@@ -12,6 +12,11 @@ layout = "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))"
 main = "queue"
 
 [[layout.tabs]]
+name = "library"
+layout = "H(2:1, library, V(2:1, cover:library-hovered, metadata:library-hovered))"
+main = "library"
+
+[[layout.tabs]]
 name = "playing"
 layout = "H(1:2, cover, lyrics)"
 main = "cover"
@@ -45,6 +50,12 @@ priority over pane bindings everywhere.
 
 - `queue` — the MPD current playlist. The playing song is marked with `▶`/`⏸`,
   filtered mode narrows the list as you type (`/`).
+- `library` — a local music library scanned by music-tui itself (SQLite).
+  Columns are configurable (`[library] columns`), `/` filters every field
+  (title, artist, album, genre, filename, lyrics) and highlights matches,
+  `enter` plays the selected track, `a` appends it, `i` opens the detail
+  view, `u` rescans. Both the queue and the library panes have a viewport
+  scrollbar on the right that can be dragged with the mouse.
 - `cover` — cover art for the currently playing song, aspect-correct and
   centered (see [Cover Rendering](cover-rendering.md)).
 - `lyrics` — synced or plain lyrics for the current song with auto-follow and
@@ -54,11 +65,16 @@ priority over pane bindings everywhere.
 
 ### Hovered data sources
 
-`cover`, `lyrics` and `metadata` panes accept a `:hovered` suffix (e.g.
-`layout = "H(2:1, queue, cover:hovered)"`) to display the queue's hovered
-row instead of the playing song. Hovered lyrics have no playback state —
-they render as a plain scrollable list (j/k scroll, no sync highlight, no
-seek). See [Configuration](configuration.md#pane-data-sources).
+`cover`, `lyrics` and `metadata` panes accept a data-source suffix to show
+a hovered row instead of the playing song:
+
+- `:hovered` — the song selected (hovered) in the **queue** (alias
+  `:queue-hovered`)
+- `:library-hovered` — the track selected in the **library** pane
+
+Hovered lyrics have no playback state — they render as a plain scrollable
+list (j/k scroll, no sync highlight, no seek). See
+[Configuration](configuration.md#pane-data-sources).
 
 ## Detail view
 

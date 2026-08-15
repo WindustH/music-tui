@@ -18,6 +18,17 @@ pub enum AsyncEvent {
   Spectrum(Vec<u8>),
   /// Precomputed visualizer pane lines from the band-render worker.
   VisualizerFrame(Vec<ratatui::text::Line<'static>>),
+  /// Library database events from the scanner thread.
+  Library(LibraryEvent),
+}
+
+#[derive(Debug)]
+pub enum LibraryEvent {
+  /// Periodic progress while scanning (scanned files, changed files).
+  Scanning { scanned: usize, changed: usize },
+  /// Scan finished; carries the full track list.
+  Loaded(Vec<crate::library_db::LibraryTrack>),
+  Error(String),
 }
 
 #[derive(Debug)]

@@ -36,12 +36,22 @@ impl App {
         } else if self.main_pane() == PaneKind::Queue && self.queue_filter.is_some() {
           self.clear_queue_filter();
           true
+        } else if self.main_pane() == PaneKind::Library && self.library_filter.is_some() {
+          self.clear_library_filter();
+          true
         } else {
           self.goto_tab(0)
         }
       }
       "queue_filter" => {
         let current = self.queue_filter.clone().unwrap_or_default();
+        self.filter_target = FilterTarget::Queue;
+        self.prompt = Some(Prompt::text("/", current));
+        true
+      }
+      "library_filter" => {
+        let current = self.library_filter.clone().unwrap_or_default();
+        self.filter_target = FilterTarget::Library;
         self.prompt = Some(Prompt::text("/", current));
         true
       }
@@ -49,6 +59,27 @@ impl App {
       "queue_down" => self.move_selection(1),
       "queue_page_up" => self.move_selection_page(-1),
       "queue_page_down" => self.move_selection_page(1),
+      "library_up" => self.move_library_selection(-1),
+      "library_down" => self.move_library_selection(1),
+      "library_page_up" => self.move_library_selection_page(-1),
+      "library_page_down" => self.move_library_selection(1),
+      "library_top" => {
+        if self.library_visible_len() > 0 {
+          self.select_library_row(0);
+        }
+        true
+      }
+      "library_end" => {
+        let len = self.library_visible_len();
+        if len > 0 {
+          self.select_library_row(len - 1);
+        }
+        true
+      }
+      "library_play" => self.library_play_selected(),
+      "library_append" => self.library_append_selected(),
+      "library_detail" => self.open_library_detail(),
+      "library_rescan" => self.library_rescan(),
       "queue_top" => {
         if self.visible_len() > 0 {
           self.queue_state.select(Some(0));

@@ -41,6 +41,7 @@ pub(crate) mod actions;
 pub(crate) mod bindings;
 pub(crate) mod editor;
 pub(crate) mod labels;
+pub(crate) mod library;
 pub(crate) mod loading;
 pub(crate) mod outcomes;
 pub(crate) mod snapshot;
@@ -52,6 +53,7 @@ pub(crate) mod mouse;
 pub use detail::DetailView;
 pub use detail::HoverView;
 pub(crate) use labels::{song_artist, song_title};
+pub(crate) use library::FilterTarget;
 
 pub struct App {
   pub settings: Settings,
@@ -108,6 +110,26 @@ pub struct App {
   /// Whether any configured pane uses the hovered data source (gates the
   /// lazy loading in `sync_hover_view`).
   pub(crate) has_hover_panes: bool,
+  /// Some pane uses `:library-hovered`; enables the library hover view.
+  pub(crate) has_library_hover_panes: bool,
+  /// Library database state (see `library.rs`).
+  pub(crate) library: Vec<crate::library_db::LibraryTrack>,
+  pub(crate) library_rows: Vec<crate::library_db::TrackMatch>,
+  pub(crate) library_filter: Option<String>,
+  pub(crate) library_state: ListState,
+  pub(crate) library_pane_areas: Vec<Rect>,
+  pub(crate) library_bar_areas: Vec<Rect>,
+  pub(crate) library_bar_dragging: bool,
+  /// Scan progress while the scanner thread is running.
+  pub(crate) library_scanning: Option<(usize, usize)>,
+  /// Hover view fed by the library pane selection (`:library-hovered`).
+  pub(crate) library_hover: Option<HoverView>,
+  /// Parsed `[library] columns` config.
+  pub(crate) library_columns: Vec<crate::config::LibraryColumn>,
+  /// Sender to the library scanner thread (rescan requests).
+  pub(crate) library_scan_tx: Option<std::sync::mpsc::Sender<()>>,
+  /// Which list `/` filters (queue or library).
+  pub(crate) filter_target: FilterTarget,
   /// Layout tree for the secondary detail view (cover + metadata panes).
   pub(crate) detail_layout: PaneLayout,
   /// Visualizer worker handle (reports pane width for band allocation).
@@ -132,6 +154,10 @@ pub struct App {
   /// Screen areas of visible queue panes, recorded at draw time for mouse
   /// hit-testing (click to select, click again to play, wheel to move).
   pub queue_pane_areas: Vec<Rect>,
+  /// Scrollbar track rectangles of queue panes (viewport dragging).
+  pub queue_bar_areas: Vec<Rect>,
+  /// True while the left button is held on a queue scrollbar.
+  pub queue_bar_dragging: bool,
   /// Tab label rectangles in the tab bar, recorded at draw time so mouse
   /// clicks can switch tabs directly.
   pub tab_hit_areas: Vec<Rect>,
@@ -163,6 +189,7 @@ impl App {
   ) -> Self {
     let music_dir = resolve_music_dir(&settings.config.mpd).ok();
     let lyrics_follow = settings.config.lyrics.follow;
+    let library_columns = settings.config.library.columns.clone();
     if let Some(session) = interrupt {
       mpd.send(MpdCommand::ArmInterrupt(session));
     }
@@ -215,6 +242,19 @@ impl App {
       detail: None,
       hover: None,
       has_hover_panes: false,
+      has_library_hover_panes: false,
+      library: Vec::new(),
+      library_rows: Vec::new(),
+      library_filter: None,
+      library_state: ListState::default(),
+      library_pane_areas: Vec::new(),
+      library_bar_areas: Vec::new(),
+      library_bar_dragging: false,
+      library_scanning: None,
+      library_hover: None,
+      library_columns,
+      library_scan_tx: None,
+      filter_target: FilterTarget::Queue,
       visualizer: None,
       visualizer_renderer: None,
       visualizer_geometry: None,
@@ -224,6 +264,8 @@ impl App {
       lyrics_pane_areas: Vec::new(),
       lyrics_pane_sources: Vec::new(),
       queue_pane_areas: Vec::new(),
+      queue_bar_areas: Vec::new(),
+      queue_bar_dragging: false,
       tab_hit_areas: Vec::new(),
       lyrics_cursor: None,
       spectrum: Vec::new(),
@@ -235,10 +277,15 @@ impl App {
       help_bindings,
     };
     app.queue_state.select(Some(0));
+    app.library_state.select(Some(0));
     app.has_hover_panes = app
       .tabs
       .iter()
-      .any(|tab| tab.layout.has_hovered_pane());
+      .any(|tab| tab.layout.has_source(PaneSource::QueueHovered));
+    app.has_library_hover_panes = app
+      .tabs
+      .iter()
+      .any(|tab| tab.layout.has_source(PaneSource::LibraryHovered));
     app.sync_hover_view();
     app
   }
@@ -309,6 +356,16 @@ impl App {
     let status = self.status.as_ref()?;
     let (position, _) = status.current_song?;
     self.queue.get(position.0)
+  }
+
+  /// The hover-view backing a pane source: queue rows feed
+  /// `QueueHovered`, library rows feed `LibraryHovered`.
+  pub(crate) fn hover_view(&self, source: PaneSource) -> Option<&HoverView> {
+    match source {
+      PaneSource::QueueHovered => self.hover.as_ref(),
+      PaneSource::LibraryHovered => self.library_hover.as_ref(),
+      PaneSource::Playing => None,
+    }
   }
 
   pub fn current_song_url(&self) -> Option<String> {
@@ -385,7 +442,10 @@ impl App {
         detail.metadata_scroll.saturating_add(delta as usize)
       };
     } else if self.main_pane() == PaneKind::Metadata
-      && self.main_pane_source() == PaneSource::Hovered
+      && matches!(
+        self.main_pane_source(),
+        PaneSource::QueueHovered | PaneSource::LibraryHovered
+      )
       && let Some(hover) = self.hover.as_mut()
     {
       hover.metadata_scroll = if delta < 0 {
@@ -402,12 +462,30 @@ impl App {
 
   /// Whether the active tab's main lyrics pane reads the hovered song.
   fn hover_lyrics_active(&self) -> bool {
-    self.main_pane() == PaneKind::Lyrics && self.main_pane_source() == PaneSource::Hovered
+    self.main_pane() == PaneKind::Lyrics && matches!(
+        self.main_pane_source(),
+        PaneSource::QueueHovered | PaneSource::LibraryHovered
+      )
   }
 
   /// Scroll the hovered song's lyrics (plain list — no playback state).
   fn scroll_hover_lyrics(&mut self, delta: i32) {
-    let Some(hover) = self.hover.as_mut() else { return };
+    // Scroll whichever hover view the visible hovered lyrics pane shows.
+    let source = self
+      .lyrics_pane_sources
+      .iter()
+      .find(|source| {
+        matches!(
+          source,
+          PaneSource::QueueHovered | PaneSource::LibraryHovered
+        )
+      })
+      .copied();
+    let hover = match source {
+      Some(PaneSource::LibraryHovered) => self.library_hover.as_mut(),
+      _ => self.hover.as_mut(),
+    };
+    let Some(hover) = hover else { return };
     let line_count = hover.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(0);
     if line_count == 0 {
       return;

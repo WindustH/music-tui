@@ -59,16 +59,26 @@ impl App {
     }
   }
 
-  /// The `/` queue filter prompt: typing filters live, enter keeps the
-  /// filter, esc exits the filter state entirely.
+  /// The `/` filter prompt: typing filters live, enter keeps the filter,
+  /// esc exits the filter state entirely. Targets the queue or the
+  /// library depending on where `/` was pressed.
   fn apply_filter_prompt_result(&mut self, result: PromptInputResult) -> bool {
     match result {
       PromptInputResult::Unhandled | PromptInputResult::UnknownAction(_) => false,
       PromptInputResult::Changed => {
         if let Some(input) = self.prompt.as_ref().map(Prompt::buffer).map(|buffer| buffer.input.clone()) {
-          self.queue_filter = (!input.is_empty()).then_some(input);
-          self.recompute_queue_filter();
-          self.clamp_queue_selection();
+          match self.filter_target {
+            FilterTarget::Queue => {
+              self.queue_filter = (!input.is_empty()).then_some(input);
+              self.recompute_queue_filter();
+              self.clamp_queue_selection();
+            }
+            FilterTarget::Library => {
+              self.library_filter = (!input.is_empty()).then_some(input);
+              self.recompute_library_filter();
+              self.clamp_library_selection();
+            }
+          }
         }
         true
       }
@@ -76,7 +86,10 @@ impl App {
         self.prompt = None;
         self.command_state.reset_prompt_state();
         self.dispatcher.clear();
-        self.clear_queue_filter();
+        match self.filter_target {
+          FilterTarget::Queue => self.clear_queue_filter(),
+          FilterTarget::Library => self.clear_library_filter(),
+        }
         true
       }
       PromptInputResult::Submit => {
@@ -87,9 +100,18 @@ impl App {
           .unwrap_or_default();
         self.command_state.reset_prompt_state();
         self.dispatcher.clear();
-        self.queue_filter = (!input.is_empty()).then_some(input);
-        self.recompute_queue_filter();
-        self.clamp_queue_selection();
+        match self.filter_target {
+          FilterTarget::Queue => {
+            self.queue_filter = (!input.is_empty()).then_some(input);
+            self.recompute_queue_filter();
+            self.clamp_queue_selection();
+          }
+          FilterTarget::Library => {
+            self.library_filter = (!input.is_empty()).then_some(input);
+            self.recompute_library_filter();
+            self.clamp_library_selection();
+          }
+        }
         true
       }
       PromptInputResult::EditInEditor { .. } => {

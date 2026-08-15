@@ -38,6 +38,19 @@ wins over pane bindings in every view.
 | `e` | edit the selected song's tags in `$EDITOR` |
 | `/` | filter the queue (enter keeps, `esc` clears) |
 
+## Library pane
+
+| Key | Action |
+| --- | --- |
+| `j`/`k`, `up`/`down` | move selection |
+| `pgup`/`pgdn` | page up / down |
+| `home` / `G`/`end` | top / end |
+| `enter` | play the selected track now (inserted after the current song) |
+| `a` | append the selected track to the queue |
+| `i` | open the detail view for the selected track |
+| `u` | rescan the library directories |
+| `/` | filter every field (enter keeps, `esc` clears) |
+
 ## Lyrics pane
 
 | Key | Action |
@@ -58,9 +71,10 @@ wins over pane bindings in every view.
 
 ## Mouse
 
-- **Queue**: wheel scrolls the viewport (the selection passively follows and
-  stays in view); click selects, clicking the selected row plays; middle-click
-  selects and plays.
+- **Queue / Library**: wheel scrolls the viewport (the selection passively
+  follows and stays in view); click selects, clicking the selected row plays;
+  middle-click selects and plays. The scrollbar on the right reflects the
+  viewport position — click or drag it to jump/pan.
 - **Lyrics**: wheel scrolls the viewport like the queue; clicking a synced
   line seeks there.
 - **Tabs**: click a tab to switch.

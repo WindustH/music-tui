@@ -3,8 +3,8 @@
 use super::*;
 
 pub(super) fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
-  if source == PaneSource::Hovered {
-    draw_hover_metadata_pane(frame, app, area);
+  if matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) {
+    draw_hover_metadata_pane(frame, app, area, source);
     return;
   }
   let theme = &app.settings.theme;
@@ -53,11 +53,11 @@ pub(super) fn metadata_line(app: &App, name: &str, value: &str) -> Line<'static>
   ])
 }
 
-/// Metadata of the hovered queue row.
-fn draw_hover_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect) {
+/// Metadata of the hovered row (queue or library, per the pane source).
+fn draw_hover_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Metadata;
-  let title = match &app.hover {
+  let title = match app.hover_view(source) {
     Some(hover) => format!("metadata · {}", hover.title),
     None => "metadata (hovered)".to_string(),
   };
@@ -67,9 +67,10 @@ fn draw_hover_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   if inner.height == 0 {
     return;
   }
-  let Some(hover) = app.hover.as_ref() else {
+  let Some(hover) = app.hover_view(source) else {
     frame.render_widget(
-      Paragraph::new("hover a queue entry").style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new("hover a queue or library entry")
+        .style(Style::default().fg(theme.color(&theme.muted))),
       inner,
     );
     return;

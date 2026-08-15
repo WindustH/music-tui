@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct KeymapConfig {
   pub queue: KeymapSection,
+  pub library: KeymapSection,
   pub metadata: KeymapSection,
   pub cover: KeymapSection,
   pub lyrics: KeymapSection,
@@ -61,6 +62,28 @@ impl Default for KeymapConfig {
           key("i", "queue_detail", "Open details of the selected song"),
           key("e", "edit_metadata", "Edit the selected song's metadata"),
           key("/", "queue_filter", "Filter the queue (esc clears)"),
+        ],
+      },
+      library: KeymapSection {
+        keymap: vec![
+          key("f1", "help", "Show library key bindings"),
+          key("j", "library_down", "Move selection down"),
+          key("down", "library_down", "Move selection down"),
+          key("k", "library_up", "Move selection up"),
+          key("up", "library_up", "Move selection up"),
+          key("pgdn", "library_page_down", "Move selection one page down"),
+          key("pagedown", "library_page_down", "Move selection one page down"),
+          key("pgup", "library_page_up", "Move selection one page up"),
+          key("pageup", "library_page_up", "Move selection one page up"),
+          key(["g", "g"], "library_top", "Move selection to top"),
+          key("home", "library_top", "Move selection to top"),
+          key("G", "library_end", "Move selection to end"),
+          key("end", "library_end", "Move selection to end"),
+          key("enter", "library_play", "Play selected track (replaces play position)"),
+          key("a", "library_append", "Append selected track to the queue"),
+          key("i", "library_detail", "Open details of the selected track"),
+          key("u", "library_rescan", "Rescan the library database"),
+          key("/", "library_filter", "Filter the library (esc clears)"),
         ],
       },
       metadata: KeymapSection {
@@ -174,6 +197,16 @@ impl KeymapConfig {
     .with_global_priority()
   }
 
+  pub fn library_bindings(&self) -> KeyBindings {
+    KeyBindings::from_sections(
+      binding_configs(&self.library.keymap),
+      Vec::<KeyBindingConfig>::new(),
+      binding_configs(&self.input.keymap),
+      binding_configs(&self.global.keymap),
+    )
+    .with_global_priority()
+  }
+
   pub fn metadata_bindings(&self) -> KeyBindings {
     KeyBindings::from_sections(
       binding_configs(&self.metadata.keymap),
@@ -240,6 +273,7 @@ impl KeymapConfig {
   pub(crate) fn normalize_defaults(&mut self) {
     let default = KeymapConfig::default();
     append_missing_actions(&mut self.queue.keymap, &default.queue.keymap);
+    append_missing_actions(&mut self.library.keymap, &default.library.keymap);
     append_missing_actions(&mut self.metadata.keymap, &default.metadata.keymap);
     append_missing_actions(&mut self.cover.keymap, &default.cover.keymap);
     append_missing_actions(&mut self.lyrics.keymap, &default.lyrics.keymap);
@@ -253,6 +287,7 @@ impl KeymapConfig {
 pub(crate) fn format_keymap_toml(config: &KeymapConfig) -> String {
   let mut out = String::new();
   push_keymap_section(&mut out, "queue", &config.queue);
+  push_keymap_section(&mut out, "library", &config.library);
   push_keymap_section(&mut out, "metadata", &config.metadata);
   push_keymap_section(&mut out, "cover", &config.cover);
   push_keymap_section(&mut out, "lyrics", &config.lyrics);

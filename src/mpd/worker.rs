@@ -13,6 +13,7 @@ pub(super) async fn run_session(
   connection_events: &mut mpd_client::client::ConnectionEvents,
   command_rx: &mut mpsc::UnboundedReceiver<MpdCommand>,
   events: &mpsc::UnboundedSender<AsyncEvent>,
+  config: &MpdConfig,
 ) -> anyhow::Result<()> {
   let mut state = SessionState {
     interrupt: None,
@@ -54,7 +55,7 @@ pub(super) async fn run_session(
             if command_touches_queue(&command) {
               state.interrupt = None;
             }
-            run_command(client, command).await;
+            run_command(client, command, config).await;
           }
         }
         refresh(client, &mut state, events).await?;
@@ -77,6 +78,7 @@ fn command_touches_queue(command: &MpdCommand) -> bool {
       | MpdCommand::ClearQueue
       | MpdCommand::DeleteAt(_)
       | MpdCommand::AddUri(_)
+      | MpdCommand::PlayLibrary { .. }
   )
 }
 
@@ -158,7 +160,7 @@ async fn maybe_restore_interrupt(
   Ok(true)
 }
 
-async fn run_command(client: &Client, command: MpdCommand) {
+async fn run_command(client: &Client, command: MpdCommand, config: &MpdConfig) {
   let outcome: Result<(), String> = match command {
     MpdCommand::PlayPosition(position) => client
       .command(Play::song(SongPosition(position as usize)))
@@ -222,6 +224,9 @@ async fn run_command(client: &Client, command: MpdCommand) {
       .command(Add::uri(&uri))
       .await
       .map(|_| ()).map_err(|error| error.to_string()),
+    MpdCommand::PlayLibrary { path, append } => {
+      play_library_file(client, path, append, config).await
+    }
     MpdCommand::Rescan => client
       .command(commands::Rescan::new())
       .await
@@ -237,3 +242,51 @@ async fn run_command(client: &Client, command: MpdCommand) {
   }
 }
 
+
+/// Resolve a library-pane file to an MPD uri and insert it into the queue:
+/// `append` adds to the end (starting playback when idle), otherwise the
+/// track is inserted right after the current song (or at the end when
+/// nothing plays) and starts immediately.
+async fn play_library_file(
+  client: &Client,
+  path: std::path::PathBuf,
+  append: bool,
+  config: &MpdConfig,
+) -> Result<(), String> {
+  let music_dir = match crate::library::resolve_music_dir(config) {
+    Ok(dir) => dir,
+    Err(error) => return Err(error.to_string()),
+  };
+  let uri = crate::open::resolve_open_uri(client, &path, config, &music_dir)
+    .await
+    .map_err(|error| error.to_string())?;
+
+  if append {
+    client
+      .command(Add::uri(&uri))
+      .await
+      .map_err(|error| error.to_string())?;
+    crate::open::maybe_start_if_idle(client)
+      .await
+      .map_err(|error| error.to_string())?;
+    return Ok(());
+  }
+
+  let status = client
+    .command(commands::Status)
+    .await
+    .map_err(|error| error.to_string())?;
+  let add = match status.current_song {
+    Some((_, _)) => Add::uri(&uri).after_current(0),
+    None => Add::uri(&uri),
+  };
+  let id = client
+    .command(add)
+    .await
+    .map_err(|error| error.to_string())?;
+  client
+    .command(Play::song(id))
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}

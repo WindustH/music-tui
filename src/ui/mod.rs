@@ -32,6 +32,7 @@ pub(crate) mod cover;
 pub(crate) mod detail;
 pub(crate) mod footer;
 pub(crate) mod help;
+pub(crate) mod library;
 pub(crate) mod lyrics;
 pub(crate) mod metadata;
 pub(crate) mod queue;
@@ -44,6 +45,7 @@ use help::{draw_completion_popup, draw_help_dialog};
 use lyrics::draw_lyrics_pane;
 use metadata::{draw_metadata_pane, metadata_line};
 use queue::draw_queue_pane;
+use library::draw_library_pane;
 use visualizer::draw_visualizer_pane;
 
 pub fn draw(
@@ -86,6 +88,9 @@ pub fn draw(
   app.lyrics_pane_areas.clear();
   app.lyrics_pane_sources.clear();
   app.queue_pane_areas.clear();
+  app.queue_bar_areas.clear();
+  app.library_pane_areas.clear();
+  app.library_bar_areas.clear();
 
   draw_tab_bar(frame, app, tab_bar);
 
@@ -214,6 +219,7 @@ fn draw_pane(
   } = ctx;
   match kind {
     PaneKind::Queue => draw_queue_pane(frame, app, area),
+    PaneKind::Library => draw_library_pane(frame, app, area),
     PaneKind::Cover => draw_cover_pane(frame, app, renderer, tx, area, source, overlays),
     PaneKind::Lyrics => draw_lyrics_pane(frame, app, area, source),
     PaneKind::Metadata => draw_metadata_pane(frame, app, area, source),

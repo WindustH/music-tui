@@ -61,11 +61,22 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   );
   frame.render_stateful_widget(list, inner, &mut app.queue_state);
 
+  // The scrollbar mirrors the viewport (offset + size), not the selection,
+  // and doubles as a mouse drag target.
   let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
     .style(Style::default().fg(theme.color(&theme.border)));
   let mut state = ratatui::widgets::ScrollbarState::new(app.queue_filter_matches.len())
-    .position(app.queue_state.selected().unwrap_or(0));
+    .position(app.queue_state.offset())
+    .viewport_content_length(inner.height as usize);
   frame.render_stateful_widget(scrollbar, area, &mut state);
+  // Scrollbar renders over the pane's last column; record the exact track
+  // (full pane height) for mouse hit tests.
+  app.queue_bar_areas.push(Rect {
+    x: area.x + area.width.saturating_sub(1),
+    y: area.y,
+    width: 1,
+    height: area.height,
+  });
 }
 
 fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize>) -> Line<'static> {

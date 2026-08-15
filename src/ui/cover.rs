@@ -11,8 +11,8 @@ pub(super) fn draw_cover_pane(
   source: PaneSource,
   overlays: &mut Vec<ProtocolOverlay>,
 ) {
-  if source == PaneSource::Hovered {
-    draw_hover_cover_pane(frame, app, renderer, tx, area, overlays);
+  if matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) {
+    draw_hover_cover_pane(frame, app, renderer, tx, area, overlays, source);
     return;
   }
   let theme = &app.settings.theme;
@@ -121,7 +121,8 @@ pub(super) fn reserve_protocol_area(frame: &mut Frame, area: Rect) {
   }
 }
 
-/// Cover of the hovered queue row.
+/// Cover of the hovered row (queue or library, per the pane source).
+#[allow(clippy::too_many_arguments)]
 fn draw_hover_cover_pane(
   frame: &mut Frame,
   app: &mut App,
@@ -129,10 +130,11 @@ fn draw_hover_cover_pane(
   tx: &mpsc::UnboundedSender<AsyncEvent>,
   area: Rect,
   overlays: &mut Vec<ProtocolOverlay>,
+  source: PaneSource,
 ) {
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Cover;
-  let title = match &app.hover {
+  let title = match app.hover_view(source) {
     Some(hover) => format!("cover · {}", hover.title),
     None => "cover (hovered)".to_string(),
   };
@@ -143,9 +145,10 @@ fn draw_hover_cover_pane(
     return;
   }
 
-  let Some(hover) = app.hover.as_ref() else {
+  let Some(hover) = app.hover_view(source) else {
     frame.render_widget(
-      Paragraph::new("hover a queue entry").style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new("hover a queue or library entry")
+        .style(Style::default().fg(theme.color(&theme.muted))),
       inner,
     );
     return;
