@@ -140,10 +140,28 @@ pub fn metadata_draft(path: &Path, entries: &[MetadataEntry]) -> String {
     let value = values.remove(*tag).unwrap_or_default();
     out.push_str(&format!("{tag} = {}\n", toml_string(&value)));
   }
+  // Extra tag blocks are not directly editable but are listed so their
+  // state (e.g. corrupted duplicates) is visible; saving overwrites them
+  // with the values above.
+  let extras: Vec<&MetadataEntry> = entries
+    .iter()
+    .filter(|entry| entry.group.starts_with("tag/"))
+    .collect();
+  if !extras.is_empty() {
+    out.push_str("\n# Other tag blocks in this file are overwritten with the values\n");
+    out.push_str("# above on save. Their current values:\n");
+    for entry in extras {
+      out.push_str(&format!("# {} = {}\n", entry.name, entry.value));
+    }
+  }
   out
 }
 
-/// Diff an edited draft against the original entries.
+/// Diff an edited draft against the original entries. A field counts as
+/// changed when it differs from the primary block **or from any extra
+/// block** — saving then normalizes every block to the draft value, so a
+/// corrupted duplicate (e.g. GBK RIFF INFO) is fixed even when the primary
+/// value already matches the draft.
 pub fn metadata_changes(entries: &[MetadataEntry], edited: &str) -> Result<Vec<MetadataChange>, String> {
   let value = edited
     .parse::<toml::Table>()
@@ -158,6 +176,17 @@ pub fn metadata_changes(entries: &[MetadataEntry], edited: &str) -> Result<Vec<M
     .filter(|entry| entry.group == "tag" && EDITABLE_TAGS.contains(&entry.name.as_str()))
     .map(|entry| (entry.name.clone(), entry.value.clone()))
     .collect();
+  // Extra blocks store their field as "<label> <Tag>" (e.g. "riff Title").
+  let extras: Vec<(String, String)> = entries
+    .iter()
+    .filter(|entry| entry.group.starts_with("tag/"))
+    .filter_map(|entry| {
+      entry
+        .name
+        .split_once(' ')
+        .map(|(_, tag)| (tag.to_string(), entry.value.clone()))
+    })
+    .collect();
 
   let mut changes = Vec::new();
   for (tag, new_value) in metadata {
@@ -168,7 +197,11 @@ pub fn metadata_changes(entries: &[MetadataEntry], edited: &str) -> Result<Vec<M
       return Err(format!("tag {tag} must be a string"));
     };
     let old_value = original.get(tag.as_str()).cloned();
-    if old_value.as_deref().unwrap_or_default() != new_value {
+    let differs_from_primary = old_value.as_deref().unwrap_or_default() != new_value;
+    let differs_from_extra = extras
+      .iter()
+      .any(|(extra_tag, extra_value)| extra_tag.as_str() == tag.as_str() && extra_value.as_str() != new_value);
+    if differs_from_primary || differs_from_extra {
       changes.push(MetadataChange {
         tag: tag.to_string(),
         old_value,
@@ -290,6 +323,65 @@ fn write_tag_value(tag: &mut lofty::tag::Tag, name: &str, value: &str) {
 fn format_duration(duration: Duration) -> String {
   let total = duration.as_secs();
   format!("{}:{:02}", total / 60, total % 60)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn tag_entry(name: &str, value: &str) -> MetadataEntry {
+    MetadataEntry {
+      group: "tag".to_string(),
+      name: name.to_string(),
+      value: value.to_string(),
+    }
+  }
+
+  fn extra_entry(label: &str, name: &str, value: &str) -> MetadataEntry {
+    MetadataEntry {
+      group: format!("tag/{label}"),
+      name: format!("{label} {name}"),
+      value: value.to_string(),
+    }
+  }
+
+  #[test]
+  fn draft_lists_extra_blocks() {
+    let entries = vec![
+      tag_entry("Title", "珊瑚海"),
+      extra_entry("riff", "Title", "???"),
+    ];
+    let draft = metadata_draft(Path::new("/tmp/x.wav"), &entries);
+    assert!(draft.contains("Title = \"珊瑚海\""));
+    assert!(draft.contains("# riff Title = ???"));
+  }
+
+  #[test]
+  fn unchanged_draft_still_fixes_extra_blocks() {
+    // The primary value already matches the draft, but the corrupted
+    // RIFF duplicate differs — saving must count as a change so the
+    // write normalizes every block.
+    let entries = vec![
+      tag_entry("Title", "珊瑚海"),
+      extra_entry("riff", "Title", "???"),
+      extra_entry("riff", "Artist", "???, Lara???"),
+    ];
+    let edited = "[metadata]\nTitle = \"珊瑚海\"\nArtist = \"\"\n";
+    let changes = metadata_changes(&entries, edited).unwrap();
+    assert_eq!(changes.len(), 2);
+    assert!(changes.iter().any(|change| change.tag == "Title"));
+    assert!(changes.iter().any(|change| change.tag == "Artist"));
+  }
+
+  #[test]
+  fn no_changes_when_all_blocks_agree() {
+    let entries = vec![
+      tag_entry("Title", "珊瑚海"),
+      extra_entry("riff", "Title", "珊瑚海"),
+    ];
+    let edited = "[metadata]\nTitle = \"珊瑚海\"\n";
+    assert!(metadata_changes(&entries, edited).unwrap().is_empty());
+  }
 }
 
 fn toml_string(value: &str) -> String {
