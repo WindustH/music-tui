@@ -1,0 +1,6 @@
+[submodule "crates/framework-tui"]
+	path = crates/framework-tui
+	url = https://github.com/WindustH/framework-tui.git
+[submodule "crates/img-tui"]
+	path = crates/img-tui
+	url = https://github.com/WindustH/img-tui.git

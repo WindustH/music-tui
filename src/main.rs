@@ -1,0 +1,231 @@
+//! music-tui: a terminal music player backed by MPD.
+
+mod app;
+mod cli;
+mod config;
+mod cover;
+mod event;
+mod keymap;
+mod layout;
+mod library;
+mod logging;
+mod lyrics;
+mod metadata;
+mod mpd;
+mod open;
+mod render;
+mod terminal;
+mod theme;
+mod ui;
+mod visualizer;
+
+use std::{
+  sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+  },
+  thread,
+  time::Duration,
+};
+
+use anyhow::Result;
+use clap::Parser;
+use framework_tui::editor::edit_text_in_editor;
+use img_tui::{NativeImageConfig, RenderMode, capability, native_image};
+use tokio::{sync::mpsc, time::sleep};
+use tracing::{debug, info};
+
+use crate::{
+  app::{App, EditorRequest},
+  config::Settings,
+  event::AsyncEvent,
+  mpd::InterruptSession,
+  render::CoverRenderStore,
+  terminal::Tui,
+};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+  let cli = cli::Cli::parse();
+  let settings = config::load_or_create().await?;
+  logging::init(&settings.cache_dir)?;
+
+  let (initial_notice, interrupt) = match cli.command {
+    Some(cli::Command::Open(args)) => match open::run_open(&args, &settings).await {
+      Ok(outcome) => (Some(outcome.notice), outcome.interrupt),
+      Err(error) => {
+        eprintln!("music-tui open: {error:#}");
+        std::process::exit(1);
+      }
+    },
+    None => (None, None),
+  };
+
+  run_tui(settings, initial_notice, interrupt).await
+}
+
+async fn run_tui(
+  settings: Settings,
+  initial_notice: Option<String>,
+  interrupt: Option<InterruptSession>,
+) -> Result<()> {
+  let terminal_capability = capability::detect();
+  info!(
+    capability = ?terminal_capability,
+    "detected terminal capability"
+  );
+
+  let render_config = settings.config.render.clone();
+  let render_modes = capability::render_modes_override_from_env()
+    .or_else(|| {
+      render_config.auto_detect.then(|| {
+        let zellij_sixel = if render_config.zellij_sixel { "on" } else { "" };
+        terminal_capability.preferred_render_modes(zellij_sixel)
+      })
+    })
+    .unwrap_or_else(|| vec![RenderMode::Symbols, RenderMode::Ascii]);
+  info!(
+    modes = ?render_modes.iter().map(|mode| mode.label()).collect::<Vec<_>>(),
+    "effective render modes"
+  );
+
+  let native_config = NativeImageConfig {
+    cell_pixels: terminal_capability.cell_pixels,
+    passthrough: terminal_capability.passthrough().map(str::to_string),
+    kitty_unicode_placeholders: terminal_capability.kitty_unicode_placeholders(),
+  };
+  let protocol_reset = render_modes
+    .contains(&RenderMode::Kitty)
+    .then(|| {
+      native_image::erase_sequence(
+        RenderMode::Kitty,
+        native_config.passthrough.as_deref(),
+        None,
+      )
+    })
+    .flatten();
+
+  let (tx, mut rx) = mpsc::unbounded_channel::<AsyncEvent>();
+  let mpd = mpd::spawn_mpd_worker(settings.config.mpd.clone(), tx.clone());
+  let visualizer = visualizer::spawn_visualizer(settings.config.visualizer.clone(), tx.clone());
+
+  let input_enabled = Arc::new(AtomicBool::new(true));
+  let input_generation = Arc::new(AtomicU64::new(0));
+  spawn_input_thread(tx.clone(), input_enabled.clone(), input_generation.clone());
+  spawn_tick_task(tx.clone(), settings.config.behavior.clone());
+
+  let mut renderer = CoverRenderStore::new(render_config, native_config, render_modes);
+  let mut tui = Tui::new(protocol_reset)?;
+  let mut app = App::new(settings, mpd, tx.clone(), initial_notice, interrupt);
+  let mut needs_draw = true;
+
+  loop {
+    if needs_draw {
+      tui.draw(|frame| ui::draw(frame, &mut app, &mut renderer, &tx))?;
+      needs_draw = false;
+      if app.should_quit() {
+        break;
+      }
+    }
+
+    if let Some(request) = app.take_editor_request() {
+      input_enabled.store(false, Ordering::SeqCst);
+      input_generation.fetch_add(1, Ordering::SeqCst);
+      tui.suspend()?;
+      let EditorRequest::Metadata { draft, .. } = &request;
+      let result = edit_text_in_editor(draft, &app.settings.cache_dir);
+      let resume_result = tui.resume();
+      if resume_result.is_ok() {
+        discard_pending_terminal_events();
+      }
+      input_generation.fetch_add(1, Ordering::SeqCst);
+      input_enabled.store(true, Ordering::SeqCst);
+      app.finish_metadata_editor(request, result.ok());
+      resume_result?;
+      needs_draw = true;
+      continue;
+    }
+
+    let Some(message) = rx.recv().await else {
+      break;
+    };
+    needs_draw |= handle_async_event(message, &input_generation, &mut app, &mut renderer);
+    while let Ok(message) = rx.try_recv() {
+      needs_draw |= handle_async_event(message, &input_generation, &mut app, &mut renderer);
+    }
+  }
+  visualizer.stop();
+  tui.restore()?;
+  Ok(())
+}
+
+fn handle_async_event(
+  message: AsyncEvent,
+  input_generation: &AtomicU64,
+  app: &mut App,
+  renderer: &mut CoverRenderStore,
+) -> bool {
+  match message {
+    AsyncEvent::Input { event, generation } => {
+      let current_generation = input_generation.load(Ordering::SeqCst);
+      if generation == current_generation {
+        app.handle_input(event)
+      } else {
+        debug!(?event, generation, current_generation, "input event ignored");
+        false
+      }
+    }
+    AsyncEvent::Mpd(event) => app.handle_mpd_event(event),
+    AsyncEvent::Tick => app.handle_tick(),
+    AsyncEvent::Lyrics(outcome) => app.handle_lyrics_outcome(outcome),
+    AsyncEvent::Metadata(outcome) => app.handle_metadata_outcome(outcome),
+    AsyncEvent::MetadataWrite(outcome) => app.handle_metadata_write_outcome(outcome),
+    AsyncEvent::Cover(outcome) => app.handle_cover_outcome(outcome),
+    AsyncEvent::Render(outcome) => renderer.finish(outcome),
+    AsyncEvent::Spectrum(bars) => app.handle_spectrum(bars),
+  }
+}
+
+fn spawn_input_thread(
+  tx: mpsc::UnboundedSender<AsyncEvent>,
+  enabled: Arc<AtomicBool>,
+  generation: Arc<AtomicU64>,
+) {
+  thread::spawn(move || loop {
+    if !enabled.load(Ordering::SeqCst) {
+      thread::sleep(Duration::from_millis(10));
+      continue;
+    }
+    match crossterm::event::read() {
+      Ok(event) => {
+        let generation = generation.load(Ordering::SeqCst);
+        if tx.send(AsyncEvent::Input { event, generation }).is_err() {
+          break;
+        }
+      }
+      Err(_) => thread::sleep(Duration::from_millis(10)),
+    }
+  });
+}
+
+/// Regular UI tick: expires footer messages and keeps the clock moving even
+/// when mpd is idle. Playback position updates arrive via mpd snapshots.
+fn spawn_tick_task(tx: mpsc::UnboundedSender<AsyncEvent>, behavior: config::BehaviorConfig) {
+  tokio::spawn(async move {
+    let period = Duration::from_millis(behavior.tick_ms.clamp(100, 10_000));
+    loop {
+      sleep(period).await;
+      if tx.send(AsyncEvent::Tick).is_err() {
+        break;
+      }
+    }
+  });
+}
+
+fn discard_pending_terminal_events() {
+  while crossterm::event::poll(Duration::from_millis(0)).unwrap_or(false) {
+    if crossterm::event::read().is_err() {
+      break;
+    }
+  }
+}

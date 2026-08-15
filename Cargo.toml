@@ -1,0 +1,38 @@
+[package]
+name = "music-tui"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Terminal music player client for MPD built with framework-tui and img-tui"
+
+[workspace]
+members = [
+  ".",
+  "crates/framework-tui",
+  "crates/img-tui",
+]
+resolver = "3"
+
+[dependencies]
+ansi-to-tui = "8.0.1"
+anyhow = "1.0.103"
+clap = { version = "4.6.1", features = ["derive"] }
+crossterm = "0.29.0"
+framework-tui = { path = "crates/framework-tui" }
+hex = "0.4.3"
+image = "0.25.10"
+img-tui = { path = "crates/img-tui" }
+lofty = "0.22.4"
+mpd_client = "1.4.1"
+ratatui = "0.30.2"
+rustfft = "6.4"
+serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "0.11.0"
+tokio = { version = "1.52.3", features = ["full"] }
+toml = "1.1.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+unicode-width = "0.2.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
