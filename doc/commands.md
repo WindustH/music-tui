@@ -10,7 +10,9 @@ Press `:` to open the command prompt. Tab completion completes command names;
 | `:play` | toggle play/pause |
 | `:pause` | pause |
 | `:toggle` | toggle play/pause |
+| `:update` | rescan the music database |
 | `:stop` | stop playback |
+| `:update` | rescan the music database |
 | `:next`, `:prev` | next / previous song |
 | `:volume <n>` | set volume 0–100 |
 | `:volume +n` / `:volume -n` | nudge volume |
@@ -18,7 +20,6 @@ Press `:` to open the command prompt. Tab completion completes command names;
 | `:vol` | alias of `volume` |
 | `:repeat`, `:random`, `:single`, `:consume` | toggle the mode |
 | `:clear` | clear the queue |
-| `:update` | rescan the music database |
 | `:tab` | list tabs |
 | `:tab <n|name>` | switch tab by 1-based number or name |
 | `:save` | export the queue to `<state>/playlists/music-tui-<time>.m3u` |

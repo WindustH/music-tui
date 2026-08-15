@@ -48,11 +48,15 @@ impl App {
     let Some(token) = key_event_to_token(key) else {
       return false;
     };
-    let bindings = self
-      .view_bindings
-      .get(self.main_pane().index())
-      .expect("bindings for main pane");
-    match self.dispatcher.dispatch(bindings, KeyContext::Browser, token) {
+    // Priority queue: the main pane's bindings first, then the tab's other
+    // panes — keys the main pane does not claim fall through to neighbors.
+    // Dispatch is owned by a short-lived dispatcher wrapper to avoid
+    // overlapping borrows of `self`.
+    let mut dispatcher = std::mem::take(&mut self.dispatcher);
+    let queue = self.pane_bindings();
+    let outcome = dispatcher.dispatch_priority(&queue, KeyContext::Browser, token);
+    self.dispatcher = dispatcher;
+    match outcome {
       MatchResult::Action(action) => {
         self.dispatcher.clear();
         debug!(%action, "action dispatched");

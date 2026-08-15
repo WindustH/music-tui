@@ -264,11 +264,6 @@ impl App {
         self.spectrum.fill(0);
         true
       }
-      "rescan" => {
-        self.mpdc(MpdCommand::Rescan);
-        self.set_message("database rescan started");
-        true
-      }
       _ => false,
     }
   }

@@ -429,11 +429,25 @@ impl App {
   }
 
 
-  pub fn bindings(&self) -> &KeyBindings {
+  /// Binding tables for the current tab as a priority queue: the main
+  /// pane first, then the tab's other panes in layout order (dedup).
+  /// Key dispatch walks this queue, so keys the main pane does not claim
+  /// fall through to neighboring panes in the same tab.
+  pub(crate) fn pane_binding_indices(&self) -> Vec<usize> {
+    let main = self.main_pane();
+    let mut panes = self.current_tab().layout.pane_kinds();
+    panes.sort_by_key(|pane| (*pane != main) as u8);
+    panes.dedup();
+    panes.into_iter().map(|pane| pane.index()).collect()
+  }
+
+  /// The priority queue itself (references into `view_bindings`).
+  pub(crate) fn pane_bindings(&self) -> Vec<&KeyBindings> {
     self
-      .view_bindings
-      .get(self.main_pane().index())
-      .expect("bindings for main pane")
+      .pane_binding_indices()
+      .into_iter()
+      .map(|index| self.view_bindings.get(index).expect("bindings for pane"))
+      .collect()
   }
 }
 /// `mm:ss` for footer/seek messages.

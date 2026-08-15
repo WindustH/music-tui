@@ -113,6 +113,14 @@ impl PaneLayout {
     }
   }
 
+  /// Panes in layout (left-to-right, top-to-bottom) order, with duplicates
+  /// if a pane kind appears more than once.
+  pub fn pane_kinds(&self) -> Vec<PaneKind> {
+    let mut panes = Vec::new();
+    collect_panes(self, &mut panes);
+    panes
+  }
+
   pub fn first_pane(&self) -> PaneKind {
     match self {
       PaneLayout::Pane(kind, _) => *kind,

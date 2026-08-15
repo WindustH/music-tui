@@ -70,9 +70,13 @@ pub(super) fn draw_help_dialog(
       .bg(background),
     ..KeyHelpDialogStyle::default()
   };
-  let entries = app
-    .bindings()
-    .help_entries_filtered(framework_tui::KeyContext::Browser, |_| true);
+  let entries = framework_tui::merge_help_entries(
+    app.pane_bindings()
+      .iter()
+      .flat_map(|bindings| {
+        bindings.help_entries_filtered(framework_tui::KeyContext::Browser, |_| true)
+      }),
+  );
   if let Some(popup) = draw_key_help_dialog_scrolled(
     frame,
     area,
