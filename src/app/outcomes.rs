@@ -87,11 +87,28 @@ impl App {
     match outcome.result {
       Ok(()) => {
         self.set_message(format!("metadata updated: {} tag(s)", outcome.changed_tags));
-        if outcome.song_url == self.metadata_url {
+        // Refresh every slot that shows this song: the playing pane, the
+        // detail view and the hovered data view (the editor can target any
+        // of them).
+        if outcome.song_url == self.current_song_url().unwrap_or_default() {
           self.metadata_entries = None;
           if let Some(path) = self.current_song_path() {
-            self.request_metadata(outcome.song_url, path);
+            self.request_metadata(outcome.song_url.clone(), path);
           }
+        }
+        if let Some(detail) = self.detail.as_mut()
+          && detail.url == outcome.song_url
+        {
+          detail.metadata = None;
+          let path = detail.path.clone();
+          self.spawn_metadata_read(outcome.song_url.clone(), path);
+        }
+        if let Some(hover) = self.hover.as_mut()
+          && hover.url == outcome.song_url
+        {
+          hover.metadata = None;
+          let path = hover.path.clone();
+          self.spawn_metadata_read(outcome.song_url, path);
         }
         true
       }

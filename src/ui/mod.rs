@@ -84,6 +84,7 @@ pub fn draw(
   .areas(area);
 
   app.lyrics_pane_areas.clear();
+  app.lyrics_pane_sources.clear();
   app.queue_pane_areas.clear();
 
   draw_tab_bar(frame, app, tab_bar);

@@ -196,28 +196,39 @@ async fn resolve_open_uri(
     .map(|mut uris| uris.remove(0))
 }
 
-/// Resolve a batch of files (mixed in/outside paths allowed).
+/// Resolve a batch of files (mixed in/outside paths allowed), preserving
+/// the caller's order.
 async fn resolve_open_uris(
   client: &Client,
   files: &[PathBuf],
   mpd_config: &MpdConfig,
   music_dir: &Path,
 ) -> Result<Vec<String>> {
-  let inside: Vec<String> = files
+  let inside: Vec<(usize, String)> = files
     .iter()
-    .filter_map(|file| path_to_uri(music_dir, file).ok())
+    .enumerate()
+    .filter_map(|(index, file)| path_to_uri(music_dir, file).ok().map(|uri| (index, uri)))
     .collect();
-  let outside: Vec<PathBuf> = files
+  let outside: Vec<(usize, PathBuf)> = files
     .iter()
-    .filter(|file| path_to_uri(music_dir, file).is_err())
-    .cloned()
+    .enumerate()
+    .filter(|(_, file)| path_to_uri(music_dir, file).is_err())
+    .map(|(index, file)| (index, file.clone()))
     .collect();
   if outside.is_empty() {
-    return Ok(inside);
+    return Ok(inside.into_iter().map(|(_, uri)| uri).collect());
   }
-  let mut uris = resolve_outside_uris(client, &outside, mpd_config, music_dir).await?;
-  uris.extend(inside);
-  Ok(uris)
+  let outside_paths: Vec<PathBuf> = outside.iter().map(|(_, path)| path.clone()).collect();
+  let resolved = resolve_outside_uris(client, &outside_paths, mpd_config, music_dir).await?;
+  let mut mixed: Vec<(usize, String)> = inside;
+  mixed.extend(
+    outside
+      .iter()
+      .map(|(index, _)| *index)
+      .zip(resolved.into_iter()),
+  );
+  mixed.sort_by_key(|(index, _)| *index);
+  Ok(mixed.into_iter().map(|(_, uri)| uri).collect())
 }
 
 /// Files outside the library: `file://` when connected via socket, else a
