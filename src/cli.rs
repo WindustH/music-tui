@@ -17,7 +17,8 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct OpenArgs {
-  /// Folder or audio file to open.
+  /// Folder, audio file, playlist (`.m3u`/`.m3u8`/`.pls`), or a plain-text
+  /// list of song paths (`.txt`).
   pub path: PathBuf,
 
   /// Include audio files from subfolders recursively.

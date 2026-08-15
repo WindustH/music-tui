@@ -6,8 +6,25 @@
 music-tui open <PATH> [OPTIONS]
 ```
 
-The path must be inside MPD's music directory (auto-detected or configured).
-Folders take every audio file inside (sorted); `-r`/`--recursive` recurses.
+The path must be inside MPD's music directory (auto-detected or configured) —
+except playlist files, which may live anywhere. Folders take every audio
+file inside (sorted); `-r`/`--recursive` recurses.
+
+## Playlist and path-list files
+
+`open` also accepts playlists (`.m3u`/`.m3u8`/`.pls`) and plain-text lists
+of song paths (`.txt`, one path per line, `#` comments ignored). Entries
+resolve relative to the list's own folder (or `~`), must stay inside the
+music directory, and non-audio lines are skipped (the notice reports the
+count).
+
+- `append` adds all entries to the queue;
+- `next` inserts them right after the current song;
+- `folder`/`interrupt` (the default for lists) replaces the queue and
+  starts playback at the first entry; `--no-play` just queues.
+
+Use `:save` inside music-tui to produce such m3u files (see
+[Commands](commands.md)).
 
 ## Modes (`-m`/`--mode`)
 

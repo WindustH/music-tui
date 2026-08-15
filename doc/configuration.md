@@ -42,6 +42,9 @@ window = 2048                # FFT window in samples (256..=8192)
 extra_dirs = []   # extra lookup dirs for `<artist> - <title>.lrc`
 follow = true     # auto-scroll synced lyrics
 
+[playlist]
+save_dir = ""     # `:save` destination dir; empty = ~/.local/state/music-tui/playlists
+
 [layout]
 detail = "H(2:1, cover, metadata)"  # secondary detail view (`i`)
 

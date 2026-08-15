@@ -15,8 +15,9 @@ use tracing::info;
 use crate::{
   cli::OpenArgs,
   config::Settings,
-  library::{collect_audio_files, path_to_uri, resolve_music_dir},
+  library::{collect_audio_files, is_audio_file, path_to_uri, resolve_music_dir},
   mpd::{InterruptSession, capture_interrupt_session, connect},
+  playlist::{self, PlaylistKind},
 };
 
 pub struct OpenOutcome {
@@ -45,6 +46,12 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
 
   if !path.is_file() {
     bail!("{} is neither a file nor a directory", path.display());
+  }
+
+  if let Some(kind) = playlist::playlist_kind(&path) {
+    return open_playlist(&client, &path, kind, args, &music_dir)
+      .await
+      .map(|notice| OpenOutcome { notice, interrupt: None });
   }
 
   let uri = path_to_uri(&music_dir, &path)?;
@@ -100,6 +107,71 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
   };
 
   Ok(OpenOutcome { notice, interrupt })
+}
+
+async fn open_playlist(
+  client: &Client,
+  path: &Path,
+  kind: PlaylistKind,
+  args: &OpenArgs,
+  music_dir: &Path,
+) -> Result<String> {
+  let _ = kind;
+  let entries = playlist::parse_playlist(path).map_err(anyhow::Error::msg)?;
+  let mut uris = Vec::new();
+  for entry in &entries {
+    let Ok(resolved) = entry.canonicalize() else { continue };
+    if !is_audio_file(&resolved) {
+      continue;
+    }
+    if let Ok(uri) = path_to_uri(music_dir, &resolved) {
+      uris.push(uri);
+    }
+  }
+  if uris.is_empty() {
+    bail!("no playable entries in {}", short_name(path));
+  }
+  let skipped = entries.len() - uris.len();
+  let name = short_name(path);
+  let mut notice = String::new();
+  // `interrupt` previews a single song; for whole playlists the natural
+  // default is a plain replace (folder-style).
+  let replace = matches!(
+    args.mode,
+    crate::cli::OpenMode::Folder | crate::cli::OpenMode::Interrupt
+  );
+  if replace {
+    client.command(ClearQueue).await?;
+    for uri in &uris {
+      client.command(Add::uri(uri)).await?;
+    }
+    notice = format!("queued {} song(s) from {name}", uris.len());
+    if !args.no_play {
+      client.command(Play::song(SongPosition(0))).await?;
+    }
+  } else if args.mode == crate::cli::OpenMode::Next {
+    let status = client.command(Status).await?;
+    let start = status.current_song.map(|(position, _)| position.0 + 1).unwrap_or(0);
+    for (offset, uri) in uris.iter().enumerate() {
+      client.command(Add::uri(uri).at(start + offset)).await?;
+    }
+    notice = format!("queued {} song(s) from {name} next", uris.len());
+    if !args.no_play {
+      maybe_start_if_idle(client).await?;
+    }
+  } else {
+    for uri in &uris {
+      client.command(Add::uri(uri)).await?;
+    }
+    notice = format!("appended {} song(s) from {name}", uris.len());
+    if !args.no_play {
+      maybe_start_if_idle(client).await?;
+    }
+  }
+  if skipped > 0 {
+    notice.push_str(&format!(" ({skipped} entr{} skipped)", if skipped == 1 { "y" } else { "ies" }));
+  }
+  Ok(notice)
 }
 
 async fn open_folder(

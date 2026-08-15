@@ -12,6 +12,7 @@ mod logging;
 mod lyrics;
 mod metadata;
 mod mpd;
+mod playlist;
 mod open;
 mod render;
 mod state;

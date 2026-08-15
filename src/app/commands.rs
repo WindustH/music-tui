@@ -4,7 +4,7 @@ use super::*;
 
 const COMMANDS: &[&str] = &[
   "quit", "q", "help", "play", "pause", "toggle", "stop", "next", "prev", "volume", "vol",
-  "repeat", "random", "single", "consume", "clear", "update", "tab", "add",
+  "repeat", "random", "single", "consume", "clear", "update", "tab", "add", "save",
 ];
 
 impl App {
@@ -211,6 +211,7 @@ impl App {
       "update" => self.mpdc(MpdCommand::Rescan),
       "tab" => self.command_tab(&args),
       "add" => self.command_add(&args),
+      "save" => self.command_save(args.first().copied()),
       other => self.set_message(format!("unknown command: {other}")),
     }
   }
@@ -281,6 +282,55 @@ impl App {
       self.set_message(format!("queued {}", canonical.display()));
     } else {
       self.set_message("path is outside the music directory".to_string());
+    }
+  }
+  /// `:save [path]` — export the current queue as an m3u8 file. Bare file
+  /// names resolve under `playlist.save_dir` (default
+  /// `~/.local/state/music-tui/playlists`); relative paths are rejected.
+  fn command_save(&mut self, arg: Option<&str>) {
+    if self.music_dir.is_none() {
+      self.set_message("music directory unknown; cannot resolve song paths");
+      return;
+    }
+    let save_dir = self.settings.config.playlist.effective_save_dir();
+    let target = match crate::playlist::resolve_save_path(arg, &save_dir) {
+      Ok(target) => target,
+      Err(error) => {
+        self.set_message(error);
+        return;
+      }
+    };
+    let mut body = String::from("#EXTM3U\n");
+    for song in &self.queue {
+      let song = &song.song;
+      let artist = song.artists().join(", ");
+      let label = match (artist.is_empty(), song.title()) {
+        (false, Some(title)) => format!("{artist} - {title}"),
+        (true, Some(title)) => title.to_string(),
+        _ => song.url.clone(),
+      };
+      let seconds = song.duration.map(|duration| duration.as_secs()).unwrap_or(0);
+      let path = self
+        .music_dir
+        .as_ref()
+        .map(|dir| crate::library::uri_to_path(dir, &song.url));
+      if let Some(path) = path {
+        body.push_str(&format!("#EXTINF:{seconds},{label}\n{}\n", path.display()));
+      }
+    }
+    let written = body.lines().count().saturating_sub(1);
+    if let Some(parent) = target.parent()
+      && let Err(error) = std::fs::create_dir_all(parent)
+    {
+      self.set_message(format!("save failed: {error}"));
+      return;
+    }
+    match std::fs::write(&target, body) {
+      Ok(()) => self.set_message(format!(
+        "saved {written} song(s) to {}",
+        target.display()
+      )),
+      Err(error) => self.set_message(format!("save failed: {error}")),
     }
   }
 

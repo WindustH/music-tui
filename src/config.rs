@@ -33,6 +33,7 @@ pub struct AppConfig {
   pub render: RenderConfig,
   pub visualizer: VisualizerConfig,
   pub lyrics: LyricsConfig,
+  pub playlist: PlaylistConfig,
   pub layout: LayoutConfig,
 }
 
@@ -127,6 +128,34 @@ impl Default for VisualizerConfig {
       bars: 256,
       fps: 30,
       window: 2048,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlaylistConfig {
+  /// Directory for `:save` exports. Empty means the XDG state home
+  /// (`~/.local/state/music-tui/playlists`).
+  pub save_dir: String,
+}
+
+impl Default for PlaylistConfig {
+  fn default() -> Self {
+    Self {
+      save_dir: String::new(),
+    }
+  }
+}
+
+impl PlaylistConfig {
+  /// Effective `:save` directory (`~` expanded; fallback: state home).
+  pub fn effective_save_dir(&self) -> PathBuf {
+    let configured = self.save_dir.trim();
+    if configured.is_empty() {
+      crate::playlist::default_save_dir()
+    } else {
+      expand_home(configured)
     }
   }
 }
@@ -523,6 +552,8 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "lyrics" => Some("Lyrics loading settings."),
     "lyrics.extra_dirs" => Some("Extra directories searched for `<song>.lrc` and `<artist> - <title>.lrc` files."),
     "lyrics.follow" => Some("Follow playback when synced lyrics are available."),
+    "playlist" => Some("Playlist file handling (`:save`, `open` on .m3u/.pls/.txt files)."),
+    "playlist.save_dir" => Some("Directory for `:save` exports; empty uses ~/.local/state/music-tui/playlists. Bare `:save` names resolve here."),
     "layout" => Some("Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover, metadata)) with a main pane that receives its keys."),
     "layout.detail" => Some("Secondary detail view (i) layout over the cover and metadata panes, e.g. H(2:1, cover, metadata)."),
     "layout.tabs" => Some("Tabs shown in the tab bar, switched with left/right."),

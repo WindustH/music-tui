@@ -21,6 +21,9 @@ Press `:` to open the command prompt. Tab completion completes command names;
 | `:update` | rescan the music database |
 | `:tab` | list tabs |
 | `:tab <n|name>` | switch tab by 1-based number or name |
+| `:save` | export the queue to `<state>/playlists/music-tui-<time>.m3u` |
+| `:save <name>` | export to `<state>/playlists/<name>.m3u` (`.m3u` added if missing) |
+| `:save /abs/path.m3u` | export to an absolute path (relative paths are rejected) |
 | `:add <path>` | append a file or folder (relative to `music_dir` if not absolute) |
 | `:add <dir> -r` | append a folder recursively |
 
