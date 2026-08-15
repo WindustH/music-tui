@@ -38,7 +38,7 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "lyrics.follow" => Some("Follow playback when synced lyrics are available."),
     "playlist" => Some("Playlist file handling (`:save`, `open` on .m3u/.pls/.txt files)."),
     "playlist.save_dir" => Some("Directory for `:save` exports; empty uses ~/.local/state/music-tui/playlists. Bare `:save` names resolve here."),
-    "layout" => Some("Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover, metadata)) with a main pane that receives its keys."),
+    "layout" => Some("Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover:hovered, metadata:hovered)) with a main pane that receives its keys. cover/lyrics/metadata panes take an optional :playing/:hovered source suffix."),
     "layout.detail" => Some("Secondary detail view (i) layout over the cover and metadata panes, e.g. H(2:1, cover, metadata)."),
     "layout.tabs" => Some("Tabs shown in the tab bar, switched with left/right."),
     _ => None,

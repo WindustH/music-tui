@@ -8,7 +8,7 @@ The default layout configuration:
 ```toml
 [[layout.tabs]]
 name = "playlist"
-layout = "H(2:1, queue, V(2:1, cover, metadata))"
+layout = "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))"
 main = "queue"
 
 [[layout.tabs]]

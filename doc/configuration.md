@@ -50,7 +50,7 @@ detail = "H(2:1, cover, metadata)"  # secondary detail view (`i`)
 
 [[layout.tabs]]
 name = "playlist"
-layout = "H(2:1, queue, V(2:1, cover, metadata))"
+layout = "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))"
 main = "queue"
 ```
 
@@ -83,6 +83,9 @@ suffix selecting which song they display:
 ```text
 H(2:1, queue, V(2:1, cover:hovered, lyrics:hovered))
 ```
+
+is the default sidebar companion for the playlist tab (metadata instead
+of lyrics).
 
 A `:hovered` lyrics pane has no playback state: it renders as a plain
 scrollable list without sync highlighting, follow mode, or click-to-seek

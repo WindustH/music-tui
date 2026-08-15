@@ -202,7 +202,7 @@ impl TabConfig {
   fn playlist() -> Self {
     Self {
       name: "playlist".to_string(),
-      layout: "H(2:1, queue, V(2:1, cover, metadata))".to_string(),
+      layout: "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))".to_string(),
       main: Some("queue".to_string()),
     }
   }
