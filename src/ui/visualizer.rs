@@ -52,11 +52,16 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
   // Full-height vertical bars: '█' for fully filled rows, a partial block
   // at the top edge, empty cells above — ncmpcpp style, bottom-aligned.
   let fraction_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+  let left = " ".repeat(layout.left_margin);
+  let right = " ".repeat(layout.right_margin);
   let mut lines: Vec<Line> = Vec::with_capacity(height);
   for row in 0..height {
     let from_bottom = height - 1 - row;
     let mut spans: Vec<Span> = Vec::with_capacity(inner.width as usize);
-    for (strip, value) in values.iter().enumerate() {
+    if !left.is_empty() {
+      spans.push(Span::raw(left.clone()));
+    }
+    for value in &values {
       let value = (*value).min(100) as usize;
       let full = value * height / 100; // fully filled rows below the tip
       let remainder = value * height % 100; // fraction of the tip row
@@ -86,11 +91,9 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
       for _ in 0..layout.strip_width {
         spans.push(Span::styled(ch.to_string(), style));
       }
-      if let Some(gap) = layout.gap_after.get(strip)
-        && *gap > 0
-      {
-        spans.push(Span::raw(" ".repeat(*gap)));
-      }
+    }
+    if !right.is_empty() {
+      spans.push(Span::raw(right.clone()));
     }
     lines.push(Line::from(spans));
   }

@@ -31,9 +31,14 @@ window = 2048         # FFT window, 256..=8192 (rounded to a power of two)
 ## Notes
 
 - The band count follows the pane width: one band per column, capped at
-  `bars` (default 256). Wider panes give every band an equal-width strip,
-  with the remainder spread as evenly spaced gaps so the full width is
-  used.
+  `bars` (default 256). The pane then picks a strip count that minimizes
+  `leftover / strips` (every band gets an equal-width strip) and centers
+  the leftover columns as margins.
+- Bands are log-spaced with a minimum step of one FFT bin: where a pure
+  log grid would be narrower than the FFT resolution (the low end at
+  small windows), bands merge onto distinct bins instead of sampling the
+  same bin twice and rendering as duplicated identical bars. A larger
+  `window` resolves more low-frequency bands.
 - The fifo is read non-blocking; nothing is written to it. If the fifo is
   missing or MPD is not playing, the pane simply stays flat.
 - Higher `window` gives finer frequency resolution, lower latency the
