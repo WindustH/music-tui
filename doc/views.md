@@ -55,9 +55,11 @@ priority over pane bindings everywhere.
 ## Detail view
 
 Pressing `i` on a queue entry opens a secondary detail view (like opening an
-image in a gallery browser): a large cover on top and the metadata of that
-entry below. The sidebar panes always keep showing the *currently playing*
-song. `e` edits the detailed song's tags, `esc`/`i` returns to the queue.
+image in a gallery browser): a large cover beside the metadata of that
+entry (layout configurable via `[layout].detail`, cover left by default).
+The sidebar panes always keep showing the *currently playing* song. `e`
+edits the detailed song's tags, `esc`/`i`/`q` returns to the queue — with a
+secondary view open, `q` leaves that level instead of quitting the app.
 
 ## Progress band
 

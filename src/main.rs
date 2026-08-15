@@ -118,6 +118,7 @@ async fn run_tui(
   let mut renderer = CoverRenderStore::new(render_config, native_config, render_modes);
   let mut tui = Tui::new(protocol_reset)?;
   let mut app = App::new(settings, mpd, tx.clone(), initial_notice, interrupt);
+  app.visualizer = Some(visualizer.clone());
   app.restore_state(state::PersistedState::load(&app.settings.cache_dir));
   let mut saved_state = app.snapshot_state();
   let mut needs_draw = true;

@@ -6,8 +6,15 @@ impl App {
   pub(crate) fn run_action(&mut self, action: &str) -> bool {
     match action {
       "quit" => {
-        self.quit = true;
-        true
+        // With a secondary view open, `q` leaves that level instead of the
+        // whole app (the global binding wins in every pane, so route here).
+        if self.detail.is_some() {
+          self.close_detail();
+          true
+        } else {
+          self.quit = true;
+          true
+        }
       }
       "help" => {
         self.help_scroll = 0;

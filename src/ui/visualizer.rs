@@ -12,6 +12,12 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
     return;
   }
 
+  // One band per column: report the pane width so the FFT analysis matches
+  // (capped by `visualizer.bars` in the config).
+  if let Some(visualizer) = app.visualizer.as_ref() {
+    visualizer.set_columns(inner.width as usize);
+  }
+
   if app.spectrum.is_empty() {
     frame.render_widget(
       Paragraph::new("waiting for audio on the mpd fifo…")
@@ -21,8 +27,9 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
     return;
   }
 
-  // Resample the configured bar count to the pane width so the visualization
-  // always spans the full available area (max of each source range).
+  // Bars normally arrive pre-matched to the pane width (one band per
+  // column); the max-resample below only bridges transient frames while
+  // the worker catches up with a resize.
   let bars = &app.spectrum;
   let columns = inner.width as usize;
   let values: Vec<u8> = (0..columns)

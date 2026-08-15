@@ -20,7 +20,7 @@ pub(crate) use crate::{
   config::{Settings, expand_home},
   cover, metadata,
   event::{AsyncEvent, CoverOutcome, LyricsOutcome, MpdEvent, MetadataOutcome, MetadataWriteOutcome},
-  layout::{PaneKind, TabLayout, parse_tabs},
+  layout::{PaneKind, PaneLayout, TabLayout, parse_detail, parse_tabs},
   library::{resolve_music_dir, uri_to_path},
   keymap::KeymapConfig,
   lyrics::{self, Lyrics},
@@ -97,6 +97,10 @@ pub struct App {
   pub cover_error: Option<String>,
   /// Secondary detail view for the selected queue entry (`i`).
   pub detail: Option<DetailView>,
+  /// Layout tree for the secondary detail view (cover + metadata panes).
+  pub(crate) detail_layout: PaneLayout,
+  /// Visualizer worker handle (reports pane width for band allocation).
+  pub(crate) visualizer: Option<crate::visualizer::VisualizerHandle>,
   /// Scroll position of the f1 key-help dialog.
   pub help_scroll: usize,
   /// Maximum scroll of the key-help dialog, updated at draw time.
@@ -145,6 +149,10 @@ impl App {
       eprintln!("invalid layout config ({error}); using default tabs");
       parse_tabs(&crate::config::LayoutConfig::default()).expect("default tabs")
     });
+    let detail_layout = parse_detail(&settings.config.layout.detail).unwrap_or_else(|error| {
+      eprintln!("invalid detail layout ({error}); using default");
+      parse_detail(crate::layout::DEFAULT_DETAIL_LAYOUT).expect("default detail layout")
+    });
     let view_bindings = build_bindings(&settings.keymap);
     let input_bindings = build_input_bindings(&settings.keymap);
     let help_bindings = settings.keymap.help_bindings();
@@ -153,6 +161,7 @@ impl App {
       events: events.clone(),
       music_dir,
       tabs,
+      detail_layout,
       tab: 0,
       settings,
       quit: false,
@@ -183,6 +192,7 @@ impl App {
       cover_dims: None,
       cover_error: None,
       detail: None,
+      visualizer: None,
       help_scroll: 0,
       max_help_scroll: 0,
       lyrics_pane_areas: Vec::new(),

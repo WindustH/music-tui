@@ -34,13 +34,16 @@ zellij_sixel = false   # advertise Sixel inside Zellij
 fifo_path = "/tmp/mpd.fifo"  # MPD fifo output path
 sample_rate = 44100          # must match the fifo format
 channels = 2
-bars = 48
+bars = 256                   # bar cap; analysis follows the pane width
 fps = 30
 window = 2048                # FFT window in samples (256..=8192)
 
 [lyrics]
 extra_dirs = []   # extra lookup dirs for `<artist> - <title>.lrc`
 follow = true     # auto-scroll synced lyrics
+
+[layout]
+detail = "H(2:1, cover, metadata)"  # secondary detail view (`i`)
 
 [[layout.tabs]]
 name = "playlist"
@@ -65,3 +68,15 @@ H(1:2, cover, V(2:1, lyrics, metadata))
 
 `main` names the pane that receives key input while the tab is active; it
 must appear in the tree (defaults to the first leaf).
+
+## Detail view layout
+
+`[layout].detail` configures the secondary detail view opened with `i`
+from the queue. It is a layout tree over exactly one `cover` and one
+`metadata` pane — side by side by default:
+
+```toml
+[layout]
+detail = "H(2:1, cover, metadata)"   # default: cover left, metadata right
+# detail = "V(2:1, cover, metadata)" # stacked instead
+```

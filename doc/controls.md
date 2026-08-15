@@ -52,6 +52,7 @@ wins over pane bindings in every view.
 | `j`/`k`, `up`/`down`, `pgup`/`pgdn` | scroll |
 | `e` | edit tags in `$EDITOR` |
 | `esc` | back (close filter/detail, then first tab) |
+| `q` | quit — or close the detail view first when one is open |
 
 ## Mouse
 

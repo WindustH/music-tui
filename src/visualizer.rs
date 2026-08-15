@@ -5,7 +5,7 @@ use std::{
   io::{Read, Result as IoResult},
   sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
   },
   time::{Duration, Instant},
 };
@@ -17,11 +17,28 @@ use crate::{config::VisualizerConfig, event::AsyncEvent};
 
 pub struct VisualizerHandle {
   stop: Arc<AtomicBool>,
+  /// Desired bar count, driven by the pane width reported by the UI
+  /// (one band per column, capped by `visualizer.bars`).
+  columns: Arc<AtomicUsize>,
+}
+
+impl Clone for VisualizerHandle {
+  fn clone(&self) -> Self {
+    Self {
+      stop: self.stop.clone(),
+      columns: self.columns.clone(),
+    }
+  }
 }
 
 impl VisualizerHandle {
   pub fn stop(&self) {
     self.stop.store(true, Ordering::SeqCst);
+  }
+
+  /// Report the current pane width so each column gets its own band.
+  pub fn set_columns(&self, columns: usize) {
+    self.columns.store(columns.max(1), Ordering::Relaxed);
   }
 }
 
@@ -30,17 +47,27 @@ pub fn spawn_visualizer(
   events: mpsc::UnboundedSender<AsyncEvent>,
 ) -> VisualizerHandle {
   let stop = Arc::new(AtomicBool::new(false));
-  let handle = VisualizerHandle { stop: stop.clone() };
+  // Until the UI reports a pane width, analyze at the configured cap.
+  let columns = Arc::new(AtomicUsize::new(config.bars.max(1)));
+  let handle = VisualizerHandle {
+    stop: stop.clone(),
+    columns: columns.clone(),
+  };
   std::thread::Builder::new()
     .name("music-tui-visualizer".to_string())
     .spawn(move || {
-      run(config, events, stop);
+      run(config, events, stop, columns);
     })
     .expect("failed to spawn visualizer thread");
   handle
 }
 
-fn run(config: VisualizerConfig, events: mpsc::UnboundedSender<AsyncEvent>, stop: Arc<AtomicBool>) {
+fn run(
+  config: VisualizerConfig,
+  events: mpsc::UnboundedSender<AsyncEvent>,
+  stop: Arc<AtomicBool>,
+  columns: Arc<AtomicUsize>,
+) {
   let window = config.window.max(256);
   let channels = config.channels.max(1) as usize;
   let mut planner: FftPlanner<f32> = FftPlanner::new();
@@ -52,7 +79,8 @@ fn run(config: VisualizerConfig, events: mpsc::UnboundedSender<AsyncEvent>, stop
     .collect();
 
   let mut samples: Vec<f32> = Vec::with_capacity(window * channels * 2);
-  let mut bars: Vec<u8> = vec![0; config.bars];
+  let mut bars: Vec<u8> = vec![0; columns.load(Ordering::Relaxed).max(1)];
+  let max_bars = config.bars.max(1);
   let mut leftover = Vec::new();
   let frame_period = Duration::from_secs_f64(1.0 / config.fps.max(1) as f64);
   let mut last_frame = Instant::now();
@@ -95,13 +123,18 @@ fn run(config: VisualizerConfig, events: mpsc::UnboundedSender<AsyncEvent>, stop
       let mono_needed = window * channels;
       if samples.len() >= mono_needed && last_frame.elapsed() >= frame_period {
         last_frame = Instant::now();
+        // Follow the reported pane width: one band per column, capped.
+        let target = columns.load(Ordering::Relaxed).clamp(1, max_bars);
+        if bars.len() != target {
+          bars.resize(target, 0);
+        }
         let frame: Vec<f32> = samples
           .drain(..mono_needed)
           .collect::<Vec<f32>>()
           .chunks(channels)
           .map(|chunk| chunk.iter().sum::<f32>() / chunk.len() as f32)
           .collect();
-        let spectrum = compute_spectrum(&frame, &fft, &hann, config.bars, config.sample_rate);
+        let spectrum = compute_spectrum(&frame, &fft, &hann, bars.len(), config.sample_rate);
         for (index, value) in spectrum.iter().enumerate() {
           let index = index.min(bars.len() - 1);
           let previous = f32::from(bars[index]);

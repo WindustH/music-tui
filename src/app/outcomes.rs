@@ -90,14 +90,16 @@ impl App {
       }
       handled = true;
     }
-    match outcome.result {
-      Ok(path) => {
-        self.cover_dims = outcome.dims;
-        self.cover_path = Some((outcome.song_url.clone(), path));
-        self.cover_error = None;
-      }
-      Err(error) => {
-        if outcome.song_url == self.current_song_url().unwrap_or_default() {
+    // App-level sidebar cover tracks the *current* song only — a cover
+    // outcome for the detail-view song must not clobber it.
+    if outcome.song_url == self.current_song_url().unwrap_or_default() {
+      match outcome.result {
+        Ok(path) => {
+          self.cover_dims = outcome.dims;
+          self.cover_path = Some((outcome.song_url.clone(), path));
+          self.cover_error = None;
+        }
+        Err(error) => {
           self.cover_path = None;
           self.cover_error = Some(error);
         }

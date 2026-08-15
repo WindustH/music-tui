@@ -109,7 +109,8 @@ pub struct VisualizerConfig {
   pub fifo_path: String,
   pub sample_rate: u32,
   pub channels: u16,
-  /// Number of bars shown in the visualizer view.
+  /// Maximum bar count. The analysis follows the visualizer pane width
+  /// (one band per column) up to this cap.
   pub bars: usize,
   /// Target updates per second for the spectrum analysis.
   pub fps: u32,
@@ -123,7 +124,7 @@ impl Default for VisualizerConfig {
       fifo_path: "/tmp/mpd.fifo".to_string(),
       sample_rate: 44100,
       channels: 2,
-      bars: 48,
+      bars: 256,
       fps: 30,
       window: 2048,
     }
@@ -149,10 +150,11 @@ impl Default for LyricsConfig {
 }
 
 /// Top-level tab configuration. Each `[[layout.tabs]]` entry describes one
-/// tab shown in the tab bar.
+/// tab shown in the tab bar; `detail` describes the secondary detail view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
+  pub detail: String,
   pub tabs: Vec<TabConfig>,
 }
 
@@ -164,6 +166,9 @@ impl Default for LayoutConfig {
 
 impl LayoutConfig {
   fn normalize_defaults(&mut self) {
+    if self.detail.trim().is_empty() {
+      self.detail = layout::DEFAULT_DETAIL_LAYOUT.to_string();
+    }
     if self.tabs.is_empty() {
       *self = LayoutConfig::with_default_tabs();
     }
@@ -171,6 +176,7 @@ impl LayoutConfig {
 
   fn with_default_tabs() -> Self {
     Self {
+      detail: layout::DEFAULT_DETAIL_LAYOUT.to_string(),
       tabs: vec![
         TabConfig::playlist(),
         TabConfig::playing(),
@@ -245,7 +251,7 @@ impl AppConfig {
       self.behavior.playing_tick_ms = 200;
     }
     if self.visualizer.bars == 0 {
-      self.visualizer.bars = 48;
+      self.visualizer.bars = 256;
     }
     if self.visualizer.fps == 0 {
       self.visualizer.fps = 30;
@@ -259,6 +265,7 @@ impl AppConfig {
   }
 
   fn validate(&self) -> Result<(), String> {
+    layout::parse_detail(&self.layout.detail)?;
     layout::parse_tabs(&self.layout)?;
     Ok(())
   }
@@ -510,13 +517,14 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "visualizer.fifo_path" => Some("MPD fifo output path feeding the visualizer."),
     "visualizer.sample_rate" => Some("Sample rate of the fifo audio_output format."),
     "visualizer.channels" => Some("Channel count of the fifo audio_output format."),
-    "visualizer.bars" => Some("Number of bars shown in the visualizer view."),
+    "visualizer.bars" => Some("Maximum bar count; the spectrum follows the pane width (one band per column) up to this cap."),
     "visualizer.fps" => Some("Spectrum analysis updates per second."),
     "visualizer.window" => Some("FFT window size in samples."),
     "lyrics" => Some("Lyrics loading settings."),
     "lyrics.extra_dirs" => Some("Extra directories searched for `<song>.lrc` and `<artist> - <title>.lrc` files."),
     "lyrics.follow" => Some("Follow playback when synced lyrics are available."),
     "layout" => Some("Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover, metadata)) with a main pane that receives its keys."),
+    "layout.detail" => Some("Secondary detail view (i) layout over the cover and metadata panes, e.g. H(2:1, cover, metadata)."),
     "layout.tabs" => Some("Tabs shown in the tab bar, switched with left/right."),
     _ => None,
   }

@@ -107,6 +107,36 @@ pub fn parse_tabs(config: &LayoutConfig) -> Result<Vec<TabLayout>, String> {
     .collect()
 }
 
+/// Default secondary detail-view layout: cover left, metadata right.
+pub const DEFAULT_DETAIL_LAYOUT: &str = "H(2:1, cover, metadata)";
+
+/// Parse the `[layout].detail` spec. Only the `cover` and `metadata` panes
+/// are allowed, each exactly once.
+pub fn parse_detail(spec: &str) -> Result<PaneLayout, String> {
+  let layout = parse_layout(spec)?;
+  let mut panes = Vec::new();
+  collect_panes(&layout, &mut panes);
+  if panes.len() != 2
+    || !panes.contains(&PaneKind::Cover)
+    || !panes.contains(&PaneKind::Metadata)
+  {
+    return Err(format!(
+      "detail layout must contain exactly one cover and one metadata pane, got {spec:?}"
+    ));
+  }
+  Ok(layout)
+}
+
+fn collect_panes(layout: &PaneLayout, panes: &mut Vec<PaneKind>) {
+  match layout {
+    PaneLayout::Pane(kind) => panes.push(*kind),
+    PaneLayout::Split { first, second, .. } => {
+      collect_panes(first, panes);
+      collect_panes(second, panes);
+    }
+  }
+}
+
 fn parse_tab(tab: &TabConfig) -> Result<TabLayout, String> {
   let layout = parse_layout(&tab.layout)?;
   let main = match tab.main.as_deref() {
@@ -292,7 +322,10 @@ mod tests {
       layout: "queue".to_string(),
       main: Some("lyrics".to_string()),
     };
-    let config = LayoutConfig { tabs: vec![tab] };
+    let config = LayoutConfig {
+      detail: DEFAULT_DETAIL_LAYOUT.to_string(),
+      tabs: vec![tab],
+    };
     assert!(parse_tabs(&config).is_err());
   }
 }

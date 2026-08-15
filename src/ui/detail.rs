@@ -2,8 +2,9 @@
 
 use super::*;
 
-/// Secondary detail surface for a queue entry (`i`): cover on top,
-/// metadata below — the sidebar data stays untouched.
+/// Secondary detail surface for a queue entry (`i`): a layout tree over the
+/// cover and metadata panes (default side by side) — the sidebar data stays
+/// untouched. Layout comes from `[layout].detail`.
 pub(super) fn draw_detail_view(
   frame: &mut Frame,
   app: &App,
@@ -24,11 +25,64 @@ pub(super) fn draw_detail_view(
   if inner.width < 2 || inner.height < 2 {
     return;
   }
-  let [cover_area, metadata_area] =
-    Layout::vertical([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)]).areas(inner);
+  let mut ctx = DetailCtx {
+    app,
+    detail,
+    renderer,
+    tx,
+    overlays,
+  };
+  draw_detail_layout(frame, &mut ctx, inner, &app.detail_layout);
+}
 
-  // --- cover (same fitting math as the cover pane) ---
-  let (cell_width, cell_height) = renderer.cell_pixels();
+/// Shared borrow bundle so the layout recursion stays under clippy's
+/// argument limit.
+struct DetailCtx<'a> {
+  app: &'a App,
+  detail: &'a crate::app::DetailView,
+  renderer: &'a mut CoverRenderStore,
+  tx: &'a mpsc::UnboundedSender<AsyncEvent>,
+  overlays: &'a mut Vec<ProtocolOverlay>,
+}
+
+fn draw_detail_layout(
+  frame: &mut Frame,
+  ctx: &mut DetailCtx<'_>,
+  area: Rect,
+  layout: &PaneLayout,
+) {
+  match layout {
+    PaneLayout::Pane(kind) => match kind {
+      PaneKind::Cover => draw_detail_cover(frame, ctx, area),
+      PaneKind::Metadata => draw_detail_metadata(frame, ctx, area),
+      // The config validator only admits cover/metadata panes here.
+      _ => {}
+    },
+    PaneLayout::Split {
+      dir,
+      ratio,
+      first,
+      second,
+    } => {
+      let constraints = [
+        Constraint::Ratio(ratio.0, ratio.0 + ratio.1),
+        Constraint::Ratio(ratio.1, ratio.0 + ratio.1),
+      ];
+      let areas: [Rect; 2] = match dir {
+        SplitDir::Horizontal => Layout::horizontal(constraints).areas(area),
+        SplitDir::Vertical => Layout::vertical(constraints).areas(area),
+      };
+      draw_detail_layout(frame, ctx, areas[0], first);
+      draw_detail_layout(frame, ctx, areas[1], second);
+    }
+  }
+}
+
+/// Cover with the same aspect-correct fitting math as the cover pane.
+fn draw_detail_cover(frame: &mut Frame, ctx: &mut DetailCtx<'_>, cover_area: Rect) {
+  let theme = &ctx.app.settings.theme;
+  let detail = ctx.detail;
+  let (cell_width, cell_height) = ctx.renderer.cell_pixels();
   let image_area = match detail.cover_dims {
     Some((image_width, image_height)) if image_width > 0 && image_height > 0 => {
       let max_pixel_width = f64::from(cover_area.width) * f64::from(cell_width.max(1));
@@ -53,8 +107,12 @@ pub(super) fn draw_detail_view(
   };
   match detail.cover.as_ref() {
     Some(path) => {
-      renderer.request(path, image_area.width, image_area.height, tx);
-      match renderer.get(path, image_area.width, image_area.height) {
+      ctx.renderer
+        .request(path, image_area.width, image_area.height, ctx.tx);
+      match ctx
+        .renderer
+        .get(path, image_area.width, image_area.height)
+      {
         Some(RenderedImage::Symbols { text, .. }) => {
           frame.render_widget(
             Paragraph::new(text.clone()).wrap(Wrap { trim: false }),
@@ -70,7 +128,7 @@ pub(super) fn draw_detail_view(
           erase,
         }) => {
           reserve_protocol_area(frame, image_area);
-          overlays.push(ProtocolOverlay {
+          ctx.overlays.push(ProtocolOverlay {
             area: image_area,
             mode: *mode,
             data: data.clone(),
@@ -103,8 +161,11 @@ pub(super) fn draw_detail_view(
       );
     }
   }
+}
 
-  // --- metadata ---
+fn draw_detail_metadata(frame: &mut Frame, ctx: &DetailCtx<'_>, metadata_area: Rect) {
+  let theme = &ctx.app.settings.theme;
+  let detail = ctx.detail;
   let metadata_block = Block::default()
     .borders(Borders::ALL)
     .border_style(Style::default().fg(theme.color(&theme.border)))
@@ -119,7 +180,7 @@ pub(super) fn draw_detail_view(
       let lines: Vec<Line> = entries
         .iter()
         .skip(detail.metadata_scroll)
-        .map(|entry| metadata_line(app, &entry.name, &entry.value))
+        .map(|entry| metadata_line(ctx.app, &entry.name, &entry.value))
         .collect();
       frame.render_widget(Paragraph::new(lines), metadata_inner);
     }
