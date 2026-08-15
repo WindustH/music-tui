@@ -30,7 +30,7 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "visualizer.fifo_path" => Some("MPD fifo output path feeding the visualizer."),
     "visualizer.sample_rate" => Some("Sample rate of the fifo audio_output format."),
     "visualizer.channels" => Some("Channel count of the fifo audio_output format."),
-    "visualizer.bars" => Some("Maximum bar count; the spectrum follows the pane width (one band per column) up to this cap."),
+    "visualizer.bars" => Some("Maximum band count; the analysis follows the pane width (one band per column) up to this cap. Wider panes render equal-width bars with evenly spread gaps."),
     "visualizer.fps" => Some("Spectrum analysis updates per second."),
     "visualizer.window" => Some("FFT window size in samples."),
     "lyrics" => Some("Lyrics loading settings."),

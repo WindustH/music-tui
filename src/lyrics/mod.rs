@@ -154,7 +154,6 @@ fn sanitize_filename(name: &str) -> String {
 }
 
 /// Parse LRC content; falls back to plain lines when no timestamps exist.
-
 pub use parse::parse;
 
 mod parse;

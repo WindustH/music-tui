@@ -40,7 +40,11 @@ impl App {
           self.on_song_changed();
         }
         self.sync_hover_view();
+        self.scan_queue_labels();
         true
+      }
+      MpdEvent::TagFallback { url, title, artist } => {
+        self.apply_tag_fallback(&url, title, artist)
       }
     }
   }
@@ -72,13 +76,11 @@ impl App {
 
   fn song_matches_filter(song: &Song, needle: &str) -> bool {
     let needle = needle.to_lowercase();
-    if song.title().is_some_and(|title| title.to_lowercase().contains(&needle)) {
+    if song_title(song).is_some_and(|title| title.to_lowercase().contains(&needle)) {
       return true;
     }
-    if song
-      .artists()
-      .iter()
-      .any(|artist| artist.to_lowercase().contains(&needle))
+    if let Some(artist) = song_artist(song)
+      && artist.to_lowercase().contains(&needle)
     {
       return true;
     }

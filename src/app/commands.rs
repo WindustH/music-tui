@@ -303,8 +303,8 @@ impl App {
     let mut body = String::from("#EXTM3U\n");
     for song in &self.queue {
       let song = &song.song;
-      let artist = song.artists().join(", ");
-      let label = match (artist.is_empty(), song.title()) {
+      let artist = song_artist(song).map(str::to_string).unwrap_or_default();
+      let label = match (artist.is_empty(), song_title(song)) {
         (false, Some(title)) => format!("{artist} - {title}"),
         (true, Some(title)) => title.to_string(),
         _ => song.url.clone(),

@@ -1,5 +1,6 @@
-//! Cover art discovery: sibling image files first, then embedded pictures
-//! extracted into the cache directory.
+//! Cover art discovery: embedded pictures first, then sibling image files
+//! (canonical names like `cover.jpg`, finally any image in the folder)
+//! extracted into the cache directory when embedded.
 
 use std::path::{Path, PathBuf};
 
@@ -7,20 +8,22 @@ use lofty::{prelude::*, read_from_path};
 use sha2::{Digest, Sha256};
 
 const COVER_NAMES: &[&str] = &["cover", "folder", "front", "albumart", "album"];
-const COVER_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
+const COVER_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif"];
 
-/// Find a cover image for `file`.
+/// Find a cover image for `file`: embedded picture, then images in the
+/// same folder.
 pub fn find_cover(file: &Path, covers_cache_dir: &Path) -> Result<PathBuf, String> {
-  if let Some(path) = find_sibling_cover(file) {
+  if let Ok(path) = extract_embedded_cover(file, covers_cache_dir) {
     return Ok(path);
   }
-  extract_embedded_cover(file, covers_cache_dir)
+  find_sibling_cover(file).ok_or_else(|| "no cover art found".to_string())
 }
 
 fn find_sibling_cover(file: &Path) -> Option<PathBuf> {
   let parent = file.parent()?;
   let stem = file.file_stem()?.to_string_lossy().to_ascii_lowercase();
 
+  // Canonical names first, in a stable priority order.
   let mut candidates: Vec<PathBuf> = Vec::new();
   for name in COVER_NAMES {
     for ext in COVER_EXTENSIONS {
@@ -32,7 +35,25 @@ fn find_sibling_cover(file: &Path) -> Option<PathBuf> {
     candidates.push(parent.join(format!("{stem}.{ext}")));
     candidates.push(parent.join(format!("{stem}.{}", ext.to_uppercase())));
   }
-  candidates.into_iter().find(|path| path.is_file())
+  if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+    return Some(path);
+  }
+
+  // Fallback: any image in the folder (sorted for a stable pick).
+  let entries = std::fs::read_dir(parent).ok()?;
+  let mut images: Vec<PathBuf> = entries
+    .filter_map(|entry| entry.ok())
+    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+    .map(|entry| entry.path())
+    .filter(|path| {
+      path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| COVER_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+    })
+    .collect();
+  images.sort();
+  images.into_iter().next()
 }
 
 fn extract_embedded_cover(file: &Path, covers_cache_dir: &Path) -> Result<PathBuf, String> {

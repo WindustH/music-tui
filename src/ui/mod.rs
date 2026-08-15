@@ -21,7 +21,7 @@ use ratatui::{
 use tokio::sync::mpsc;
 
 use crate::{
-  app::App,
+  app::{App, song_artist, song_title},
   event::{AsyncEvent, RenderedImage},
   layout::{PaneKind, PaneLayout, PaneSource, SplitDir},
   render::CoverRenderStore,

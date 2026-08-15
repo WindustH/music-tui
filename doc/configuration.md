@@ -34,7 +34,7 @@ zellij_sixel = false   # advertise Sixel inside Zellij
 fifo_path = "/tmp/mpd.fifo"  # MPD fifo output path
 sample_rate = 44100          # must match the fifo format
 channels = 2
-bars = 256                   # bar cap; analysis follows the pane width
+bars = 256                   # band cap; analysis follows the pane width
 fps = 30
 window = 2048                # FFT window in samples (256..=8192)
 

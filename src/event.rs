@@ -24,6 +24,13 @@ pub enum MpdEvent {
   Snapshot { status: Status, queue: Vec<SongInQueue> },
   ConnectionLost(String),
   Notice(String),
+  /// Clean title/artist re-read with lofty for a queue song whose MPD
+  /// tags are `?`-corrupted.
+  TagFallback {
+    url: String,
+    title: Option<String>,
+    artist: Option<String>,
+  },
 }
 
 #[derive(Debug)]

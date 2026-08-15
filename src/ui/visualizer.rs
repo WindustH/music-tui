@@ -1,4 +1,7 @@
-//! Spectrum visualizer pane rendering.
+//! Spectrum visualizer pane rendering: the analysis band count follows the
+//! pane width (one band per column, capped by `visualizer.bars`); wider
+//! panes give every band an equal-width strip, with the remainder spread
+//! as gaps so the full width is used.
 
 use super::*;
 
@@ -12,8 +15,7 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
     return;
   }
 
-  // One band per column: report the pane width so the FFT analysis matches
-  // (capped by `visualizer.bars` in the config).
+  // Keep the analysis band count in sync with the pane width.
   if let Some(visualizer) = app.visualizer.as_ref() {
     visualizer.set_columns(inner.width as usize);
   }
@@ -27,17 +29,21 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
     return;
   }
 
-  // Bars normally arrive pre-matched to the pane width (one band per
-  // column); the max-resample below only bridges transient frames while
-  // the worker catches up with a resize.
+  // Equal-width strips: while the pane is narrower than the band count
+  // every column is its own band; wider panes group neighboring bands so
+  // each strip keeps the same width, and the remainder becomes evenly
+  // spread gaps (the full width is always used).
   let bars = &app.spectrum;
-  let columns = inner.width as usize;
-  let values: Vec<u8> = (0..columns)
-    .map(|column| {
-      let start = column * bars.len() / columns;
-      let end = ((column + 1) * bars.len() / columns).max(start + 1);
+  let height = inner.height as usize;
+  let layout = crate::visualizer::band_layout(inner.width as usize, bars.len().max(1));
+
+  let values: Vec<u8> = (0..layout.strips)
+    .map(|strip| {
+      let start = strip * bars.len() / layout.strips;
+      let end = ((strip + 1) * bars.len() / layout.strips).max(start + 1);
       bars[start..end.min(bars.len())]
-        .iter().copied()
+        .iter()
+        .copied()
         .max()
         .unwrap_or(0)
     })
@@ -45,13 +51,12 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
 
   // Full-height vertical bars: '█' for fully filled rows, a partial block
   // at the top edge, empty cells above — ncmpcpp style, bottom-aligned.
-  let height = inner.height as usize;
   let fraction_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
   let mut lines: Vec<Line> = Vec::with_capacity(height);
   for row in 0..height {
     let from_bottom = height - 1 - row;
-    let mut spans = Vec::with_capacity(columns);
-    for value in &values {
+    let mut spans: Vec<Span> = Vec::with_capacity(inner.width as usize);
+    for (strip, value) in values.iter().enumerate() {
       let value = (*value).min(100) as usize;
       let full = value * height / 100; // fully filled rows below the tip
       let remainder = value * height % 100; // fraction of the tip row
@@ -78,7 +83,14 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
       } else {
         Style::default()
       };
-      spans.push(Span::styled(ch.to_string(), style));
+      for _ in 0..layout.strip_width {
+        spans.push(Span::styled(ch.to_string(), style));
+      }
+      if let Some(gap) = layout.gap_after.get(strip)
+        && *gap > 0
+      {
+        spans.push(Span::raw(" ".repeat(*gap)));
+      }
     }
     lines.push(Line::from(spans));
   }

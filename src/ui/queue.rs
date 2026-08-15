@@ -70,12 +70,10 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize>) -> Line<'static> {
   let theme = &app.settings.theme;
-  let title = song
-    .song
-    .title()
+  let title = song_title(&song.song)
     .map(str::to_string)
     .unwrap_or_else(|| song.song.url.clone());
-  let artist = song.song.artists().first().cloned().unwrap_or_default();
+  let artist = song_artist(&song.song).map(str::to_string).unwrap_or_default();
   let marker = if playing == Some(index) {
     match app.status.as_ref().map(|status| status.state) {
       Some(PlayState::Playing) => Span::styled("▶ ", Style::default().fg(theme.color(&theme.playing))),

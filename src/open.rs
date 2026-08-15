@@ -225,7 +225,7 @@ async fn resolve_open_uris(
     outside
       .iter()
       .map(|(index, _)| *index)
-      .zip(resolved.into_iter()),
+      .zip(resolved),
   );
   mixed.sort_by_key(|(index, _)| *index);
   Ok(mixed.into_iter().map(|(_, uri)| uri).collect())

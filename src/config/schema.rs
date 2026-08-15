@@ -85,7 +85,7 @@ pub struct VisualizerConfig {
   pub fifo_path: String,
   pub sample_rate: u32,
   pub channels: u16,
-  /// Maximum bar count. The analysis follows the visualizer pane width
+  /// Maximum band count; the analysis follows the visualizer pane width
   /// (one band per column) up to this cap.
   pub bars: usize,
   /// Target updates per second for the spectrum analysis.

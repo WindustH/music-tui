@@ -55,9 +55,7 @@ impl App {
       self.set_message("song is not under music_dir");
       return true;
     };
-    let title = song
-      .song
-      .title()
+    let title = song_title(&song.song)
       .map(str::to_string)
       .unwrap_or_else(|| url.clone());
     self.detail = Some(DetailView {

@@ -1,7 +1,8 @@
 # Cover Rendering
 
-Cover art is looked up per song (embedded pictures, then sibling files like
-`cover.*`, `folder.*`, `front.*`, or a file named like the track) and rendered
+Cover art is looked up per song (embedded pictures first, then sibling
+files like `cover.*`, `folder.*`, `front.*`, a file named like the track,
+and finally any image in the same folder) and rendered
 aspect-correct and centered via [img-tui](https://github.com/WindustH/img-tui).
 
 ## Protocol selection

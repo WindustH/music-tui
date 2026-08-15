@@ -1,6 +1,7 @@
 //! Application state and input handling.
 
 pub(crate) use std::{
+  collections::HashSet,
   path::PathBuf,
   time::{Duration, Instant},
 };
@@ -40,6 +41,7 @@ pub enum EditorRequest {
 pub(crate) mod actions;
 pub(crate) mod bindings;
 pub(crate) mod editor;
+pub(crate) mod labels;
 pub(crate) mod loading;
 pub(crate) mod outcomes;
 pub(crate) mod snapshot;
@@ -50,6 +52,7 @@ pub(crate) mod mouse;
 
 pub use detail::DetailView;
 pub use detail::HoverView;
+pub(crate) use labels::{song_artist, song_title};
 
 pub struct App {
   pub settings: Settings,
@@ -103,6 +106,11 @@ pub struct App {
   pub detail: Option<DetailView>,
   /// Data view for the hovered queue row (`:hovered` pane source).
   pub hover: Option<HoverView>,
+  /// Lofty re-reads queued for queue songs whose MPD tags are all
+  /// `?`-corrupted (e.g. GBK RIFF INFO in WAV files).
+  pub(crate) tag_fallbacks_pending: HashSet<String>,
+  /// URLs already re-read once; never retried.
+  pub(crate) tag_fallbacks_done: HashSet<String>,
   /// Whether any configured pane uses the hovered data source (gates the
   /// lazy loading in `sync_hover_view`).
   pub(crate) has_hover_panes: bool,
@@ -206,6 +214,8 @@ impl App {
       cover_error: None,
       detail: None,
       hover: None,
+      tag_fallbacks_pending: HashSet::new(),
+      tag_fallbacks_done: HashSet::new(),
       has_hover_panes: false,
       visualizer: None,
       help_scroll: 0,

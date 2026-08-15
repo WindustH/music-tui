@@ -104,9 +104,7 @@ impl App {
           .and_then(|row| self.filtered_position(row))
           && position < self.queue.len()
         {
-          let title = self.queue[position]
-            .song
-            .title()
+          let title = song_title(&self.queue[position].song)
             .map(str::to_string)
             .unwrap_or_else(|| self.queue[position].song.url.clone());
           self.mpdc(MpdCommand::DeleteAt(position));
