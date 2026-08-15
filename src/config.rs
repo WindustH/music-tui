@@ -504,7 +504,7 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "visualizer.fps" => Some("Spectrum analysis updates per second."),
     "visualizer.window" => Some("FFT window size in samples."),
     "lyrics" => Some("Lyrics loading settings."),
-    "lyrics.extra_dirs" => Some("Extra directories searched for `<artist> - <title>.lrc` files."),
+    "lyrics.extra_dirs" => Some("Extra directories searched for `<song>.lrc` and `<artist> - <title>.lrc` files."),
     "lyrics.follow" => Some("Follow playback when synced lyrics are available."),
     "layout" => Some("Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover, metadata)) with a main pane that receives its keys."),
     "layout.tabs" => Some("Tabs shown in the tab bar, switched with left/right."),

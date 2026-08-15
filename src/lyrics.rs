@@ -52,19 +52,36 @@ impl Lyrics {
   }
 }
 
-/// Find lyrics for `file`: sibling `.lrc`, `<artist> - <title>.lrc` in the
-/// extra dirs, then embedded tag lyrics.
-pub fn load(file: &Path, extra_dirs: &[PathBuf], artist: Option<&str>, title: Option<&str>) -> Result<Lyrics, String> {
+/// Find lyrics for `file`: sibling `<name>.lrc`, then `<name>.lrc` in the
+/// extra dirs, then `<artist> - <title>.lrc` in the extra dirs, then embedded
+/// tag lyrics.
+pub fn load(
+  file: &Path,
+  extra_dirs: &[PathBuf],
+  artist: Option<&str>,
+  title: Option<&str>,
+) -> Result<Lyrics, String> {
   if let Some(path) = sibling_lrc_path(file) {
     if let Ok(body) = std::fs::read_to_string(&path) {
       return parse(&body);
     }
   }
 
-  if let (Some(artist), Some(title)) = (artist, title) {
-    let name = format!("{artist} - {title}.lrc");
-    for dir in extra_dirs {
-      let candidate = dir.join(sanitize_filename(&name));
+  let song_stem = file
+    .file_stem()
+    .and_then(|stem| stem.to_str())
+    .map(str::to_string);
+
+  for dir in extra_dirs {
+    if let Some(stem) = &song_stem {
+      let candidate = dir.join(sanitize_filename(&format!("{stem}.lrc")));
+      if let Ok(body) = std::fs::read_to_string(&candidate) {
+        return parse(&body);
+      }
+    }
+
+    if let (Some(artist), Some(title)) = (artist, title) {
+      let candidate = dir.join(sanitize_filename(&format!("{artist} - {title}.lrc")));
       if let Ok(body) = std::fs::read_to_string(&candidate) {
         return parse(&body);
       }
@@ -182,5 +199,38 @@ mod tests {
     let lyrics = parse("[00:00]a\n[00:10]b\n[00:20]c\n").unwrap();
     assert_eq!(lyrics.active_index(Duration::from_secs(12)), Some(1));
     assert_eq!(lyrics.active_index(Duration::from_secs(59)), Some(2));
+  }
+
+  #[test]
+  fn finds_same_name_lrc_in_extra_dir() {
+    let root = std::env::temp_dir().join(format!("music-tui-test-{}", std::process::id()));
+    let lyrics_dir = root.join("lyrics");
+    std::fs::create_dir_all(&lyrics_dir).unwrap();
+
+    let song = root.join("song.flac");
+    std::fs::write(&song, b"not audio").unwrap();
+    std::fs::write(lyrics_dir.join("song.lrc"), "[00:01]extra dir\n").unwrap();
+
+    let found = load(&song, &[lyrics_dir.clone()], None, None).unwrap();
+    assert!(matches!(&found, Lyrics::Synced(lines) if lines[0].text == "extra dir"));
+
+    std::fs::remove_dir_all(&root).ok();
+  }
+
+  #[test]
+  fn artist_title_lrc_takes_backseat_to_same_name() {
+    let root = std::env::temp_dir().join(format!("music-tui-test2-{}", std::process::id()));
+    let lyrics_dir = root.join("lyrics");
+    std::fs::create_dir_all(&lyrics_dir).unwrap();
+
+    let song = root.join("song.flac");
+    std::fs::write(&song, b"not audio").unwrap();
+    std::fs::write(lyrics_dir.join("song.lrc"), "same name\n").unwrap();
+    std::fs::write(lyrics_dir.join("artist - title.lrc"), "artist title\n").unwrap();
+
+    let found = load(&song, &[lyrics_dir.clone()], Some("artist"), Some("title")).unwrap();
+    assert!(matches!(&found, Lyrics::Plain(lines) if lines[0] == "same name"));
+
+    std::fs::remove_dir_all(&root).ok();
   }
 }
