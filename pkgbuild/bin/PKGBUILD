@@ -10,7 +10,7 @@ url="https://github.com/WindustH/music-tui"
 license=('MIT')
 depends=('mpd' 'chafa' 'sqlite')
 provides=("$_pkgname")
-conflicts=("$_pkgname" "$_pkgname-git")
+conflicts=("$_pkgname" "$_pkgname-stable" "$_pkgname-git")
 options=('!strip')
 source=("$_pkgname-$pkgver-x86_64-unknown-linux-gnu.tar.gz::$url/releases/download/v$pkgver/$_pkgname-$pkgver-x86_64-unknown-linux-gnu.tar.gz")
 # TODO: fill in the real checksum after publishing the v0.1.0 GitHub release

@@ -44,10 +44,14 @@ without starting playback.
 ### Arch Linux (AUR)
 
 ```bash
-yay -S music-tui        # release build (from the v tag)
-yay -S music-tui-git    # latest master
-yay -S music-tui-bin    # prebuilt binary from the GitHub release
+yay -S music-tui-stable   # release build (from the v tag)
+yay -S music-tui-git       # latest master
+yay -S music-tui-bin       # prebuilt binary from the GitHub release
 ```
+
+Note: the plain `music-tui` AUR name belongs to a different project;
+this one ships as `music-tui-stable` / `music-tui-git` / `music-tui-bin`
+(all `provide: music-tui` and conflict with each other).
 
 ### Homebrew
 
