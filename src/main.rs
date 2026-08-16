@@ -10,6 +10,7 @@ mod layout;
 mod library;
 mod library_db;
 mod logging;
+mod strip;
 mod lyrics;
 mod metadata;
 mod mpd;

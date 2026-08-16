@@ -1,6 +1,7 @@
 //! Queue pane rendering.
 
 use super::*;
+use crate::strip::StrippedText;
 
 pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
@@ -26,7 +27,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
       "connecting to mpd…".to_string()
     };
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -34,7 +35,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   if app.queue_filter_matches.is_empty() {
     let hint = format!("no matches for /{}", app.queue_filter.as_deref().unwrap_or_default());
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -56,7 +57,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
 
   let list = List::new(items).highlight_style(
     Style::default()
-      .fg(theme.color(&theme.accent))
+      .fg(theme.color(&theme.queue.selection))
       .add_modifier(Modifier::BOLD),
   );
   frame.render_stateful_widget(list, inner, &mut app.queue_state);
@@ -64,7 +65,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   // The scrollbar mirrors the viewport (offset + size), not the selection,
   // and doubles as a mouse drag target.
   let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-    .style(Style::default().fg(theme.color(&theme.border)));
+    .style(Style::default().fg(theme.color(&theme.base.border)));
   let mut state = ratatui::widgets::ScrollbarState::new(app.queue_filter_matches.len())
     .position(app.queue_state.offset())
     .viewport_content_length(inner.height as usize);
@@ -87,53 +88,85 @@ fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize
   let artist = song_artist(&song.song).map(str::to_string).unwrap_or_default();
   let marker = if playing == Some(index) {
     match app.status.as_ref().map(|status| status.state) {
-      Some(PlayState::Playing) => Span::styled("▶ ", Style::default().fg(theme.color(&theme.playing))),
-      Some(PlayState::Paused) => Span::styled("⏸ ", Style::default().fg(theme.color(&theme.paused))),
+      Some(PlayState::Playing) => Span::styled("▶ ", Style::default().fg(theme.color(&theme.queue.playing))),
+      Some(PlayState::Paused) => Span::styled("⏸ ", Style::default().fg(theme.color(&theme.queue.paused))),
       _ => Span::raw("  "),
     }
   } else {
     Span::raw("  ")
   };
-  let filter = app.queue_filter.as_deref();
-  let base = Style::default().fg(theme.color(&theme.foreground));
+  // Space-separated terms; each one matches with spaces ignored inside
+  // the field text. Every matched term gets highlighted.
+  let terms: Vec<&str> = app
+    .queue_filter
+    .as_deref()
+    .map(|filter| filter.split_whitespace().collect())
+    .unwrap_or_default();
+  let base = Style::default().fg(theme.color(&theme.base.foreground));
+  let muted = Style::default().fg(theme.color(&theme.base.muted));
   let highlight = Style::default()
-    .fg(theme.color(&theme.library_highlight))
+    .fg(theme.color(&theme.queue.highlight))
     .add_modifier(Modifier::BOLD);
-  let text = if artist.is_empty() {
-    title
+  let mut spans = vec![marker];
+  if terms.is_empty() {
+    let text = if artist.is_empty() {
+      title
+    } else {
+      format!("{title} — {artist}")
+    };
+    spans.push(Span::styled(text, base));
   } else {
-    format!("{title} — {artist}")
-  };
-  let main_spans = match filter.and_then(|needle| find_substring(&text, needle)) {
-    Some((start, end)) => vec![
-      Span::styled(text[..start].to_string(), base),
-      Span::styled(text[start..end].to_string(), highlight),
-      Span::styled(text[end..].to_string(), base),
-    ],
-    None => vec![Span::styled(text, base)],
-  };
+    let title_text = StrippedText::new(&title);
+    let title_ranges: Vec<(usize, usize)> = terms
+      .iter()
+      .flat_map(|term| title_text.find_all(term))
+      .collect();
+    spans.extend(highlighted_ranges_spans(
+      &title, &title, 0, title_ranges, base, highlight,
+    ));
+    if !artist.is_empty() {
+      let artist_text = StrippedText::new(&artist);
+      let artist_ranges: Vec<(usize, usize)> = terms
+        .iter()
+        .flat_map(|term| artist_text.find_all(term))
+        .collect();
+      spans.push(Span::styled(" — ", base));
+      spans.extend(highlighted_ranges_spans(
+        &artist, &artist, 0, artist_ranges, base, highlight,
+      ));
+    }
+    // Terms that only match the album or the URL still need a visible
+    // highlight, so append those fields when they contain a match.
+    if let Some(album) = song_album(&song.song) {
+      let album_text = StrippedText::new(album);
+      let ranges: Vec<(usize, usize)> = terms
+        .iter()
+        .flat_map(|term| album_text.find_all(term))
+        .collect();
+      if !ranges.is_empty() {
+        spans.push(Span::styled(" · ", muted));
+        spans.extend(highlighted_ranges_spans(album, album, 0, ranges, muted, highlight));
+      }
+    }
+    let url_text = StrippedText::new(&song.song.url);
+    let url_ranges: Vec<(usize, usize)> = terms
+      .iter()
+      .flat_map(|term| url_text.find_all(term))
+      .collect();
+    if !url_ranges.is_empty() {
+      spans.push(Span::styled(" ⟨", muted));
+      spans.extend(highlighted_ranges_spans(
+        &song.song.url, &song.song.url, 0, url_ranges, muted, highlight,
+      ));
+      spans.push(Span::styled("⟩", muted));
+    }
+  }
   let duration = song
     .song
     .duration
     .map(format_duration_line)
     .unwrap_or_default();
-  let mut spans = vec![marker];
-  spans.extend(main_spans);
   spans.push(Span::raw(" "));
-  spans.push(Span::styled(duration, Style::default().fg(theme.color(&theme.muted))));
+  spans.push(Span::styled(duration, muted));
   Line::from(spans)
-}
-
-/// Case-insensitive substring range (byte offsets) that lands on char
-/// boundaries of `text`. Lowercasing can change lengths for a few code
-/// points; in that case no highlight is returned.
-fn find_substring(text: &str, needle: &str) -> Option<(usize, usize)> {
-  if needle.is_empty() {
-    return None;
-  }
-  let lowered = text.to_lowercase();
-  let needle_lowered = needle.to_lowercase();
-  let start = lowered.find(&needle_lowered)?;
-  let end = start + needle_lowered.len();
-  (text.is_char_boundary(start) && text.is_char_boundary(end)).then_some((start, end))
 }

@@ -422,28 +422,24 @@ impl TrackField {
   }
 }
 
-/// A matched track: the field that produced the best (highest-priority)
-/// match and where in that field the keyword sits.
+/// A matched track plus the field that produced the best
+/// (highest-priority) term-0 match; used for result ordering.
 #[derive(Debug, Clone)]
 pub struct TrackMatch {
   pub track: LibraryTrack,
   /// Field holding the best match.
   pub field: TrackField,
-  /// Byte range of the first match in that field.
-  pub range: (usize, usize),
 }
 
 /// Filter tracks by `query` over every field. The query is split on
-/// whitespace; every term must match somewhere (AND), and the reported
-/// field/range is the term-0 match with the best priority.
+/// whitespace; every term must match somewhere (AND) with spaces inside
+/// the field text ignored, and the reported field/range is the term-0
+/// match with the best priority (in original-text byte coordinates).
 pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
-  let terms: Vec<String> = query
-    .split_whitespace()
-    .map(str::to_lowercase)
-    .collect();
+  let terms: Vec<String> = query.split_whitespace().map(str::to_string).collect();
   let mut out = Vec::new();
   for track in tracks {
-    let lower: Vec<(TrackField, String)> = [
+    let fields: Vec<(TrackField, crate::strip::StrippedText)> = [
       TrackField::Title,
       TrackField::Artist,
       TrackField::Album,
@@ -452,16 +448,15 @@ pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
       TrackField::Lyrics,
     ]
     .iter()
-    .map(|field| (*field, field.text(&track).to_lowercase()))
+    .map(|field| (*field, crate::strip::StrippedText::new(field.text(track))))
     .collect();
     let mut best: Option<(TrackField, (usize, usize))> = None;
     let mut all_terms_match = true;
-    for term in &terms {
+    for (index, term) in terms.iter().enumerate() {
       let mut term_match: Option<(TrackField, (usize, usize))> = None;
-      for (field, text) in &lower {
-        if let Some(at) = text.find(term.as_str()) {
-          let end = at + term.len();
-          let candidate = (*field, (at, end));
+      for (field, text) in &fields {
+        if let Some(range) = text.find_all(term).first().copied() {
+          let candidate = (*field, range);
           term_match = Some(match term_match {
             None => candidate,
             Some(current) if field.rank() < current.0.rank() => candidate,
@@ -471,7 +466,7 @@ pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
       }
       match term_match {
         Some(found) => {
-          if std::ptr::eq(term, &terms[0]) {
+          if index == 0 {
             best = Some(found);
           }
         }
@@ -482,11 +477,10 @@ pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
       }
     }
     if all_terms_match {
-      let (field, range) = best.unwrap_or((TrackField::Title, (0, 0)));
+      let (field, _range) = best.unwrap_or((TrackField::Title, (0, 0)));
       out.push(TrackMatch {
         track: track.clone(),
         field,
-        range,
       });
     }
   }
@@ -498,18 +492,6 @@ pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
       .then_with(|| a.track.title.cmp(&b.track.title))
   });
   out
-}
-
-/// Byte range of the first `needle` occurrence, for highlighting.
-#[allow(dead_code)]
-pub fn highlight_range(haystack: &str, needle: &str) -> Option<(usize, usize)> {
-  if needle.is_empty() {
-    return None;
-  }
-  haystack
-    .to_lowercase()
-    .find(needle.to_lowercase().as_str())
-    .map(|at| (at, at + needle.len()))
 }
 
 #[cfg(test)]
@@ -556,7 +538,6 @@ mod tests {
     let hits = filter_tracks(&tracks, "夜曲");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].field, TrackField::Lyrics);
-    assert_eq!(hits[0].range, (0, "夜曲".len()));
   }
 
   #[test]
@@ -577,11 +558,6 @@ mod tests {
     assert_eq!(filter_tracks(&tracks, "夜 第七").len(), 1);
   }
 
-  #[test]
-  fn highlight_range_is_case_insensitive() {
-    assert_eq!(highlight_range("Hello World", "world"), Some((6, 11)));
-    assert_eq!(highlight_range("你好", "好"), Some((3, 6)));
-  }
 }
 
 #[allow(dead_code)]

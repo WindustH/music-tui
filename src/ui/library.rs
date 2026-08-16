@@ -77,7 +77,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
       "library not configured — set [library] paths in config.toml".to_string()
     };
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -88,7 +88,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
       app.library_filter.as_deref().unwrap_or_default()
     );
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -114,7 +114,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
       .chain(columns.iter().map(|column| {
         Cell::from(column.label()).style(
           Style::default()
-            .fg(theme.color(&theme.border))
+            .fg(theme.color(&theme.base.border))
             .add_modifier(Modifier::BOLD),
         )
       }))
@@ -152,7 +152,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
 
   // Viewport scrollbar (offset + size), draggable via the mouse.
   let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-    .style(Style::default().fg(theme.color(&theme.border)));
+    .style(Style::default().fg(theme.color(&theme.base.border)));
   let mut state = ratatui::widgets::ScrollbarState::new(app.library_rows.len())
     .position(app.library_state.offset())
     .viewport_content_length(viewport.height as usize);
@@ -222,8 +222,8 @@ fn column_widths(columns: &[DisplayColumn], available: u16) -> Vec<u16> {
 /// tones so columns read apart at a glance.
 fn field_color(field: TrackField, theme: &crate::theme::ThemeConfig) -> ratatui::style::Color {
   let name = match field {
-    TrackField::Title | TrackField::Album | TrackField::Filename => &theme.foreground,
-    TrackField::Artist | TrackField::Genre | TrackField::Lyrics => &theme.accent_alt,
+    TrackField::Title | TrackField::Album | TrackField::Filename => &theme.base.foreground,
+    TrackField::Artist | TrackField::Genre | TrackField::Lyrics => &theme.base.accent_alt,
   };
   theme.color(name)
 }
@@ -238,130 +238,104 @@ fn library_row(
 ) -> Row<'static> {
   let theme = &app.settings.theme;
   let track = &matched.track;
-  let filter_active = app.library_filter.is_some();
 
-  // Inverted hover bar like calibre-tui's row highlight.
-  let base_bg = if is_selected {
-    theme.color(&theme.accent)
+  // Full-row hover bar: the Row/Cell styles paint the background across
+  // the entire row (cells + gaps); spans only set foreground colors so
+  // they cannot punch holes in the bar.
+  let row_style = if is_selected {
+    Style::default()
+      .fg(theme.color(&theme.library.selection_foreground))
+      .bg(theme.color(&theme.library.selection_background))
   } else {
-    theme.color(&theme.background)
+    Style::default()
+      .fg(theme.color(&theme.base.foreground))
+      .bg(theme.color(&theme.base.background))
+  };
+  let plain_fg = if is_selected {
+    theme.color(&theme.library.selection_foreground)
+  } else {
+    theme.color(&theme.base.foreground)
   };
 
+  let marker_fg = if is_selected {
+    plain_fg
+  } else if playing_path == Some(track.path.as_path()) {
+    match app.status.as_ref().map(|status| status.state) {
+      Some(PlayState::Playing) => theme.color(&theme.footer.playing),
+      Some(PlayState::Paused) => theme.color(&theme.footer.paused),
+      _ => plain_fg,
+    }
+  } else {
+    plain_fg
+  };
   let marker = if playing_path == Some(track.path.as_path()) {
     match app.status.as_ref().map(|status| status.state) {
-      Some(PlayState::Playing) => Span::styled(
-        "▶ ",
-        Style::default().fg(theme.color(&theme.playing)).bg(base_bg),
-      ),
-      Some(PlayState::Paused) => Span::styled(
-        "⏸ ",
-        Style::default().fg(theme.color(&theme.paused)).bg(base_bg),
-      ),
+      Some(PlayState::Playing) => Span::styled("▶ ", Style::default().fg(marker_fg)),
+      Some(PlayState::Paused) => Span::styled("⏸ ", Style::default().fg(marker_fg)),
       _ => Span::raw("  "),
     }
   } else {
     Span::raw("  ")
   };
 
-  let mut cells = vec![Cell::from(Line::from(marker))];
+  let mut cells = vec![Cell::from(Line::from(marker)).style(row_style)];
   for (column, width) in columns.iter().zip(widths.iter()) {
     let width = usize::from(*width).max(1);
     let cell = match column.kind {
       ColumnKind::Duration => {
         let label = format_duration_line(Duration::from_secs_f64(track.duration_secs.max(0.0)));
         let pad = width.saturating_sub(label.chars().count());
+        let fg = if is_selected {
+          plain_fg
+        } else {
+          theme.color(&theme.base.muted)
+        };
         Cell::from(Line::from(Span::styled(
           format!("{}{label}", " ".repeat(pad)),
-          Style::default().fg(theme.color(&theme.muted)).bg(base_bg),
+          Style::default().fg(fg),
         )))
+        .style(row_style)
       }
       ColumnKind::Field(field) => {
         let text = field.text(track);
-        let is_match_field = filter_active && matched.field == field;
-        let (window_start, range) = if is_match_field {
-          match_window(text, matched.range, width)
-        } else {
-          (0, None)
+        // Every column highlights all term matches it contains (spaces
+        // inside the text are ignored when matching).
+        let terms: Vec<&str> = app
+          .library_filter
+          .as_deref()
+          .map(|filter| filter.split_whitespace().collect())
+          .unwrap_or_default();
+        let stripped = StrippedText::new(text);
+        let ranges: Vec<(usize, usize)> = terms
+          .iter()
+          .flat_map(|term| stripped.find_all(term))
+          .collect();
+        // Long fields scroll so the first match is visible.
+        let (window_start, _) = match ranges.first().copied() {
+          Some(range) => match_window(text, range, width),
+          None => (0, None),
         };
         let window: String = text.chars().skip(window_start).take(width).collect();
-        let base = Style::default().fg(field_color(field, theme)).bg(base_bg);
+        let base = if is_selected {
+          Style::default().fg(plain_fg)
+        } else {
+          Style::default().fg(field_color(field, theme))
+        };
         let highlight = Style::default()
-          .fg(theme.color(&theme.library_highlight))
-          .bg(base_bg)
+          .fg(theme.color(&theme.library.highlight))
           .add_modifier(Modifier::BOLD);
-        Cell::from(Line::from(highlighted_spans(
+        Cell::from(Line::from(highlighted_ranges_spans(
           &window,
           text,
           window_start,
-          range,
+          ranges,
           base,
           highlight,
         )))
+        .style(row_style)
       }
     };
     cells.push(cell);
   }
-  Row::new(cells).height(1)
-}
-
-/// Split the visible window into plain/highlighted spans. `range` holds
-/// byte offsets into the full `text`; they are shifted by the window
-/// start first.
-fn highlighted_spans(
-  window: &str,
-  text: &str,
-  window_start: usize,
-  range: Option<(usize, usize)>,
-  base: Style,
-  highlight: Style,
-) -> Vec<Span<'static>> {
-  let Some((start, end)) = range else {
-    return vec![Span::styled(window.to_string(), base)];
-  };
-  // Byte offset of the visible window inside `text`.
-  let window_bytes: usize = text.chars().take(window_start).map(char::len_utf8).sum();
-  let start = start.saturating_sub(window_bytes);
-  let end = end.saturating_sub(window_bytes).min(window.len());
-  if start < end && end <= window.len() {
-    let split_start = char_boundary_index(window, start);
-    let split_end = char_boundary_index(window, end);
-    vec![
-      Span::styled(window[..split_start].to_string(), base),
-      Span::styled(window[split_start..split_end].to_string(), highlight),
-      Span::styled(window[split_end..].to_string(), base),
-    ]
-  } else {
-    vec![Span::styled(window.to_string(), base)]
-  }
-}
-
-/// Pick a horizontal window for long field values so the match sits
-/// visibly inside it. Returns the char offset to start drawing at plus
-/// the match range (kept in full-text byte coordinates).
-fn match_window(text: &str, range: (usize, usize), budget: usize) -> (usize, Option<(usize, usize)>) {
-  let char_count = text.chars().count();
-  if budget == 0 || char_count <= budget {
-    return (0, Some(range));
-  }
-  // Char offset of the match start.
-  let start_char = text
-    .char_indices()
-    .take_while(|(byte, _)| *byte < range.0)
-    .count();
-  let lead = budget / 3;
-  let window_start = start_char.saturating_sub(lead).min(char_count - budget);
-  (window_start, Some(range))
-}
-
-/// Largest char boundary <= `index` in `text`.
-fn char_boundary_index(text: &str, index: usize) -> usize {
-  if index >= text.len() {
-    text.len()
-  } else {
-    let mut index = index;
-    while index > 0 && !text.is_char_boundary(index) {
-      index -= 1;
-    }
-    index
-  }
+  Row::new(cells).height(1).style(row_style)
 }

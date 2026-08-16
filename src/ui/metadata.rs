@@ -23,7 +23,7 @@ pub(super) fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, s
       .clone()
       .unwrap_or_else(|| "nothing playing".to_string());
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -46,10 +46,10 @@ pub(super) fn metadata_line(app: &App, name: &str, value: &str) -> Line<'static>
     Span::styled(
       label,
       Style::default()
-        .fg(theme.color(&theme.accent))
+        .fg(theme.color(&theme.base.accent))
         .add_modifier(Modifier::BOLD),
     ),
-    Span::styled(value.to_string(), Style::default().fg(theme.color(&theme.foreground))),
+    Span::styled(value.to_string(), Style::default().fg(theme.color(&theme.base.foreground))),
   ])
 }
 
@@ -70,7 +70,7 @@ fn draw_hover_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, source
   let Some(hover) = app.hover_view(source) else {
     frame.render_widget(
       Paragraph::new("hover a queue or library entry")
-        .style(Style::default().fg(theme.color(&theme.muted))),
+        .style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -81,7 +81,7 @@ fn draw_hover_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, source
       .clone()
       .unwrap_or_else(|| "reading…".to_string());
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;

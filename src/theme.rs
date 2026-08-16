@@ -1,64 +1,157 @@
+//! Theme configuration: `~/.config/music-tui/theme.toml`.
+//!
+//! Colors are grouped per interface section (like the keymap file), so
+//! every view's colors are configurable independently. Values are color
+//! names (`cyan`, `bright black`, `default`) or `#rrggbb` hex strings.
+
 use serde::{Deserialize, Serialize};
 
+macro_rules! color_section {
+  ($name:ident { $($field:ident => $default:literal),* $(,)? }) => {
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(default)]
+    pub struct $name {
+      $(pub $field: String,)*
+    }
+
+    impl Default for $name {
+      fn default() -> Self {
+        Self {
+          $($field: $default.to_string(),)*
+        }
+      }
+    }
+  };
+}
+
+color_section!(BaseSection {
+  foreground => "default",
+  background => "default",
+  border => "bright black",
+  muted => "bright black",
+  accent => "cyan",
+  accent_alt => "magenta",
+});
+
+color_section!(TabBarSection {
+  active => "cyan",
+  inactive => "bright black",
+});
+
+color_section!(QueueSection {
+  playing => "green",
+  paused => "yellow",
+  selection => "cyan",
+  highlight => "yellow",
+});
+
+color_section!(LibrarySection {
+  playing => "green",
+  paused => "yellow",
+  highlight => "yellow",
+  selection_foreground => "black",
+  selection_background => "cyan",
+  field_primary => "default",
+  field_secondary => "magenta",
+});
+
+color_section!(FooterSection {
+  playing => "green",
+  paused => "yellow",
+  stopped => "bright black",
+  message => "magenta",
+});
+
+color_section!(ProgressSection {
+  bar => "cyan",
+  background => "bright black",
+});
+
+color_section!(LyricsSection {
+  active => "cyan",
+  cursor => "cyan",
+});
+
+color_section!(MetadataSection {
+  label => "cyan",
+});
+
+color_section!(VisualizerSection {
+  low => "green",
+  mid => "yellow",
+  high => "red",
+});
+
+/// Which-key hint bar colors. `separator` is the text between the key
+/// and its description (`" -> "` by default); `columns` wraps the hints
+/// into that many columns when the bar gets crowded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ThemeConfig {
-  pub foreground: String,
+pub struct WhichKeySection {
   pub background: String,
-  pub border: String,
-  pub muted: String,
-  pub accent: String,
-  pub accent_alt: String,
-  pub playing: String,
-  pub paused: String,
-  pub stopped: String,
-  pub progress: String,
-  pub progress_background: String,
-  pub lyrics_active: String,
-  pub visualizer_low: String,
-  pub visualizer_mid: String,
-  pub visualizer_high: String,
-  pub which_key_background: String,
-  pub which_key_foreground: String,
-  pub which_key_key: String,
-  pub which_key_description: String,
-  pub which_key_separator: String,
-  pub which_key_separator_color: String,
-  pub which_key_columns: u16,
-  pub library_highlight: String,
+  pub foreground: String,
+  pub key: String,
+  pub description: String,
+  pub separator: String,
+  pub separator_color: String,
+  pub columns: u16,
+}
+
+impl Default for WhichKeySection {
+  fn default() -> Self {
+    Self {
+      background: "black".to_string(),
+      foreground: "white".to_string(),
+      key: "light_cyan".to_string(),
+      description: "light_magenta".to_string(),
+      separator: " -> ".to_string(),
+      separator_color: "dark_gray".to_string(),
+      columns: 3,
+    }
+  }
+}
+
+/// All colors used across the interface, grouped per view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ThemeConfig {
+  pub base: BaseSection,
+  pub tab_bar: TabBarSection,
+  pub queue: QueueSection,
+  pub library: LibrarySection,
+  pub footer: FooterSection,
+  pub progress: ProgressSection,
+  pub lyrics: LyricsSection,
+  pub metadata: MetadataSection,
+  pub visualizer: VisualizerSection,
+  pub which_key: WhichKeySection,
 }
 
 impl Default for ThemeConfig {
   fn default() -> Self {
+    Self::default_sections()
+  }
+}
+
+impl ThemeConfig {
+  fn default_sections() -> Self {
     Self {
-      foreground: "default".to_string(),
-      background: "default".to_string(),
-      border: "bright black".to_string(),
-      muted: "bright black".to_string(),
-      accent: "cyan".to_string(),
-      accent_alt: "magenta".to_string(),
-      playing: "green".to_string(),
-      paused: "yellow".to_string(),
-      stopped: "bright black".to_string(),
-      progress: "cyan".to_string(),
-      progress_background: "bright black".to_string(),
-      lyrics_active: "cyan".to_string(),
-      visualizer_low: "green".to_string(),
-      visualizer_mid: "yellow".to_string(),
-      visualizer_high: "red".to_string(),
-      which_key_background: "black".to_string(),
-      which_key_foreground: "white".to_string(),
-      which_key_key: "light_cyan".to_string(),
-      which_key_description: "light_magenta".to_string(),
-      which_key_separator: " -> ".to_string(),
-      which_key_separator_color: "dark_gray".to_string(),
-      which_key_columns: 3,
-      library_highlight: "yellow".to_string(),
+      base: BaseSection::default(),
+      tab_bar: TabBarSection::default(),
+      queue: QueueSection::default(),
+      library: LibrarySection::default(),
+      footer: FooterSection::default(),
+      progress: ProgressSection::default(),
+      lyrics: LyricsSection::default(),
+      metadata: MetadataSection::default(),
+      visualizer: VisualizerSection::default(),
+      which_key: WhichKeySection::default(),
     }
   }
 }
 
 impl ThemeConfig {
+  /// Parse a color name or `#rrggbb` hex string into a ratatui color.
   pub fn color(&self, name: &str) -> ratatui::style::Color {
     parse_color(name).unwrap_or(ratatui::style::Color::Reset)
   }
@@ -98,4 +191,42 @@ fn parse_color(name: &str) -> Option<ratatui::style::Color> {
     }
   };
   Some(color)
+}
+
+const THEME_HEADER: &str = "\
+# music-tui theme — every color the interface uses, grouped per view.
+# Values are color names (\"cyan\", \"bright black\", \"default\") or
+# \"#rrggbb\" hex strings. Edit freely; defaults are restored for any
+# key you remove.
+";
+
+const SECTION_COMMENTS: &[(&str, &str)] = &[
+  ("base", "# Shared colors: default text, pane borders, dimmed text,\n# accents, and the secondary accent (artist/genre fields, notices).\n"),
+  ("tab_bar", "# Tab bar: the active tab title and the inactive ones.\n"),
+  ("queue", "# Queue pane: the playing/paused row markers and the filter\n# keyword highlight color.\n"),
+  ("library", "# Library pane: playing/paused markers, filter keyword highlight,\n# the selected-row bar, and the per-field text colors\n# (title/album/filename use field_primary, artist/genre/lyrics use\n# field_secondary).\n"),
+  ("footer", "# Footer status line: the play-state icon, the song title while\n# stopped, and transient messages.\n"),
+  ("progress", "# Bottom progress band: the played portion and the remainder.\n"),
+  ("lyrics", "# Lyrics pane: the active line / sung characters and the manual\n# navigation cursor marker.\n"),
+  ("metadata", "# Metadata pane: the field label column.\n"),
+  ("visualizer", "# Visualizer bands by frequency range: low / mid / high.\n"),
+  ("which_key", "# Which-key hint bar (pending key sequences). `separator` is the\n# text between key and description; `columns` wraps hints when the\n# bar gets crowded.\n"),
+];
+
+/// Serialize the theme into the commented `theme.toml` representation.
+pub(crate) fn format_theme_toml(theme: &ThemeConfig) -> String {
+  let Ok(body) = toml::to_string_pretty(theme) else {
+    return THEME_HEADER.to_string();
+  };
+  let mut out = String::from(THEME_HEADER);
+  for line in body.lines() {
+    if let Some(section) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']'))
+      && let Some((_, comment)) = SECTION_COMMENTS.iter().find(|(name, _)| *name == section) {
+        out.push('\n');
+        out.push_str(comment);
+      }
+    out.push_str(line);
+    out.push('\n');
+  }
+  out
 }

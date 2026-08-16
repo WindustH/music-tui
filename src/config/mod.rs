@@ -64,7 +64,8 @@ pub async fn load_or_create() -> Result<Settings> {
   let config = read_or_write_default(&config_path, AppConfig::default()).await?;
   let keymap =
     read_or_write_keymap_default(&config_dir.join("keymap.toml"), KeymapConfig::default()).await?;
-  let theme = read_or_write_default(&config_dir.join("theme.toml"), ThemeConfig::default()).await?;
+  let theme =
+    read_or_write_theme_default(&config_dir.join("theme.toml"), ThemeConfig::default()).await?;
 
   Ok(Settings {
     config,
@@ -73,6 +74,36 @@ pub async fn load_or_create() -> Result<Settings> {
     cache_dir,
   })
 }
+async fn write_theme_default(path: &Path, default: ThemeConfig) -> Result<ThemeConfig> {
+  let body = crate::theme::format_theme_toml(&default);
+  write_bytes_atomic(path, body.as_bytes())
+    .await
+    .with_context(|| format!("failed to write {}", path.display()))?;
+  Ok(default)
+}
+
+async fn backup_and_write_theme_default(path: &Path, default: ThemeConfig) -> Result<ThemeConfig> {
+  backup_config_file(path).await?;
+  write_theme_default(path, default).await
+}
+
+async fn read_or_write_theme_default(path: &Path, default: ThemeConfig) -> Result<ThemeConfig> {
+  if !path.exists() {
+    return write_theme_default(path, default).await;
+  }
+  let body = fs::read_to_string(path)
+    .await
+    .with_context(|| format!("failed to read {}", path.display()))?;
+  let mut parsed: ThemeConfig = match toml::from_str(&body) {
+    Ok(parsed) => parsed,
+    Err(_) => return backup_and_write_theme_default(path, default).await,
+  };
+  parsed.normalize_defaults();
+  let normalized = crate::theme::format_theme_toml(&parsed);
+  write_back_if_toml_changed(path, &body, &normalized).await?;
+  Ok(parsed)
+}
+
 async fn read_or_write_keymap_default(path: &Path, default: KeymapConfig) -> Result<KeymapConfig> {
   if !path.exists() {
     return write_keymap_default(path, default).await;
@@ -175,8 +206,8 @@ impl NormalizeConfigDefaults for AppConfig {
 
 impl NormalizeConfigDefaults for ThemeConfig {
   fn normalize_defaults(&mut self) {
-    if self.which_key_columns == 0 {
-      self.which_key_columns = 3;
+    if self.which_key.columns == 0 {
+      self.which_key.columns = 3;
     }
   }
 }

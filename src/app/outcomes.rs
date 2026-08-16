@@ -263,9 +263,9 @@ impl App {
     }
     let theme = &self.settings.theme;
     let colors = crate::visualizer::VisualizerColors {
-      low: theme.color(&theme.visualizer_low),
-      mid: theme.color(&theme.visualizer_mid),
-      high: theme.color(&theme.visualizer_high),
+      low: theme.color(&theme.visualizer.low),
+      mid: theme.color(&theme.visualizer.mid),
+      high: theme.color(&theme.visualizer.high),
     };
     renderer.render(width, height, self.spectrum.clone(), colors);
   }

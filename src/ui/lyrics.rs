@@ -27,7 +27,7 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
       .clone()
       .unwrap_or_else(|| "no lyrics".to_string());
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -76,7 +76,7 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
       spans.push(Span::styled(
         "❯ ",
         Style::default()
-          .fg(theme.color(&theme.accent))
+          .fg(theme.color(&theme.base.accent))
           .add_modifier(Modifier::BOLD),
       ));
     } else {
@@ -92,20 +92,20 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
       spans.push(Span::styled(
         chars[..split].iter().collect::<String>(),
         Style::default()
-          .fg(theme.color(&theme.lyrics_active))
+          .fg(theme.color(&theme.lyrics.active))
           .add_modifier(Modifier::BOLD),
       ));
       spans.push(Span::styled(
         chars[split..].iter().collect::<String>(),
-        Style::default().fg(theme.color(&theme.foreground)),
+        Style::default().fg(theme.color(&theme.base.foreground)),
       ));
     } else {
       let style = if is_active {
         Style::default()
-          .fg(theme.color(&theme.foreground))
+          .fg(theme.color(&theme.base.foreground))
           .add_modifier(Modifier::BOLD)
       } else {
-        Style::default().fg(theme.color(&theme.muted))
+        Style::default().fg(theme.color(&theme.base.muted))
       };
       spans.push(Span::styled(text.to_string(), style));
     }
@@ -132,7 +132,7 @@ fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: 
   let Some(hover) = app.hover_view(source) else {
     let hint = "hover a queue or library entry";
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -143,7 +143,7 @@ fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: 
       .clone()
       .unwrap_or_else(|| "no lyrics".to_string());
     frame.render_widget(
-      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -159,7 +159,7 @@ fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: 
     let text = lyrics.line(index).unwrap_or_default();
     lines.push(Line::styled(
       text.to_string(),
-      Style::default().fg(theme.color(&theme.foreground)),
+      Style::default().fg(theme.color(&theme.base.foreground)),
     ));
   }
   frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);

@@ -33,20 +33,20 @@ pub(super) fn draw_footer(
       hints_area,
       &KeyHintsStyle {
         base: Style::default()
-          .fg(theme.color(&theme.which_key_foreground))
-          .bg(theme.color(&theme.which_key_background)),
+          .fg(theme.color(&theme.which_key.foreground))
+          .bg(theme.color(&theme.which_key.background)),
         key: Style::default()
-          .fg(theme.color(&theme.which_key_key))
-          .bg(theme.color(&theme.which_key_background))
+          .fg(theme.color(&theme.which_key.key))
+          .bg(theme.color(&theme.which_key.background))
           .add_modifier(Modifier::BOLD),
         separator: Style::default()
-          .fg(theme.color(&theme.which_key_separator_color))
-          .bg(theme.color(&theme.which_key_background)),
+          .fg(theme.color(&theme.which_key.separator_color))
+          .bg(theme.color(&theme.which_key.background)),
         description: Style::default()
-          .fg(theme.color(&theme.which_key_description))
-          .bg(theme.color(&theme.which_key_background)),
-        separator_text: theme.which_key_separator.clone(),
-        columns: key_hint_columns(usize::from(theme.which_key_columns), area.width),
+          .fg(theme.color(&theme.which_key.description))
+          .bg(theme.color(&theme.which_key.background)),
+        separator_text: theme.which_key.separator.clone(),
+        columns: key_hint_columns(usize::from(theme.which_key.columns), area.width),
       },
     );
   }
@@ -55,9 +55,9 @@ pub(super) fn draw_footer(
   let mut spans = Vec::new();
   let state_style = |color: &str| Style::default().fg(theme.color(color));
   match app.status.as_ref().map(|status| status.state) {
-    Some(PlayState::Playing) => spans.push(Span::styled("▶ ", state_style(&theme.playing))),
-    Some(PlayState::Paused) => spans.push(Span::styled("⏸ ", state_style(&theme.paused))),
-    Some(PlayState::Stopped) | None => spans.push(Span::styled("■ ", state_style(&theme.stopped))),
+    Some(PlayState::Playing) => spans.push(Span::styled("▶ ", state_style(&theme.footer.playing))),
+    Some(PlayState::Paused) => spans.push(Span::styled("⏸ ", state_style(&theme.footer.paused))),
+    Some(PlayState::Stopped) | None => spans.push(Span::styled("■ ", state_style(&theme.footer.stopped))),
   }
   if let Some(song) = app.current_song() {
     let title = song_title(&song.song)
@@ -65,14 +65,14 @@ pub(super) fn draw_footer(
       .unwrap_or_else(|| song.song.url.clone());
     let artist = song_artist(&song.song).map(str::to_string).unwrap_or_default();
     let label = if artist.is_empty() { title } else { format!("{title} — {artist}") };
-    spans.push(Span::styled(label, Style::default().fg(theme.color(&theme.foreground))));
+    spans.push(Span::styled(label, Style::default().fg(theme.color(&theme.base.foreground))));
   } else if let Some(error) = app.connection_error.as_ref() {
     spans.push(Span::styled(
       format!("mpd offline: {error}"),
-      Style::default().fg(theme.color(&theme.stopped)),
+      Style::default().fg(theme.color(&theme.footer.stopped)),
     ));
   } else {
-    spans.push(Span::styled("idle", Style::default().fg(theme.color(&theme.muted))));
+    spans.push(Span::styled("idle", Style::default().fg(theme.color(&theme.base.muted))));
   }
 
   let mut flags = String::new();
@@ -97,7 +97,7 @@ pub(super) fn draw_footer(
     volume,
     if app.follow_current { " ⌖" } else { "" },
   );
-  spans.push(Span::styled(right, Style::default().fg(theme.color(&theme.muted))));
+  spans.push(Span::styled(right, Style::default().fg(theme.color(&theme.base.muted))));
   frame.render_widget(
     Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true }),
     status_line,
@@ -109,18 +109,18 @@ pub(super) fn draw_footer(
   if let Some(prompt) = app.prompt.as_ref() {
     let completion = app.command_state.completion();
     let style = PromptLineStyle {
-      base: Style::default().fg(theme.color(&theme.foreground)),
+      base: Style::default().fg(theme.color(&theme.base.foreground)),
       prefix: Style::default()
-        .fg(theme.color(&theme.accent))
+        .fg(theme.color(&theme.base.accent))
         .add_modifier(Modifier::BOLD),
-      suggestion: Style::default().fg(theme.color(&theme.muted)),
+      suggestion: Style::default().fg(theme.color(&theme.base.muted)),
     };
     cursor_position = draw_prompt_line(frame, prompt, completion, input_line, &style);
   } else if let Some(message) = app.message_text() {
     frame.render_widget(
       Paragraph::new(Line::from(Span::styled(
         format!(" {message}"),
-        Style::default().fg(theme.color(&theme.accent_alt)),
+        Style::default().fg(theme.color(&theme.base.accent_alt)),
       ))),
       input_line,
     );
@@ -139,8 +139,8 @@ pub(super) fn draw_footer(
 fn draw_progress_band(frame: &mut Frame, app: &mut App, area: Rect) {
   app.progress_band_area = (area.width > 0).then_some(area);
   let theme = &app.settings.theme;
-  let filled = theme.color(&theme.progress);
-  let rest = theme.color(&theme.progress_background);
+  let filled = theme.color(&theme.progress.bar);
+  let rest = theme.color(&theme.progress.background);
 
   let (ratio, label) = match app.duration() {
     Some(duration) if duration > 0.0 => {
@@ -190,7 +190,7 @@ fn draw_progress_band(frame: &mut Frame, app: &mut App, area: Rect) {
     let label = Line::from(Span::styled(
       format!(" {label} "),
       Style::default()
-        .fg(theme.color(&theme.foreground))
+        .fg(theme.color(&theme.base.foreground))
         .add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(Paragraph::new(label).alignment(Alignment::Center), area);

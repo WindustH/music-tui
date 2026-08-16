@@ -18,6 +18,11 @@ pub(crate) fn song_artist(song: &Song) -> Option<&str> {
   tag_value(song, Tag::Artist)
 }
 
+/// The song's album (first reported value, trimmed).
+pub(crate) fn song_album(song: &Song) -> Option<&str> {
+  tag_value(song, Tag::Album)
+}
+
 fn tag_value(song: &Song, tag: Tag) -> Option<&str> {
   song
     .tags

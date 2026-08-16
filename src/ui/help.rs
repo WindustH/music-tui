@@ -31,9 +31,9 @@ pub(super) fn draw_completion_popup(
     completion,
     popup,
     &CompletionListStyle {
-      base: Style::default().fg(theme.color(&theme.foreground)),
+      base: Style::default().fg(theme.color(&theme.base.foreground)),
       selected: Style::default()
-        .fg(theme.color(&theme.accent))
+        .fg(theme.color(&theme.base.accent))
         .add_modifier(Modifier::BOLD),
     },
   );
@@ -47,26 +47,26 @@ pub(super) fn draw_help_dialog(
   area: Rect,
 ) -> (Vec<ProtocolOverlay>, Option<(u16, u16)>) {
   let theme = &app.settings.theme;
-  let background = theme.color(&theme.background);
+  let background = theme.color(&theme.base.background);
   let base = Style::default()
-    .fg(theme.color(&theme.foreground))
+    .fg(theme.color(&theme.base.foreground))
     .bg(background);
   let help_style = KeyHelpDialogStyle {
     popup: PopupDialogStyle {
       base,
       border: Style::default()
-        .fg(theme.color(&theme.border))
+        .fg(theme.color(&theme.base.border))
         .bg(background),
       max_height: area.height.saturating_sub(2).clamp(8, 34),
       ..PopupDialogStyle::default()
     },
     key: Style::default()
-      .fg(theme.color(&theme.accent))
+      .fg(theme.color(&theme.base.accent))
       .bg(background)
       .add_modifier(Modifier::BOLD),
     description: base,
     muted: Style::default()
-      .fg(theme.color(&theme.muted))
+      .fg(theme.color(&theme.base.muted))
       .bg(background),
     ..KeyHelpDialogStyle::default()
   };

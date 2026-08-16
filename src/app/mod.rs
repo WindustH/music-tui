@@ -55,7 +55,8 @@ pub(crate) mod mouse;
 
 pub use detail::DetailView;
 pub use detail::HoverView;
-pub(crate) use labels::{song_artist, song_title};
+pub(crate) use labels::{song_album, song_artist, song_title};
+use crate::strip::StrippedText;
 pub(crate) use library::FilterTarget;
 
 pub struct App {

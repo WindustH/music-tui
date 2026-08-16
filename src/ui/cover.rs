@@ -91,7 +91,7 @@ pub(super) fn draw_cover_pane(
         None => {
           frame.render_widget(
             Paragraph::new("rendering cover…")
-              .style(Style::default().fg(theme.color(&theme.muted))),
+              .style(Style::default().fg(theme.color(&theme.base.muted))),
             inner,
           );
         }
@@ -103,7 +103,7 @@ pub(super) fn draw_cover_pane(
         .clone()
         .unwrap_or_else(|| "no cover".to_string());
       frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+        Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
         inner,
       );
     }
@@ -148,7 +148,7 @@ fn draw_hover_cover_pane(
   let Some(hover) = app.hover_view(source) else {
     frame.render_widget(
       Paragraph::new("hover a queue or library entry")
-        .style(Style::default().fg(theme.color(&theme.muted))),
+        .style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;
@@ -210,7 +210,7 @@ fn draw_hover_cover_pane(
         None => {
           frame.render_widget(
             Paragraph::new("rendering cover…")
-              .style(Style::default().fg(theme.color(&theme.muted))),
+              .style(Style::default().fg(theme.color(&theme.base.muted))),
             inner,
           );
         }
@@ -222,7 +222,7 @@ fn draw_hover_cover_pane(
         .clone()
         .unwrap_or_else(|| "no cover".to_string());
       frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+        Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
         inner,
       );
     }

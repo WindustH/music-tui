@@ -25,7 +25,7 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
     let theme = &app.settings.theme;
     frame.render_widget(
       Paragraph::new("waiting for audio on the mpd fifo…")
-        .style(Style::default().fg(theme.color(&theme.muted))),
+        .style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );
     return;

@@ -17,7 +17,7 @@ pub(super) fn draw_detail_view(
   let theme = &app.settings.theme;
   let block = Block::default()
     .borders(Borders::ALL)
-    .border_style(Style::default().fg(theme.color(&theme.accent)))
+    .border_style(Style::default().fg(theme.color(&theme.base.accent)))
     .title(format!(" detail: {} ", detail.title))
     .title_alignment(Alignment::Center);
   let inner = block.inner(area);
@@ -141,7 +141,7 @@ fn draw_detail_cover(frame: &mut Frame, ctx: &mut DetailCtx<'_>, cover_area: Rec
         None => {
           frame.render_widget(
             Paragraph::new("rendering cover…")
-              .style(Style::default().fg(theme.color(&theme.muted)))
+              .style(Style::default().fg(theme.color(&theme.base.muted)))
               .alignment(Alignment::Center),
             cover_area,
           );
@@ -155,7 +155,7 @@ fn draw_detail_cover(frame: &mut Frame, ctx: &mut DetailCtx<'_>, cover_area: Rec
         .unwrap_or_else(|| "no cover".to_string());
       frame.render_widget(
         Paragraph::new(hint)
-          .style(Style::default().fg(theme.color(&theme.muted)))
+          .style(Style::default().fg(theme.color(&theme.base.muted)))
           .alignment(Alignment::Center),
         cover_area,
       );
@@ -168,7 +168,7 @@ fn draw_detail_metadata(frame: &mut Frame, ctx: &DetailCtx<'_>, metadata_area: R
   let detail = ctx.detail;
   let metadata_block = Block::default()
     .borders(Borders::ALL)
-    .border_style(Style::default().fg(theme.color(&theme.border)))
+    .border_style(Style::default().fg(theme.color(&theme.base.border)))
     .title(" metadata (e edit · i close) ");
   let metadata_inner = metadata_block.inner(metadata_area);
   frame.render_widget(metadata_block, metadata_area);
@@ -190,7 +190,7 @@ fn draw_detail_metadata(frame: &mut Frame, ctx: &DetailCtx<'_>, metadata_area: R
         .clone()
         .unwrap_or_else(|| "reading metadata…".to_string());
       frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.muted))),
+        Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
         metadata_inner,
       );
     }

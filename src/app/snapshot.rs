@@ -70,35 +70,30 @@ impl App {
     self.queue_filter_matches.get(selected).copied()
   }
 
-  fn song_matches_filter(song: &Song, needle: &str) -> bool {
-    let needle = needle.to_lowercase();
-    if song_title(song).is_some_and(|title| title.to_lowercase().contains(&needle)) {
-      return true;
-    }
-    if let Some(artist) = song_artist(song)
-      && artist.to_lowercase().contains(&needle)
-    {
-      return true;
-    }
-    if song
-      .album()
-      .is_some_and(|album| album.to_lowercase().contains(&needle))
-    {
-      return true;
-    }
-    song.url.to_lowercase().contains(&needle)
+  fn song_matches_filter(song: &Song, terms: &[String]) -> bool {
+    // Every space-separated term must match somewhere (AND); field text
+    // matches with spaces ignored ("Love Story" ~ "lovestory").
+    terms.iter().all(|term| {
+      song_title(song).is_some_and(|value| StrippedText::new(value).matches(term))
+        || song_artist(song).is_some_and(|value| StrippedText::new(value).matches(term))
+        || song_album(song).is_some_and(|value| StrippedText::new(value).matches(term))
+        || StrippedText::new(&song.url).matches(term)
+    })
   }
 
   pub(crate) fn recompute_queue_filter(&mut self) {
     self.queue_filter_matches = match self.queue_filter.as_deref() {
       None | Some("") => (0..self.queue.len()).collect(),
-      Some(needle) => self
-        .queue
-        .iter()
-        .enumerate()
-        .filter(|(_, song)| Self::song_matches_filter(&song.song, needle))
-        .map(|(position, _)| position)
-        .collect(),
+      Some(needle) => {
+        let terms: Vec<String> = needle.split_whitespace().map(str::to_string).collect();
+        self
+          .queue
+          .iter()
+          .enumerate()
+          .filter(|(_, song)| Self::song_matches_filter(&song.song, &terms))
+          .map(|(position, _)| position)
+          .collect()
+      }
     };
   }
 

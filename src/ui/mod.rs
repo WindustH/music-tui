@@ -21,10 +21,11 @@ use ratatui::{
 use tokio::sync::mpsc;
 
 use crate::{
-  app::{App, song_artist, song_title},
+  app::{App, song_album, song_artist, song_title},
   event::{AsyncEvent, RenderedImage},
   layout::{PaneKind, PaneLayout, PaneSource, SplitDir},
   render::CoverRenderStore,
+  strip::StrippedText,
   terminal::FrameOutput,
 };
 
@@ -74,7 +75,7 @@ pub fn draw(
   } else {
     key_hint_rows(
       hints.len(),
-      key_hint_columns(usize::from(app.settings.theme.which_key_columns), area.width),
+      key_hint_columns(usize::from(app.settings.theme.which_key.columns), area.width),
     ) as u16
   };
 
@@ -123,7 +124,7 @@ pub fn draw(
 
 fn draw_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
-  let border = Style::default().fg(theme.color(&theme.border));
+  let border = Style::default().fg(theme.color(&theme.base.border));
   app.tab_hit_areas.clear();
   let mut spans = Vec::new();
   let mut column = area.x;
@@ -136,10 +137,10 @@ fn draw_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let label = format!(" {} ", tab.name);
     let style = if active {
       Style::default()
-        .fg(theme.color(&theme.accent))
+        .fg(theme.color(&theme.tab_bar.active))
         .add_modifier(Modifier::BOLD)
     } else {
-      Style::default().fg(theme.color(&theme.muted))
+      Style::default().fg(theme.color(&theme.tab_bar.inactive))
     };
     // Record the hit rectangle for mouse-based tab switching.
     if app.tab_hit_areas.len() < 9 {
@@ -233,15 +234,15 @@ fn pane_block(app: &App, title: &str, is_main: bool) -> Block<'static> {
     Span::styled(
       format!(" {title} "),
       Style::default()
-        .fg(theme.color(&theme.accent))
+        .fg(theme.color(&theme.base.accent))
         .add_modifier(Modifier::BOLD),
     )
   } else {
-    Span::styled(format!(" {title} "), Style::default().fg(theme.color(&theme.muted)))
+    Span::styled(format!(" {title} "), Style::default().fg(theme.color(&theme.base.muted)))
   };
   Block::bordered()
     .title(title_span)
-    .border_style(Style::default().fg(theme.color(&theme.border)))
+    .border_style(Style::default().fg(theme.color(&theme.base.border)))
 }
 
 /// `mm:ss` (or `h:mm:ss` for long tracks) for queue and footer labels.
@@ -255,4 +256,94 @@ pub(crate) fn format_duration_line(duration: Duration) -> String {
   } else {
     format!("{minutes}:{seconds:02}")
   }
+}
+
+/// Pick a horizontal window for long field values so the match sits
+/// visibly inside it. Returns the char offset to start drawing at plus
+/// the match range (kept in full-text byte coordinates).
+pub(super) fn match_window(
+  text: &str,
+  range: (usize, usize),
+  budget: usize,
+) -> (usize, Option<(usize, usize)>) {
+  let char_count = text.chars().count();
+  if budget == 0 || char_count <= budget {
+    return (0, Some(range));
+  }
+  // Char offset of the match start.
+  let start_char = text
+    .char_indices()
+    .take_while(|(byte, _)| *byte < range.0)
+    .count();
+  let lead = budget / 3;
+  let window_start = start_char.saturating_sub(lead).min(char_count - budget);
+  (window_start, Some(range))
+}
+
+/// Largest char boundary <= `index` in `text`.
+pub(super) fn char_boundary_index(text: &str, index: usize) -> usize {
+  if index >= text.len() {
+    text.len()
+  } else {
+    let mut index = index;
+    while index > 0 && !text.is_char_boundary(index) {
+      index -= 1;
+    }
+    index
+  }
+}
+
+/// Multi-range variant: `ranges` hold byte offsets into the full `text`
+/// (e.g. every filter term match); all matches inside the window are
+/// highlighted.
+pub(super) fn highlighted_ranges_spans(
+  window: &str,
+  text: &str,
+  window_start: usize,
+  ranges: Vec<(usize, usize)>,
+  base: Style,
+  highlight: Style,
+) -> Vec<Span<'static>> {
+  // Byte offset of the visible window inside `text`.
+  let window_bytes: usize = text.chars().take(window_start).map(char::len_utf8).sum();
+  let mut shifted: Vec<(usize, usize)> = ranges
+    .into_iter()
+    .map(|(start, end)| {
+      (
+        start.saturating_sub(window_bytes),
+        end.saturating_sub(window_bytes).min(window.len()),
+      )
+    })
+    .filter(|(start, end)| start < end && *end <= window.len())
+    .collect();
+  shifted.sort();
+  // Merge overlapping ranges, then emit plain/highlight segments.
+  let mut merged: Vec<(usize, usize)> = Vec::new();
+  for (start, end) in shifted {
+    match merged.last_mut() {
+      Some((_, last_end)) if start <= *last_end => *last_end = (*last_end).max(end),
+      _ => merged.push((start, end)),
+    }
+  }
+  let mut spans = Vec::new();
+  let mut cursor = 0;
+  for (start, end) in merged {
+    let start = char_boundary_index(window, start);
+    let end = char_boundary_index(window, end);
+    if start < cursor || start >= end {
+      continue;
+    }
+    if cursor < start {
+      spans.push(Span::styled(window[cursor..start].to_string(), base));
+    }
+    spans.push(Span::styled(window[start..end].to_string(), highlight));
+    cursor = end;
+  }
+  if cursor < window.len() {
+    spans.push(Span::styled(window[cursor..].to_string(), base));
+  }
+  if spans.is_empty() {
+    spans.push(Span::styled(window.to_string(), base));
+  }
+  spans
 }

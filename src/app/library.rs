@@ -30,7 +30,6 @@ impl App {
         .map(|track| crate::library_db::TrackMatch {
           track: track.clone(),
           field: crate::library_db::TrackField::Title,
-          range: (0, 0),
         })
         .collect();
     } else {
