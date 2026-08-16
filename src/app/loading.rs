@@ -30,6 +30,23 @@ impl App {
     self.spawn_lyrics_load(url, path, artist, title);
   }
 
+  /// Kick off the async reads for a freshly created song view
+  /// (metadata + cover, plus lyrics when `with_lyrics` is set).
+  pub(crate) fn spawn_song_view_loads(
+    &self,
+    url: String,
+    path: &Path,
+    artist: Option<String>,
+    title: &str,
+    with_lyrics: bool,
+  ) {
+    self.spawn_metadata_read(url.clone(), path.to_path_buf());
+    self.spawn_cover_read(url.clone(), path.to_path_buf());
+    if with_lyrics {
+      self.spawn_lyrics_load(url, path.to_path_buf(), artist, Some(title.to_string()));
+    }
+  }
+
   pub(crate) fn spawn_lyrics_load(
     &self,
     url: String,
@@ -127,23 +144,8 @@ impl App {
       .unwrap_or_else(|| url.clone());
     let artist = song_artist(&song.song).map(str::to_string);
     let lyric_title = title.clone();
-    self.hover = Some(HoverView {
-      url: url.clone(),
-      path: path.clone(),
-      title,
-      metadata: None,
-      metadata_error: None,
-      metadata_scroll: 0,
-      cover: None,
-      cover_dims: None,
-      cover_error: None,
-      lyrics: None,
-      lyrics_error: None,
-      lyrics_scroll: 0,
-    });
-    self.spawn_metadata_read(url.clone(), path.clone());
-    self.spawn_cover_read(url.clone(), path.clone());
-    self.spawn_lyrics_load(url, path, artist, Some(lyric_title));
+    self.hover = Some(SongView::new(url.clone(), path.clone(), title));
+    self.spawn_song_view_loads(url, &path, artist, &lyric_title, true);
   }
 
 }

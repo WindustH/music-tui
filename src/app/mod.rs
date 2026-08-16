@@ -1,7 +1,7 @@
 //! Application state and input handling.
 
 pub(crate) use std::{
-  path::PathBuf,
+  path::{Path, PathBuf},
   time::{Duration, Instant},
 };
 
@@ -52,9 +52,9 @@ pub(crate) mod commands;
 mod detail;
 pub(crate) mod input;
 pub(crate) mod mouse;
+pub(crate) mod viewport;
 
-pub use detail::DetailView;
-pub use detail::HoverView;
+pub use detail::SongView;
 pub(crate) use labels::{song_album, song_artist, song_title};
 use crate::strip::StrippedText;
 pub(crate) use library::FilterTarget;
@@ -108,9 +108,9 @@ pub struct App {
   pub cover_dims: Option<(u32, u32)>,
   pub cover_error: Option<String>,
   /// Secondary detail view for the selected queue entry (`i`).
-  pub detail: Option<DetailView>,
+  pub detail: Option<SongView>,
   /// Data view for the hovered queue row (`:hovered` pane source).
-  pub hover: Option<HoverView>,
+  pub hover: Option<SongView>,
   /// Whether any configured pane uses the hovered data source (gates the
   /// lazy loading in `sync_hover_view`).
   pub(crate) has_hover_panes: bool,
@@ -127,7 +127,7 @@ pub struct App {
   /// Scan progress while the scanner thread is running.
   pub(crate) library_scanning: Option<(usize, usize)>,
   /// Hover view fed by the library pane selection (`:library-hovered`).
-  pub(crate) library_hover: Option<HoverView>,
+  pub(crate) library_hover: Option<SongView>,
   /// Parsed `[library] columns` config.
   pub(crate) library_columns: Vec<crate::config::LibraryColumn>,
   /// Sender to the library scanner thread (rescan requests).
@@ -364,7 +364,7 @@ impl App {
 
   /// The hover-view backing a pane source: queue rows feed
   /// `QueueHovered`, library rows feed `LibraryHovered`.
-  pub(crate) fn hover_view(&self, source: PaneSource) -> Option<&HoverView> {
+  pub(crate) fn hover_view(&self, source: PaneSource) -> Option<&SongView> {
     match source {
       PaneSource::QueueHovered => self.hover.as_ref(),
       PaneSource::LibraryHovered => self.library_hover.as_ref(),

@@ -80,74 +80,40 @@ impl App {
   }
 
   pub(crate) fn library_viewport_height(&self) -> usize {
-    self
-      .library_pane_areas
-      .first()
-      .map(|area| area.height as usize)
-      .filter(|height| *height > 0)
-      .unwrap_or(1)
-  }
-
-  fn set_library_viewport(&mut self, next: usize) -> bool {
-    let len = self.library_visible_len();
-    if len == 0 {
-      return false;
-    }
-    let height = self.library_viewport_height();
-    let max_offset = len.saturating_sub(height);
-    let next = next.min(max_offset);
-    if next == self.library_state.offset() {
-      return false;
-    }
-    let selected = self.library_state.selected().unwrap_or(next);
-    let selected = selected.clamp(next, (next + height - 1).min(len - 1));
-    let mut state = TableState::default();
-    state.select(Some(selected));
-    self.library_state = state.with_offset(next);
-    self.sync_library_hover();
-    true
+    viewport::viewport_height(&self.library_pane_areas)
   }
 
   pub(crate) fn scroll_library_viewport(&mut self, delta: i32) -> bool {
     let len = self.library_visible_len();
-    if len == 0 {
-      return false;
-    }
     let height = self.library_viewport_height();
-    let next = ((self.library_state.offset() as i32) + delta)
-      .clamp(0, len.saturating_sub(height) as i32)
-      .max(0) as usize;
-    self.set_library_viewport(next)
+    viewport::scroll_viewport(&mut self.library_state, len, height, delta)
   }
 
   /// Scrollbar hit test for the library pane.
   pub(crate) fn mouse_on_library_bar(&self, mouse: MouseEvent) -> Option<Rect> {
-    self.library_bar_areas.iter().copied().find(|area| {
-      mouse.column >= area.x
-        && mouse.column < area.x + area.width
-        && mouse.row >= area.y
-        && mouse.row < area.y + area.height
-    })
+    viewport::hit_pane(&self.library_bar_areas, mouse)
   }
 
   /// Map a library scrollbar click/drag to a viewport offset.
   pub(crate) fn library_bar_jump(&mut self, mouse: MouseEvent, track: Rect) -> bool {
     let len = self.library_visible_len();
-    if len == 0 {
-      return false;
-    }
     let height = self.library_viewport_height();
-    let track_span = track.height.saturating_sub(1) as f64;
-    let ratio = if track_span <= 0.0 {
-      0.0
-    } else {
-      (mouse.row.saturating_sub(track.y) as f64 / track_span).clamp(0.0, 1.0)
-    };
-    let target_center = ratio * (len.saturating_sub(1)) as f64;
-    let next = (target_center - height as f64 / 2.0)
-      .round()
-      .clamp(0.0, len.saturating_sub(height) as f64) as usize;
-    self.set_library_viewport(next)
+    viewport::bar_jump(&mut self.library_state, len, height, track, mouse.row)
+  }
+
+  pub(crate) fn mouse_on_library(&self, mouse: MouseEvent) -> Option<Rect> {
+    viewport::hit_pane(&self.library_pane_areas, mouse)
+  }
+
+  /// Map a screen position to the visible library row under it.
+  pub(crate) fn library_row_index(&self, mouse: MouseEvent) -> Option<usize> {
+    let area = self.mouse_on_library(mouse)?;
+    viewport::row_at(
+      area,
+      mouse,
+      self.library_state.offset(),
+      self.library_visible_len(),
+    )
   }
 
   /// The track hovered (selected) in the library pane.
@@ -174,30 +140,15 @@ impl App {
       return;
     }
     let url = track.path.to_string_lossy().to_string();
-    let title = if track.title.is_empty() {
-      track.filename.clone()
-    } else {
-      track.title.clone()
-    };
+    let title = title_of(&track);
     let artist = (!track.artist.is_empty()).then(|| track.artist.clone());
     let lyric_title = title.clone();
-    self.library_hover = Some(HoverView {
-      url: url.clone(),
-      path: track.path.clone(),
+    self.library_hover = Some(SongView::new(
+      url.clone(),
+      track.path.clone(),
       title,
-      metadata: None,
-      metadata_error: None,
-      metadata_scroll: 0,
-      cover: None,
-      cover_dims: None,
-      cover_error: None,
-      lyrics: None,
-      lyrics_error: None,
-      lyrics_scroll: 0,
-    });
-    self.spawn_metadata_read(url.clone(), track.path.clone());
-    self.spawn_cover_read(url.clone(), track.path.clone());
-    self.spawn_lyrics_load(url, track.path.clone(), artist, Some(lyric_title));
+    ));
+    self.spawn_song_view_loads(url, &track.path, artist, &lyric_title, true);
   }
 
   /// Scan finished: swap in the new track list.
@@ -252,25 +203,8 @@ impl App {
       self.close_detail();
       return true;
     }
-    let title = if track.title.is_empty() {
-      track.filename.clone()
-    } else {
-      track.title.clone()
-    };
-    self.detail = Some(DetailView {
-      url: url.clone(),
-      path: track.path.clone(),
-      title,
-      metadata: None,
-      metadata_error: None,
-      metadata_scroll: 0,
-      cover: None,
-      cover_dims: None,
-      cover_error: None,
-    });
-    self.spawn_metadata_read(url.clone(), track.path.clone());
-    self.spawn_cover_read(url, track.path.clone());
-    true
+    let title = title_of(&track);
+    self.open_detail_for(url, track.path.clone(), title)
   }
 
   /// `u` in the library: ask the scanner thread to rescan.

@@ -8,7 +8,7 @@ use super::*;
 pub(super) fn draw_detail_view(
   frame: &mut Frame,
   app: &App,
-  detail: &crate::app::DetailView,
+  detail: &crate::app::SongView,
   renderer: &mut CoverRenderStore,
   tx: &mpsc::UnboundedSender<AsyncEvent>,
   area: Rect,
@@ -39,7 +39,7 @@ pub(super) fn draw_detail_view(
 /// argument limit.
 struct DetailCtx<'a> {
   app: &'a App,
-  detail: &'a crate::app::DetailView,
+  detail: &'a crate::app::SongView,
   renderer: &'a mut CoverRenderStore,
   tx: &'a mpsc::UnboundedSender<AsyncEvent>,
   overlays: &'a mut Vec<ProtocolOverlay>,

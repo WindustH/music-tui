@@ -50,8 +50,8 @@ impl App {
     }
     match mouse.kind {
       MouseEventKind::Down(MouseButton::Left) => {
-        // Queue scrollbar: jump the viewport proportionally and arm
-        // dragging (the thumb follows the pointer while held).
+        // Scrollbars: jump the viewport proportionally and arm dragging
+        // (the thumb follows the pointer while held).
         if let Some(track) = self.mouse_on_queue_bar(mouse) {
           self.queue_bar_dragging = true;
           return self.queue_bar_jump(mouse, track);
@@ -90,23 +90,22 @@ impl App {
         if self.band_scrubbing {
           return self.seek_to_band_column(mouse.column);
         }
-        if self.queue_bar_dragging
-          && let Some(track) = self
-            .queue_bar_areas
-            .iter()
-            .find(|area| mouse.row >= area.y && mouse.row < area.y + area.height)
-            .copied()
+        let bar_areas = if self.queue_bar_dragging {
+          Some(&self.queue_bar_areas)
+        } else if self.library_bar_dragging {
+          Some(&self.library_bar_areas)
+        } else {
+          None
+        };
+        if let Some(areas) = bar_areas
+          && let Some(track) = viewport::hit_pane(areas, mouse)
         {
-          return self.queue_bar_jump(mouse, track);
-        }
-        if self.library_bar_dragging
-          && let Some(track) = self
-            .library_bar_areas
-            .iter()
-            .find(|area| mouse.row >= area.y && mouse.row < area.y + area.height)
-            .copied()
-        {
-          return self.library_bar_jump(mouse, track);
+          let queue = self.queue_bar_dragging;
+          return if queue {
+            self.queue_bar_jump(mouse, track)
+          } else {
+            self.library_bar_jump(mouse, track)
+          };
         }
         false
       }
@@ -118,34 +117,8 @@ impl App {
         self.library_bar_dragging = false;
         was_active
       }
-      MouseEventKind::ScrollUp => {
-        if self.mouse_on_band(mouse) {
-          self.mpdc(MpdCommand::NudgeSeek(-5));
-          true
-        } else if self.mouse_on_queue(mouse).is_some() {
-          self.scroll_queue_viewport(-3)
-        } else if self.mouse_on_library(mouse).is_some() {
-          self.scroll_library_viewport(-3)
-        } else if self.mouse_on_lyrics(mouse).is_some() {
-          self.scroll_lyrics_wheel(-3)
-        } else {
-          false
-        }
-      }
-      MouseEventKind::ScrollDown => {
-        if self.mouse_on_band(mouse) {
-          self.mpdc(MpdCommand::NudgeSeek(5));
-          true
-        } else if self.mouse_on_queue(mouse).is_some() {
-          self.scroll_queue_viewport(3)
-        } else if self.mouse_on_library(mouse).is_some() {
-          self.scroll_library_viewport(3)
-        } else if self.mouse_on_lyrics(mouse).is_some() {
-          self.scroll_lyrics_wheel(3)
-        } else {
-          false
-        }
-      }
+      MouseEventKind::ScrollUp => self.handle_pane_wheel(mouse, -3),
+      MouseEventKind::ScrollDown => self.handle_pane_wheel(mouse, 3),
       MouseEventKind::Down(MouseButton::Middle) => {
         if let Some(row) = self.queue_row_index(mouse) {
           self.select_queue_row(row);
@@ -163,13 +136,25 @@ impl App {
     }
   }
 
+  /// Wheel over the interface: the seek band nudges playback; queue,
+  /// library and lyrics panes scroll their viewports.
+  fn handle_pane_wheel(&mut self, mouse: MouseEvent, delta: i32) -> bool {
+    if self.mouse_on_band(mouse) {
+      self.mpdc(MpdCommand::NudgeSeek(i64::from(delta.signum() * 5)));
+      true
+    } else if self.mouse_on_queue(mouse).is_some() {
+      self.scroll_queue_viewport(delta)
+    } else if self.mouse_on_library(mouse).is_some() {
+      self.scroll_library_viewport(delta)
+    } else if self.mouse_on_lyrics(mouse).is_some() {
+      self.scroll_lyrics_wheel(delta)
+    } else {
+      false
+    }
+  }
+
   fn mouse_on_lyrics(&self, mouse: MouseEvent) -> Option<Rect> {
-    self.lyrics_pane_areas.iter().copied().find(|area| {
-      mouse.row >= area.y
-        && mouse.row < area.y + area.height
-        && mouse.column >= area.x
-        && mouse.column < area.x + area.width
-    })
+    viewport::hit_pane(&self.lyrics_pane_areas, mouse)
   }
 
   /// Whether the lyrics pane at `area` shows the hovered song (recorded at
@@ -213,84 +198,42 @@ impl App {
     Some((mouse.row - area.y) as usize + self.lyrics_scroll)
   }
 
-  /// Scroll the queue by moving the viewport and letting the selection
-  /// follow just enough to stay inside the visible window — the mouse
-  /// scrolling convention the user asked for.
-  fn scroll_queue_viewport(&mut self, delta: i32) -> bool {
+  // --- queue viewport (shared math in `viewport`) -------------------------
+
+  /// Scroll the queue by moving the viewport; the selection follows just
+  /// enough to stay inside the visible window — the mouse scrolling
+  /// convention the user asked for.
+  pub(crate) fn scroll_queue_viewport(&mut self, delta: i32) -> bool {
     let len = self.visible_len();
-    if len == 0 {
-      return false;
-    }
     let height = self.queue_viewport_height();
-    let next = ((self.queue_state.offset() as i32) + delta).clamp(
-      0,
-      len.saturating_sub(height) as i32,
-    ) as usize;
-    self.set_queue_viewport(next)
+    viewport::scroll_viewport(&mut self.queue_state, len, height, delta)
   }
 
-  /// Viewport height of the (first) queue pane.
-  fn queue_viewport_height(&self) -> usize {
-    self
-      .queue_pane_areas
-      .first()
-      .map(|area| area.height as usize)
-      .filter(|height| *height > 0)
-      .unwrap_or(1)
+  pub(crate) fn queue_viewport_height(&self) -> usize {
+    viewport::viewport_height(&self.queue_pane_areas)
   }
 
-  /// Set the queue viewport offset absolutely, clamping the selection
-  /// into the new window (selection follows the viewport).
-  fn set_queue_viewport(&mut self, next: usize) -> bool {
-    let len = self.visible_len();
-    if len == 0 {
-      return false;
-    }
-    let height = self.queue_viewport_height();
-    let max_offset = len.saturating_sub(height);
-    let next = next.min(max_offset);
-    if next == self.queue_state.offset() {
-      return false;
-    }
-    let selected = self.queue_state.selected().unwrap_or(next);
-    let selected = selected.clamp(next, (next + height - 1).min(len - 1));
-    let mut state = ratatui::widgets::ListState::default();
-    state.select(Some(selected));
-    self.queue_state = state.with_offset(next);
-    true
-  }
-
-  /// Scrollbar hit test: the pointer must be on the recorded track.
   fn mouse_on_queue_bar(&self, mouse: MouseEvent) -> Option<Rect> {
-    self.queue_bar_areas.iter().copied().find(|area| {
-      mouse.column >= area.x
-        && mouse.column < area.x + area.width
-        && mouse.row >= area.y
-        && mouse.row < area.y + area.height
-    })
+    viewport::hit_pane(&self.queue_bar_areas, mouse)
   }
 
-  /// Map a scrollbar click/drag to a viewport offset: the thumb center
-  /// follows the pointer, proportionally over the whole content.
   fn queue_bar_jump(&mut self, mouse: MouseEvent, track: Rect) -> bool {
     let len = self.visible_len();
-    if len == 0 {
-      return false;
-    }
     let height = self.queue_viewport_height();
-    let track_span = track.height.saturating_sub(1) as f64;
-    let ratio = if track_span <= 0.0 {
-      0.0
-    } else {
-      (mouse.row.saturating_sub(track.y) as f64 / track_span).clamp(0.0, 1.0)
-    };
-    let target_center = ratio * (len.saturating_sub(1)) as f64;
-    let next = (target_center - height as f64 / 2.0).round().clamp(
-      0.0,
-      len.saturating_sub(height) as f64,
-    ) as usize;
-    self.set_queue_viewport(next)
+    viewport::bar_jump(&mut self.queue_state, len, height, track, mouse.row)
   }
+
+  /// Map a screen position to the visible queue row under it.
+  fn queue_row_index(&self, mouse: MouseEvent) -> Option<usize> {
+    let area = viewport::hit_pane(&self.queue_pane_areas, mouse)?;
+    viewport::row_at(area, mouse, self.queue_state.offset(), self.visible_len())
+  }
+
+  fn mouse_on_queue(&self, mouse: MouseEvent) -> Option<Rect> {
+    viewport::hit_pane(&self.queue_pane_areas, mouse)
+  }
+
+  // --- lyrics / misc -------------------------------------------------------
 
   /// Wheel-scroll over lyrics: leaves follow mode and pans the text window.
   /// Max inner height of the lyrics panes in the current tab (viewport
@@ -361,38 +304,6 @@ impl App {
     })
   }
 
-  fn mouse_on_queue(&self, mouse: MouseEvent) -> Option<Rect> {
-    self.queue_pane_areas.iter().copied().find(|area| {
-      mouse.row >= area.y
-        && mouse.row < area.y + area.height
-        && mouse.column >= area.x
-        && mouse.column < area.x + area.width
-    })
-  }
-
-  fn mouse_on_library(&self, mouse: MouseEvent) -> Option<Rect> {
-    self.library_pane_areas.iter().copied().find(|area| {
-      mouse.row >= area.y
-        && mouse.row < area.y + area.height
-        && mouse.column >= area.x
-        && mouse.column < area.x + area.width
-    })
-  }
-
-  /// Map a screen position to the visible library row under it.
-  fn library_row_index(&self, mouse: MouseEvent) -> Option<usize> {
-    let area = self.mouse_on_library(mouse)?;
-    let row = (mouse.row - area.y) as usize + self.library_state.offset();
-    (row < self.library_visible_len()).then_some(row)
-  }
-
-  /// Map a screen position to the visible queue row under it.
-  fn queue_row_index(&self, mouse: MouseEvent) -> Option<usize> {
-    let area = self.mouse_on_queue(mouse)?;
-    let row = (mouse.row - area.y) as usize + self.queue_state.offset();
-    (row < self.visible_len()).then_some(row)
-  }
-
   pub(crate) fn select_queue_row(&mut self, row: usize) {
     self.queue_state.select(Some(row.min(self.visible_len().saturating_sub(1))));
   }
@@ -422,7 +333,7 @@ impl App {
     true
   }
 
-    fn seek_to_band_column(&mut self, column: u16) -> bool {
+  fn seek_to_band_column(&mut self, column: u16) -> bool {
     let Some(area) = self.progress_band_area else {
       return false;
     };
@@ -434,5 +345,4 @@ impl App {
     self.mpdc(MpdCommand::SeekCurrent(position));
     true
   }
-
 }

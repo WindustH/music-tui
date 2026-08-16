@@ -189,64 +189,40 @@ impl Default for KeymapConfig {
 }
 
 impl KeymapConfig {
-  pub fn queue_bindings(&self) -> KeyBindings {
+  /// View bindings share one shape: the section's keys + input + global,
+  /// with global keys taking priority over view-local ones.
+  fn view_bindings(&self, section: &KeymapSection) -> KeyBindings {
     KeyBindings::from_sections(
-      binding_configs(&self.queue.keymap),
-      Vec::<KeyBindingConfig>::new(),
+      binding_configs(&section.keymap),
+      Vec::new(),
       binding_configs(&self.input.keymap),
       binding_configs(&self.global.keymap),
     )
     .with_global_priority()
+  }
+
+  pub fn queue_bindings(&self) -> KeyBindings {
+    self.view_bindings(&self.queue)
   }
 
   pub fn library_bindings(&self) -> KeyBindings {
-    KeyBindings::from_sections(
-      binding_configs(&self.library.keymap),
-      Vec::<KeyBindingConfig>::new(),
-      binding_configs(&self.input.keymap),
-      binding_configs(&self.global.keymap),
-    )
-    .with_global_priority()
+    self.view_bindings(&self.library)
   }
 
   pub fn metadata_bindings(&self) -> KeyBindings {
-    KeyBindings::from_sections(
-      binding_configs(&self.metadata.keymap),
-      Vec::<KeyBindingConfig>::new(),
-      binding_configs(&self.input.keymap),
-      binding_configs(&self.global.keymap),
-    )
-    .with_global_priority()
+    self.view_bindings(&self.metadata)
   }
 
   pub fn cover_bindings(&self) -> KeyBindings {
-    KeyBindings::from_sections(
-      binding_configs(&self.cover.keymap),
-      Vec::<KeyBindingConfig>::new(),
-      binding_configs(&self.input.keymap),
-      binding_configs(&self.global.keymap),
-    )
-    .with_global_priority()
+    self.view_bindings(&self.cover)
   }
 
   pub fn lyrics_bindings(&self) -> KeyBindings {
-    KeyBindings::from_sections(
-      binding_configs(&self.lyrics.keymap),
-      Vec::<KeyBindingConfig>::new(),
-      binding_configs(&self.input.keymap),
-      binding_configs(&self.global.keymap),
-    )
-    .with_global_priority()
+    self.view_bindings(&self.lyrics)
   }
 
   pub fn visualizer_bindings(&self) -> KeyBindings {
-    KeyBindings::from_sections(
-      binding_configs(&self.visualizer.keymap),
-      Vec::<KeyBindingConfig>::new(),
-      binding_configs(&self.input.keymap),
-      binding_configs(&self.global.keymap),
-    )
-    .with_global_priority()
+    self.view_bindings(&self.visualizer)
   }
 
   /// Input-context bindings only: the input section without global keys, so
@@ -272,31 +248,79 @@ impl KeymapConfig {
     )
   }
 
+  pub(crate) fn queue_section(&self) -> &KeymapSection {
+    &self.queue
+  }
+
+  pub(crate) fn library_section(&self) -> &KeymapSection {
+    &self.library
+  }
+
+  pub(crate) fn metadata_section(&self) -> &KeymapSection {
+    &self.metadata
+  }
+
+  pub(crate) fn cover_section(&self) -> &KeymapSection {
+    &self.cover
+  }
+
+  pub(crate) fn lyrics_section(&self) -> &KeymapSection {
+    &self.lyrics
+  }
+
+  pub(crate) fn visualizer_section(&self) -> &KeymapSection {
+    &self.visualizer
+  }
+
+  pub(crate) fn input_section(&self) -> &KeymapSection {
+    &self.input
+  }
+
+  pub(crate) fn help_section(&self) -> &KeymapSection {
+    &self.help
+  }
+
+  pub(crate) fn global_section(&self) -> &KeymapSection {
+    &self.global
+  }
+
   pub(crate) fn normalize_defaults(&mut self) {
     let default = KeymapConfig::default();
-    append_missing_actions(&mut self.queue.keymap, &default.queue.keymap);
-    append_missing_actions(&mut self.library.keymap, &default.library.keymap);
-    append_missing_actions(&mut self.metadata.keymap, &default.metadata.keymap);
-    append_missing_actions(&mut self.cover.keymap, &default.cover.keymap);
-    append_missing_actions(&mut self.lyrics.keymap, &default.lyrics.keymap);
-    append_missing_actions(&mut self.visualizer.keymap, &default.visualizer.keymap);
-    append_missing_actions(&mut self.input.keymap, &default.input.keymap);
-    append_missing_actions(&mut self.help.keymap, &default.help.keymap);
-    append_missing_actions(&mut self.global.keymap, &default.global.keymap);
+    let sections = [
+      (&mut self.queue, &default.queue),
+      (&mut self.library, &default.library),
+      (&mut self.metadata, &default.metadata),
+      (&mut self.cover, &default.cover),
+      (&mut self.lyrics, &default.lyrics),
+      (&mut self.visualizer, &default.visualizer),
+      (&mut self.input, &default.input),
+      (&mut self.help, &default.help),
+      (&mut self.global, &default.global),
+    ];
+    for (section, default_section) in sections {
+      append_missing_actions(&mut section.keymap, &default_section.keymap);
+    }
   }
 }
 
 pub(crate) fn format_keymap_toml(config: &KeymapConfig) -> String {
+  /// (section name in the TOML file, accessor) pairs, in write order.
+  type KeymapSectionRef = fn(&KeymapConfig) -> &KeymapSection;
+  const KEYMAP_SECTIONS: [(&str, KeymapSectionRef); 9] = [
+    ("queue", KeymapConfig::queue_section),
+    ("library", KeymapConfig::library_section),
+    ("metadata", KeymapConfig::metadata_section),
+    ("cover", KeymapConfig::cover_section),
+    ("lyrics", KeymapConfig::lyrics_section),
+    ("visualizer", KeymapConfig::visualizer_section),
+    ("input", KeymapConfig::input_section),
+    ("help", KeymapConfig::help_section),
+    ("global", KeymapConfig::global_section),
+  ];
   let mut out = String::new();
-  push_keymap_section(&mut out, "queue", &config.queue);
-  push_keymap_section(&mut out, "library", &config.library);
-  push_keymap_section(&mut out, "metadata", &config.metadata);
-  push_keymap_section(&mut out, "cover", &config.cover);
-  push_keymap_section(&mut out, "lyrics", &config.lyrics);
-  push_keymap_section(&mut out, "visualizer", &config.visualizer);
-  push_keymap_section(&mut out, "input", &config.input);
-  push_keymap_section(&mut out, "help", &config.help);
-  push_keymap_section(&mut out, "global", &config.global);
+  for (name, section) in KEYMAP_SECTIONS {
+    push_keymap_section(&mut out, name, section(config));
+  }
   out
 }
 

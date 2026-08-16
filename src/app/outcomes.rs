@@ -3,100 +3,63 @@
 use super::*;
 
 impl App {
+  /// Apply `apply` to every song view (detail / queue hover / library
+  /// hover) whose url matches. Returns whether any view was hit.
+  fn for_each_song_view(&mut self, url: &str, apply: impl Fn(&mut SongView)) -> bool {
+    let mut handled = false;
+    for view in self
+      .detail
+      .as_mut()
+      .into_iter()
+      .chain(self.hover.as_mut())
+      .chain(self.library_hover.as_mut())
+    {
+      if view.url == url {
+        apply(view);
+        handled = true;
+      }
+    }
+    handled
+  }
+
   pub fn handle_lyrics_outcome(&mut self, outcome: LyricsOutcome) -> bool {
-    if let Some(hover) = self.hover.as_mut()
-      && hover.url == outcome.song_url
-    {
-      match outcome.result {
-        Ok(lyrics) => {
-          hover.lyrics = Some(lyrics);
-          hover.lyrics_error = None;
-        }
-        Err(error) => {
-          hover.lyrics = None;
-          hover.lyrics_error = Some(error);
-        }
-      }
-      return true;
-    }
-    if let Some(hover) = self.library_hover.as_mut()
-      && hover.url == outcome.song_url
-    {
-      match outcome.result {
-        Ok(lyrics) => {
-          hover.lyrics = Some(lyrics);
-          hover.lyrics_error = None;
-        }
-        Err(error) => {
-          hover.lyrics = None;
-          hover.lyrics_error = Some(error);
-        }
-      }
-      return true;
-    }
-    if outcome.song_url != self.lyrics_url {
-      return false;
-    }
-    match outcome.result {
+    let mut handled = self.for_each_song_view(&outcome.song_url, |view| match &outcome.result {
       Ok(lyrics) => {
-        self.lyrics = Some(lyrics);
-        self.lyrics_error = None;
+        view.lyrics = Some(lyrics.clone());
+        view.lyrics_error = None;
       }
       Err(error) => {
-        self.lyrics = None;
-        self.lyrics_error = Some(error);
+        view.lyrics = None;
+        view.lyrics_error = Some(error.clone());
       }
+    });
+    if outcome.song_url == self.lyrics_url {
+      match outcome.result {
+        Ok(lyrics) => {
+          self.lyrics = Some(lyrics);
+          self.lyrics_error = None;
+        }
+        Err(error) => {
+          self.lyrics = None;
+          self.lyrics_error = Some(error);
+        }
+      }
+      handled = true;
     }
-    true
+    handled
   }
 
   pub fn handle_metadata_outcome(&mut self, outcome: MetadataOutcome) -> bool {
-    let mut handled = false;
-    if let Some(hover) = self.hover.as_mut()
-      && hover.url == outcome.song_url
-    {
-      match &outcome.result {
-        Ok(entries) => {
-          hover.metadata = Some(entries.clone());
-          hover.metadata_error = None;
-        }
-        Err(error) => {
-          hover.metadata = None;
-          hover.metadata_error = Some(error.clone());
-        }
+    let mut handled = self.for_each_song_view(&outcome.song_url, |view| match &outcome.result {
+      Ok(entries) => {
+        view.metadata = Some(entries.clone());
+        view.metadata_error = None;
       }
-      handled = true;
-    }
-    if let Some(detail) = self.detail.as_mut()
-      && detail.url == outcome.song_url
-    {
-      match &outcome.result {
-        Ok(entries) => {
-          detail.metadata = Some(entries.clone());
-          detail.metadata_error = None;
-        }
-        Err(error) => {
-          detail.metadata = None;
-          detail.metadata_error = Some(error.clone());
-        }
+      Err(error) => {
+        view.metadata = None;
+        view.metadata_error = Some(error.clone());
       }
-      handled = true;
-    }
-    if let Some(hover) = self.library_hover.as_mut()
-      && hover.url == outcome.song_url
-    {
-      match &outcome.result {
-        Ok(entries) => {
-          hover.metadata = Some(entries.clone());
-          hover.metadata_error = None;
-        }
-        Err(error) => {
-          hover.metadata = None;
-          hover.metadata_error = Some(error.clone());
-        }
-      }
-      handled = true;
-    }
+    });
     if outcome.song_url == self.metadata_url {
       match outcome.result {
         Ok(entries) => {
@@ -117,35 +80,29 @@ impl App {
     match outcome.result {
       Ok(()) => {
         self.set_message(format!("metadata updated: {} tag(s)", outcome.changed_tags));
-        // Refresh every slot that shows this song: the playing pane, the
-        // detail view and the hovered data view (the editor can target any
-        // of them).
+        // Refresh every slot that shows this song: the playing pane and
+        // all song views (the editor can target any of them).
         if outcome.song_url == self.current_song_url().unwrap_or_default() {
           self.metadata_entries = None;
           if let Some(path) = self.current_song_path() {
             self.request_metadata(outcome.song_url.clone(), path);
           }
         }
-        if let Some(detail) = self.detail.as_mut()
-          && detail.url == outcome.song_url
+        self.for_each_song_view(&outcome.song_url, |view| {
+          view.metadata = None;
+        });
+        // Re-read metadata for the views showing this song.
+        for view in [
+          self.detail.as_ref(),
+          self.hover.as_ref(),
+          self.library_hover.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
-          detail.metadata = None;
-          let path = detail.path.clone();
-          self.spawn_metadata_read(outcome.song_url.clone(), path);
-        }
-        if let Some(hover) = self.hover.as_mut()
-          && hover.url == outcome.song_url
-        {
-          hover.metadata = None;
-          let path = hover.path.clone();
-          self.spawn_metadata_read(outcome.song_url.clone(), path);
-        }
-        if let Some(hover) = self.library_hover.as_mut()
-          && hover.url == outcome.song_url
-        {
-          hover.metadata = None;
-          let path = hover.path.clone();
-          self.spawn_metadata_read(outcome.song_url.clone(), path);
+          if view.url == outcome.song_url {
+            self.spawn_metadata_read(outcome.song_url.clone(), view.path.clone());
+          }
         }
         // Ask MPD to re-read the file so its database (and the queue
         // labels) pick up the corrected tags without a manual :update.
@@ -162,55 +119,17 @@ impl App {
   }
 
   pub fn handle_cover_outcome(&mut self, outcome: CoverOutcome) -> bool {
-    let mut handled = false;
-    if let Some(hover) = self.hover.as_mut()
-      && hover.url == outcome.song_url
-    {
-      match &outcome.result {
-        Ok(path) => {
-          hover.cover_dims = outcome.dims;
-          hover.cover = Some(path.clone());
-          hover.cover_error = None;
-        }
-        Err(error) => {
-          hover.cover = None;
-          hover.cover_error = Some(error.clone());
-        }
+    let mut handled = self.for_each_song_view(&outcome.song_url, |view| match &outcome.result {
+      Ok(path) => {
+        view.cover_dims = outcome.dims;
+        view.cover = Some(path.clone());
+        view.cover_error = None;
       }
-      handled = true;
-    }
-    if let Some(detail) = self.detail.as_mut()
-      && detail.url == outcome.song_url
-    {
-      match &outcome.result {
-        Ok(path) => {
-          detail.cover_dims = outcome.dims;
-          detail.cover = Some(path.clone());
-          detail.cover_error = None;
-        }
-        Err(error) => {
-          detail.cover = None;
-          detail.cover_error = Some(error.clone());
-        }
+      Err(error) => {
+        view.cover = None;
+        view.cover_error = Some(error.clone());
       }
-      handled = true;
-    }
-    if let Some(hover) = self.library_hover.as_mut()
-      && hover.url == outcome.song_url
-    {
-      match &outcome.result {
-        Ok(path) => {
-          hover.cover_dims = outcome.dims;
-          hover.cover = Some(path.clone());
-          hover.cover_error = None;
-        }
-        Err(error) => {
-          hover.cover = None;
-          hover.cover_error = Some(error.clone());
-        }
-      }
-      handled = true;
-    }
+    });
     // App-level sidebar cover tracks the *current* song only — a cover
     // outcome for the detail-view song must not clobber it.
     if outcome.song_url == self.current_song_url().unwrap_or_default() {
@@ -225,6 +144,7 @@ impl App {
           self.cover_error = Some(error);
         }
       }
+      handled = true;
     }
     handled || self.tab_contains(PaneKind::Cover)
   }
