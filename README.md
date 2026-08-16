@@ -39,6 +39,36 @@ music-tui open song.flac      # see the open modes below
 Options: `-r`/`--recursive` recurses into subfolders; `--no-play` queues
 without starting playback.
 
+## Installation
+
+### Arch Linux (AUR)
+
+```bash
+yay -S music-tui        # release build (from the v tag)
+yay -S music-tui-git    # latest master
+yay -S music-tui-bin    # prebuilt binary from the GitHub release
+```
+
+### Homebrew
+
+```bash
+brew tap WindustH/tap https://github.com/WindustH/homebrew-tap
+brew install music-tui
+```
+
+A `--HEAD` build (from master) is available until the first bottled
+release lands.
+
+### From source
+
+```bash
+git clone --recurse-submodules https://github.com/WindustH/music-tui
+cd music-tui
+cargo install --path .
+```
+
+Requires `mpd`, `chafa` and `sqlite`.
+
 ## Documentation
 
 [doc/index.md](doc/index.md).

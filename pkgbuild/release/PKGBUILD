@@ -1,0 +1,34 @@
+# Maintainer: WindustH <windusth2006@gmail.com>
+
+pkgname=music-tui
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Terminal music player backed by MPD, with covers, synced lyrics and a visualizer."
+arch=('x86_64' 'aarch64')
+url="https://github.com/WindustH/music-tui"
+license=('MIT')
+depends=('mpd' 'chafa' 'sqlite')
+makedepends=('git' 'rust')
+conflicts=("$pkgname-git")
+options=('!lto')
+source=("$pkgname::git+$url.git#tag=v$pkgver")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname"
+  git submodule update --init --recursive
+}
+
+build() {
+  cd "$pkgname"
+  cargo build --release --locked
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+
+  install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+  cp -r doc "$pkgdir/usr/share/doc/$pkgname/"
+}

@@ -1,0 +1,85 @@
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Resolve tag
+        id: release
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.event.release.tag_name }}"
+          if [[ -z "$tag" ]]; then
+            echo "release tag is required" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          submodules: recursive
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${{ steps.release.outputs.version }}"
+          target="${{ matrix.target }}"
+          package="music-tui-${version}-${target}"
+          staging="dist/${package}"
+
+          mkdir -p "$staging"
+          cp "target/${target}/release/music-tui" "$staging/"
+          cp LICENSE README.md "$staging/"
+          cp -R doc "$staging/"
+
+          tar -czf "dist/${package}.tar.gz" -C dist "$package"
+
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "dist/${package}.tar.gz" > "dist/${package}.tar.gz.sha256"
+          else
+            sha256sum "dist/${package}.tar.gz" > "dist/${package}.tar.gz.sha256"
+          fi
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/*.sha256)
+          gh release upload "$TAG" "${assets[@]}" --clobber
