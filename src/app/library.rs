@@ -16,9 +16,11 @@ impl App {
     self.library_rows.len()
   }
 
-  pub(crate) fn move_library_selection_page(&mut self, delta: i32) -> bool {
+  /// Flip the library viewport one full page (selection follows
+  /// passively, like the queue's paging).
+  pub(crate) fn library_page(&mut self, direction: i32) -> bool {
     let height = self.library_viewport_height() as i32;
-    self.move_library_selection(delta * height.max(1))
+    self.scroll_library_viewport(direction * height.max(1))
   }
 
   pub(crate) fn recompute_library_filter(&mut self) {
@@ -51,9 +53,17 @@ impl App {
       return;
     }
     let selected = self.library_state.selected().unwrap_or(0).min(len - 1);
+    // Keep the viewport offset (clamped to the new length) instead of
+    // resetting it to the top.
+    let height = self.library_viewport_height().max(1);
+    let offset = self
+      .library_state
+      .offset()
+      .min(len.saturating_sub(height));
+    let selected = selected.clamp(offset, (offset + height - 1).min(len - 1));
     let mut state = TableState::default();
     state.select(Some(selected));
-    self.library_state = state;
+    self.library_state = state.with_offset(offset);
   }
 
   pub(crate) fn select_library_row(&mut self, row: usize) {
@@ -62,9 +72,9 @@ impl App {
       return;
     }
     let row = row.min(len - 1);
-    let mut state = TableState::default();
-    state.select(Some(row));
-    self.library_state = state;
+    // Select in place: rebuilding the state would reset the viewport
+    // offset to 0 and the table render would jump back to the top.
+    self.library_state.select(Some(row));
     self.sync_library_hover();
   }
 

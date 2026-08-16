@@ -57,12 +57,12 @@ impl App {
       }
       "queue_up" => self.move_selection(-1),
       "queue_down" => self.move_selection(1),
-      "queue_page_up" => self.move_selection_page(-1),
-      "queue_page_down" => self.move_selection_page(1),
+      "queue_page_up" => self.queue_page(-1),
+      "queue_page_down" => self.queue_page(1),
       "library_up" => self.move_library_selection(-1),
       "library_down" => self.move_library_selection(1),
-      "library_page_up" => self.move_library_selection_page(-1),
-      "library_page_down" => self.move_library_selection(1),
+      "library_page_up" => self.library_page(-1),
+      "library_page_down" => self.library_page(1),
       "library_top" => {
         if self.library_visible_len() > 0 {
           self.select_library_row(0);

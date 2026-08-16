@@ -86,6 +86,7 @@ pub(super) fn draw_cover_art(
 }
 
 /// Cover of the current song (`:playing` source).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_cover_pane(
   frame: &mut Frame,
   app: &mut App,
@@ -134,6 +135,7 @@ pub(super) fn draw_cover_pane(
 }
 
 /// Cover of the hovered row (queue or library, per the pane source).
+#[allow(clippy::too_many_arguments)]
 fn draw_hover_cover_pane(
   frame: &mut Frame,
   app: &mut App,

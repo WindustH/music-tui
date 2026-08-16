@@ -437,8 +437,11 @@ impl App {
     true
   }
 
-  fn move_selection_page(&mut self, direction: i32) -> bool {
-    self.move_selection(direction * 10)
+  /// Flip the queue viewport one full page; the selection follows
+  /// passively (same model as the mouse wheel).
+  fn queue_page(&mut self, direction: i32) -> bool {
+    let height = self.queue_viewport_height() as i32;
+    self.scroll_queue_viewport(direction * height.max(1))
   }
 
   /// Scroll whichever metadata surface is active: the detail view when

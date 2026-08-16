@@ -9,12 +9,8 @@ pub(super) fn draw_completion_popup(
   app: &App,
   footer: Rect,
 ) -> Option<Rect> {
-  let Some(completion) = app.command_state.completion() else {
-    return None;
-  };
-  if app.prompt.is_none() {
-    return None;
-  }
+  let completion = app.command_state.completion()?;
+  app.prompt.as_ref()?;
   let rows = framework_tui::completion_rows(Some(completion), 6).min(6);
   if rows == 0 || footer.y < rows {
     return None;

@@ -6,6 +6,7 @@ use super::cover::{draw_cover_art, fitted_cover_area};
 /// Secondary detail surface for a queue entry (`i`): a layout tree over the
 /// cover and metadata panes (default side by side) — the sidebar data stays
 /// untouched. Layout comes from `[layout].detail`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_detail_view(
   frame: &mut Frame,
   app: &App,

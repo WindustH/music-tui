@@ -200,6 +200,7 @@ fn draw_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
   frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_layout(
   frame: &mut Frame,
   app: &mut App,
