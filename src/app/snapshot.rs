@@ -40,8 +40,30 @@ impl App {
           self.on_song_changed();
         }
         self.sync_hover_view();
+        self.enforce_queue_dedup();
         true
       }
+    }
+  }
+
+  /// Remove duplicates from the live queue whenever it changes while
+  /// auto-dedup is on — any playlist modification (appends from the
+  /// library, other clients, interrupt restores …) converges to a
+  /// duplicate-free queue. Uses `DedupDelete`, which does not cancel an
+  /// armed interrupt preview.
+  pub(crate) fn enforce_queue_dedup(&mut self) {
+    if !self.queue_dedup {
+      return;
+    }
+    let playing = self
+      .status
+      .as_ref()
+      .and_then(|status| status.current_song)
+      .map(|(position, _)| position.0);
+    let urls: Vec<&str> = self.queue.iter().map(|song| song.song.url.as_str()).collect();
+    let redundant = redundant_positions(&urls, playing);
+    if !redundant.is_empty() {
+      self.mpdc(MpdCommand::DedupDelete(redundant));
     }
   }
 
@@ -135,6 +157,23 @@ impl App {
 
 /// Keep the first occurrence of each URL; a playing copy of a duplicate
 /// stays visible so the ▶ marker follows the actual playback position.
+/// Queue positions to delete for live dedup enforcement: keep the first
+/// occurrence of each URL, always keep the playing copy (same rule as the
+/// view-level `dedup_positions`). When the playing copy is itself a later
+/// duplicate, both copies stay until the song ends — the next snapshot
+/// then drops the redundant one.
+fn redundant_positions(urls: &[&str], playing: Option<usize>) -> Vec<usize> {
+  let mut seen = std::collections::HashSet::new();
+  let mut out = Vec::new();
+  for (position, url) in urls.iter().enumerate() {
+    if playing == Some(position) || seen.insert(*url) {
+      continue;
+    }
+    out.push(position);
+  }
+  out
+}
+
 fn dedup_positions(urls: &[&str], positions: Vec<usize>, playing: Option<usize>) -> Vec<usize> {
   let mut seen = std::collections::HashSet::new();
   let mut out = Vec::with_capacity(positions.len());
@@ -149,6 +188,16 @@ fn dedup_positions(urls: &[&str], positions: Vec<usize>, playing: Option<usize>)
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn redundant_positions_keep_first_and_playing() {
+    let urls = ["a", "b", "a", "c", "b"];
+    assert_eq!(redundant_positions(&urls, None), vec![2, 4]);
+    // Playing a later duplicate keeps both copies for now.
+    assert_eq!(redundant_positions(&["a", "a"], Some(1)), Vec::<usize>::new());
+    // No duplicates → nothing to delete.
+    assert_eq!(redundant_positions(&["a", "b"], None), Vec::<usize>::new());
+  }
 
   #[test]
   fn dedup_keeps_first_occurrence_of_each_url() {

@@ -220,6 +220,20 @@ async fn run_command(client: &Client, command: MpdCommand, config: &MpdConfig) {
         .await
         .map(|_| ()).map_err(|error| error.to_string())
     }
+    MpdCommand::DedupDelete(positions) => {
+      // Highest first so earlier positions stay valid across deletes.
+      for position in positions.iter().rev() {
+        let deleted = client
+          .command(Delete::range(
+            SongPosition(*position)..SongPosition(*position + 1),
+          ))
+          .await;
+        if let Err(error) = deleted {
+          tracing::warn!("dedup delete at {position} failed: {error}");
+        }
+      }
+      Ok::<(), String>(())
+    }
     MpdCommand::AddUri(uri) => client
       .command(Add::uri(&uri))
       .await

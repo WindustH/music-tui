@@ -54,6 +54,10 @@ pub enum MpdCommand {
   SetConsume(bool),
   ClearQueue,
   DeleteAt(usize),
+  /// Queue-dedup maintenance: drop duplicate positions (highest first).
+  /// Deliberately NOT in `command_touches_queue` — housekeeping must not
+  /// cancel an armed interrupt-preview session.
+  DedupDelete(Vec<usize>),
   AddUri(String),
   /// Play (or append) a local file from the library pane. The path is
   /// resolved to an MPD URI (music dir relative, `file://`, or symlink

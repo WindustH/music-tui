@@ -21,8 +21,10 @@ music_dir = ""       # optional; auto-detected from ~/.config/mpd/mpd.conf
 [behavior]
 tick_ms = 1000         # status refresh while idle
 playing_tick_ms = 200  # status refresh while playing
-queue_dedup = true     # hide duplicate queue entries (first occurrence stays;
-                       # the playing copy stays visible; toggle with ,d or :dedup)
+queue_dedup = true     # auto-remove duplicate queue entries: any queue change
+                       # (appends, other clients, restores) deletes redundant copies in
+                       # MPD itself — first occurrence stays, the playing copy stays;
+                       # toggle with ,d or :dedup (enforces immediately when enabled)
 
 [render]
 chafa_bin = "chafa"    # Chafa binary for symbol/ASCII rendering

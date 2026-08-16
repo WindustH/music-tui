@@ -152,6 +152,11 @@ impl App {
         self.queue_dedup = !self.queue_dedup;
         self.recompute_queue_filter();
         self.clamp_queue_selection();
+        if self.queue_dedup {
+          // Enforce immediately: turning dedup on is itself a change the
+          // current queue should comply with.
+          self.enforce_queue_dedup();
+        }
         self.set_message(if self.queue_dedup {
           "queue dedup on"
         } else {
