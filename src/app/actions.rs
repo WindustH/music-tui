@@ -148,6 +148,17 @@ impl App {
         self.set_message("queue cleared");
         true
       }
+      "queue_dedup" => {
+        self.queue_dedup = !self.queue_dedup;
+        self.recompute_queue_filter();
+        self.clamp_queue_selection();
+        self.set_message(if self.queue_dedup {
+          "queue dedup on"
+        } else {
+          "queue dedup off"
+        });
+        true
+      }
       "volume_up" => {
         self.mpdc(MpdCommand::NudgeVolume(5));
         true

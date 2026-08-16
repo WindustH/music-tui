@@ -95,6 +95,9 @@ pub struct App {
   /// Active queue filter (case-insensitive substring over title / artist /
   /// album / url), entered via `/`.
   pub queue_filter: Option<String>,
+  /// Hide duplicate queue entries (same URL keeps its first occurrence
+  /// visible; the playing copy stays visible) — from [behavior] config.
+  pub queue_dedup: bool,
   /// Queue positions matching the filter; selection indexes this list.
   pub queue_filter_matches: Vec<usize>,
 
@@ -193,6 +196,7 @@ impl App {
   ) -> Self {
     let music_dir = resolve_music_dir(&settings.config.mpd).ok();
     let lyrics_follow = settings.config.lyrics.follow;
+    let queue_dedup = settings.config.behavior.queue_dedup;
     let library_columns = settings.config.library.columns.clone();
     if let Some(session) = interrupt {
       mpd.send(MpdCommand::ArmInterrupt(session));
@@ -234,6 +238,7 @@ impl App {
       lyrics_follow,
       pending_restore_selection: None,
       queue_filter: None,
+      queue_dedup,
       queue_filter_matches: Vec::new(),
       metadata_entries: None,
       metadata_url: String::new(),

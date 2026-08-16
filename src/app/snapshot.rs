@@ -95,6 +95,18 @@ impl App {
           .collect()
       }
     };
+    if self.queue_dedup {
+      let urls: Vec<&str> = self.queue.iter().map(|song| song.song.url.as_str()).collect();
+      let playing = self
+        .status
+        .as_ref()
+        .and_then(|status| status.current_song)
+        .map(|(position, _)| position.0);
+      self.queue_filter_matches = {
+        let positions = std::mem::take(&mut self.queue_filter_matches);
+        dedup_positions(&urls, positions, playing)
+      };
+    }
   }
 
   pub(crate) fn clear_queue_filter(&mut self) {
@@ -116,5 +128,44 @@ impl App {
         self.queue_state.select(Some(row));
       }
     }
+  }
+}
+
+/// Keep the first occurrence of each URL; a playing copy of a duplicate
+/// stays visible so the ▶ marker follows the actual playback position.
+fn dedup_positions(urls: &[&str], positions: Vec<usize>, playing: Option<usize>) -> Vec<usize> {
+  let mut seen = std::collections::HashSet::new();
+  let mut out = Vec::with_capacity(positions.len());
+  for position in positions {
+    if playing == Some(position) || seen.insert(urls[position]) {
+      out.push(position);
+    }
+  }
+  out
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn dedup_keeps_first_occurrence_of_each_url() {
+    let urls = ["a", "b", "a", "c", "b"];
+    let positions = vec![0, 1, 2, 3, 4];
+    assert_eq!(dedup_positions(&urls, positions, None), vec![0, 1, 3]);
+  }
+
+  #[test]
+  fn dedup_keeps_the_playing_copy_visible() {
+    let urls = ["a", "a"];
+    let positions = vec![0, 1];
+    assert_eq!(dedup_positions(&urls, positions, Some(1)), vec![0, 1]);
+  }
+
+  #[test]
+  fn dedup_applies_after_text_filtering() {
+    let urls = ["a", "x", "a"];
+    // positions pre-filtered to [0, 2]
+    assert_eq!(dedup_positions(&urls, vec![0, 2], None), vec![0]);
   }
 }

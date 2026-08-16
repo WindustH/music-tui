@@ -43,6 +43,9 @@ pub struct BehaviorConfig {
   pub tick_ms: u64,
   /// Interval between MPD status refreshes while playing.
   pub playing_tick_ms: u64,
+  /// Hide duplicate queue entries (same URL keeps its first occurrence
+  /// visible; the playing copy stays visible too).
+  pub queue_dedup: bool,
 }
 
 impl Default for BehaviorConfig {
@@ -50,6 +53,7 @@ impl Default for BehaviorConfig {
     Self {
       tick_ms: 1000,
       playing_tick_ms: 200,
+      queue_dedup: true,
     }
   }
 }

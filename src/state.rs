@@ -26,8 +26,8 @@ pub struct PersistedState {
 
 
 impl PersistedState {
-  pub fn load(cache_dir: &Path) -> Self {
-    let path = cache_dir.join(STATE_FILE);
+  pub fn load(state_dir: &Path) -> Self {
+    let path = state_dir.join(STATE_FILE);
     match std::fs::read_to_string(&path) {
       Ok(text) => match toml::from_str(&text) {
         Ok(state) => state,
@@ -41,17 +41,17 @@ impl PersistedState {
   }
 
   /// Write atomically (temp file + rename) so a crash never corrupts it.
-  pub fn save(&self, cache_dir: &Path) {
-    if let Err(error) = save_inner(self, cache_dir) {
+  pub fn save(&self, state_dir: &Path) {
+    if let Err(error) = save_inner(self, state_dir) {
       tracing::warn!(%error, "failed to save state");
     }
   }
 }
 
-fn save_inner(state: &PersistedState, cache_dir: &Path) -> std::io::Result<()> {
-  std::fs::create_dir_all(cache_dir)?;
-  let path = cache_dir.join(STATE_FILE);
-  let temp = cache_dir.join(format!("{STATE_FILE}.tmp"));
+fn save_inner(state: &PersistedState, state_dir: &Path) -> std::io::Result<()> {
+  std::fs::create_dir_all(state_dir)?;
+  let path = state_dir.join(STATE_FILE);
+  let temp = state_dir.join(format!("{STATE_FILE}.tmp"));
   let text = toml::to_string_pretty(state).map_err(|error| {
     std::io::Error::other(format!("serialize state: {error}"))
   })?;

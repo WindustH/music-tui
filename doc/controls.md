@@ -37,6 +37,7 @@ wins over pane bindings in every view.
 | `i` | open detail view for the selected song |
 | `e` | edit the selected song's tags in `$EDITOR` |
 | `/` | filter the queue (enter keeps, `esc` clears) |
+| `,d` | toggle hiding duplicate queue entries (default on) |
 
 ## Library pane
 

@@ -10,6 +10,16 @@ pub(super) fn app_cache_dir() -> PathBuf {
   platform_cache_dir().join("music-tui")
 }
 
+pub(super) fn app_state_dir() -> PathBuf {
+  platform_state_dir().join("music-tui")
+}
+
+fn platform_state_dir() -> PathBuf {
+  env_path("XDG_STATE_HOME")
+    .or_else(|| env_path("HOME").map(|home| home.join(".local/state")))
+    .unwrap_or_else(|| PathBuf::from(".local/state"))
+}
+
 fn platform_config_dir() -> PathBuf {
   env_path("XDG_CONFIG_HOME")
     .or_else(|| env_path("HOME").map(|home| home.join(".config")))

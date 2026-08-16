@@ -37,7 +37,9 @@
   (e.g. `.wav` has no standard tag layer for some fields).
 - Check `~/.cache/music-tui/music-tui.log` for the write error.
 
-## Logs and cache
+## Logs, cache and state
 
 - Logs: `~/.cache/music-tui/music-tui.log` (`RUST_LOG` to raise verbosity).
 - Cover cache: `~/.cache/music-tui/covers/` (safe to delete).
+- State (library database, session state): `~/.local/state/music-tui/`
+  (`library.db`, `state.toml`; migrated from the cache dir automatically).

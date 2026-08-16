@@ -20,6 +20,7 @@ Press `:` to open the command prompt. Tab completion completes command names;
 | `:vol` | alias of `volume` |
 | `:repeat`, `:random`, `:single`, `:consume` | toggle the mode |
 | `:clear` | clear the queue |
+| `:dedup` | toggle hiding duplicate queue entries |
 | `:tab` | list tabs |
 | `:tab <n|name>` | switch tab by 1-based number or name |
 | `:save` | export the queue to `<state>/playlists/music-tui-<time>.m3u` |

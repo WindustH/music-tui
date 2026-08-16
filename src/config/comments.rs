@@ -19,6 +19,7 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "behavior" => Some("Interactive behavior settings."),
     "behavior.tick_ms" => Some("Status refresh interval while idle."),
     "behavior.playing_tick_ms" => Some("Status refresh interval while playing."),
+    "behavior.queue_dedup" => Some("Hide duplicate queue entries: each URL keeps its first occurrence visible (the playing copy stays visible too)."),
     "render" => Some("Cover art rendering settings."),
     "render.chafa_bin" => Some("Command used to render cover art when no graphics protocol is available."),
     "render.auto_detect" => Some("Detect terminal graphics capability automatically."),

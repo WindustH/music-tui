@@ -21,6 +21,8 @@ music_dir = ""       # optional; auto-detected from ~/.config/mpd/mpd.conf
 [behavior]
 tick_ms = 1000         # status refresh while idle
 playing_tick_ms = 200  # status refresh while playing
+queue_dedup = true     # hide duplicate queue entries (first occurrence stays;
+                       # the playing copy stays visible; toggle with ,d or :dedup)
 
 [render]
 chafa_bin = "chafa"    # Chafa binary for symbol/ASCII rendering
@@ -124,8 +126,8 @@ width = 1
 
 `field` is one of `title`, `artist`, `album`, `genre`, `filename` or
 `duration`; `width` is a relative weight shared across the pane width.
-The scan is incremental (mtime-based) and stored in `library.db` under the
-music-tui cache directory. `/` filters every field including lyrics text
+The scan is incremental (mtime-based) and stored in `library.db` under
+`~/.local/state/music-tui/`. `/` filters every field including lyrics text
 and highlights the match; long fields scroll horizontally to the match.
 `u` triggers a rescan.
 

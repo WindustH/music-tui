@@ -8,6 +8,9 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let is_main = app.main_pane() == PaneKind::Queue;
   let title = match app.queue_filter.as_deref() {
     Some(filter) => format!("queue {}/{} · /{filter}", app.queue_filter_matches.len(), app.queue.len()),
+    None if app.queue_dedup && app.queue_filter_matches.len() < app.queue.len() => {
+      format!("queue {}/{} · dedup", app.queue_filter_matches.len(), app.queue.len())
+    }
     None => format!("queue ({})", app.queue.len()),
   };
   let block = pane_block(app, &title, is_main);

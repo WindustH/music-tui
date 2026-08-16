@@ -5,6 +5,7 @@ use super::*;
 const COMMANDS: &[&str] = &[
   "quit", "q", "help", "play", "pause", "toggle", "stop", "next", "prev", "volume", "vol",
   "repeat", "random", "single", "consume", "clear", "update", "tab", "add", "save",
+  "dedup",
 ];
 
 impl App {
@@ -229,6 +230,9 @@ impl App {
       "random" => self.mpdc(MpdCommand::SetRandom(self.toggle_flag("random"))),
       "single" => self.mpdc(MpdCommand::SetSingle(self.toggle_single())),
       "consume" => self.mpdc(MpdCommand::SetConsume(self.toggle_flag("consume"))),
+      "dedup" => {
+        self.run_action("queue_dedup");
+      }
       "clear" => self.mpdc(MpdCommand::ClearQueue),
       "update" => self.mpdc(MpdCommand::Rescan),
       "tab" => self.command_tab(&args),

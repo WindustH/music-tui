@@ -115,7 +115,7 @@ async fn run_tui(
   let band_renderer = visualizer::spawn_band_renderer(tx.clone());
   let library_scan_tx = spawn_library_scanner(
     &settings.config.library,
-    &settings.cache_dir,
+    &settings.state_dir,
     tx.clone(),
   );
 
@@ -130,7 +130,7 @@ async fn run_tui(
   app.visualizer = Some(visualizer.clone());
   app.visualizer_renderer = Some(band_renderer);
   app.library_scan_tx = library_scan_tx;
-  app.restore_state(state::PersistedState::load(&app.settings.cache_dir));
+  app.restore_state(state::PersistedState::load(&app.settings.state_dir));
   let mut saved_state = app.snapshot_state();
   let mut needs_draw = true;
 
@@ -173,7 +173,7 @@ async fn run_tui(
     // crash-safe via atomic rename, cheap enough to run per event batch.
     let current_state = app.snapshot_state();
     if current_state != saved_state {
-      current_state.save(&app.settings.cache_dir);
+      current_state.save(&app.settings.state_dir);
       saved_state = current_state;
     }
   }
@@ -181,7 +181,7 @@ async fn run_tui(
   tui.restore()?;
   let final_state = app.snapshot_state();
   if final_state != saved_state {
-    final_state.save(&app.settings.cache_dir);
+    final_state.save(&app.settings.state_dir);
   }
   Ok(())
 }
@@ -232,14 +232,14 @@ fn handle_async_event(
 
 fn spawn_library_scanner(
   library: &config::LibraryConfig,
-  cache_dir: &std::path::Path,
+  state_dir: &std::path::Path,
   tx: mpsc::UnboundedSender<AsyncEvent>,
 ) -> Option<std::sync::mpsc::Sender<()>> {
   if library.paths.is_empty() {
     return None;
   }
   let library = library.clone();
-  let db_path = cache_dir.join("library.db");
+  let db_path = state_dir.join("library.db");
   let (scan_tx, scan_rx) = std::sync::mpsc::channel::<()>();
   thread::spawn(move || {
     let send = |event: LibraryEvent| {

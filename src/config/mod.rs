@@ -23,7 +23,7 @@ mod schema;
 
 pub use comments::app_config_toml;
 pub use paths::{detect_music_dir, expand_home};
-use paths::{app_cache_dir, app_config_dir};
+use paths::{app_cache_dir, app_config_dir, app_state_dir};
 pub use schema::{
   BehaviorConfig, LayoutConfig, LibraryColumn, LibraryConfig, LyricsConfig, MpdConfig,
   PlaylistConfig, RenderConfig, TabConfig, VisualizerConfig,
@@ -35,6 +35,9 @@ pub struct Settings {
   pub keymap: KeymapConfig,
   pub theme: ThemeConfig,
   pub cache_dir: PathBuf,
+  /// XDG state dir (library.db, state.toml); logs and cover caches stay
+  /// in the cache dir.
+  pub state_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -52,6 +55,7 @@ pub struct AppConfig {
 pub async fn load_or_create() -> Result<Settings> {
   let config_dir = app_config_dir();
   let cache_dir = app_cache_dir();
+  let state_dir = app_state_dir();
 
   fs::create_dir_all(&config_dir)
     .await
@@ -59,6 +63,11 @@ pub async fn load_or_create() -> Result<Settings> {
   fs::create_dir_all(&cache_dir)
     .await
     .with_context(|| format!("failed to create {}", cache_dir.display()))?;
+  fs::create_dir_all(&state_dir)
+    .await
+    .with_context(|| format!("failed to create {}", state_dir.display()))?;
+
+  migrate_state_files_from_cache(&cache_dir, &state_dir);
 
   let config_path = config_dir.join("config.toml");
   let config = read_or_write_default(&config_path, AppConfig::default()).await?;
@@ -72,7 +81,30 @@ pub async fn load_or_create() -> Result<Settings> {
     keymap,
     theme,
     cache_dir,
+    state_dir,
   })
+}
+
+/// State files (library.db, state.toml) used to live in the cache dir;
+/// move them to the state dir on first run after the switch.
+fn migrate_state_files_from_cache(cache_dir: &Path, state_dir: &Path) {
+  for name in ["library.db", "library.db-wal", "library.db-shm", "state.toml"] {
+    let from = cache_dir.join(name);
+    let to = state_dir.join(name);
+    if !from.is_file() || to.exists() {
+      continue;
+    }
+    match std::fs::copy(&from, &to) {
+      Ok(_) => {
+        let _ = std::fs::remove_file(&from);
+      }
+      Err(error) => tracing::warn!(
+        "failed to migrate {} to {}: {error}",
+        from.display(),
+        to.display()
+      ),
+    }
+  }
 }
 async fn write_theme_default(path: &Path, default: ThemeConfig) -> Result<ThemeConfig> {
   let body = crate::theme::format_theme_toml(&default);
