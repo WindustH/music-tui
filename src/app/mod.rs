@@ -434,6 +434,7 @@ impl App {
     let next = (self.queue_state.selected().unwrap_or(0) as i32 + delta)
       .clamp(0, len as i32 - 1) as usize;
     self.queue_state.select(Some(next));
+    self.sync_hover_view();
     true
   }
 

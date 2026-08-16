@@ -206,7 +206,13 @@ impl App {
   pub(crate) fn scroll_queue_viewport(&mut self, delta: i32) -> bool {
     let len = self.visible_len();
     let height = self.queue_viewport_height();
-    viewport::scroll_viewport(&mut self.queue_state, len, height, delta)
+    let changed = viewport::scroll_viewport(&mut self.queue_state, len, height, delta);
+    if changed {
+      // The selection may have been clamped into the new window: the
+      // hovered song (sidebar sources) follows it.
+      self.sync_hover_view();
+    }
+    changed
   }
 
   pub(crate) fn queue_viewport_height(&self) -> usize {
@@ -220,7 +226,11 @@ impl App {
   fn queue_bar_jump(&mut self, mouse: MouseEvent, track: Rect) -> bool {
     let len = self.visible_len();
     let height = self.queue_viewport_height();
-    viewport::bar_jump(&mut self.queue_state, len, height, track, mouse.row)
+    let changed = viewport::bar_jump(&mut self.queue_state, len, height, track, mouse.row);
+    if changed {
+      self.sync_hover_view();
+    }
+    changed
   }
 
   /// Map a screen position to the visible queue row under it.
@@ -306,6 +316,7 @@ impl App {
 
   pub(crate) fn select_queue_row(&mut self, row: usize) {
     self.queue_state.select(Some(row.min(self.visible_len().saturating_sub(1))));
+    self.sync_hover_view();
   }
 
   fn play_selected_queue_row(&mut self) {

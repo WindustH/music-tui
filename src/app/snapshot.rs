@@ -53,11 +53,13 @@ impl App {
   pub(crate) fn clamp_queue_selection(&mut self) {
     if self.queue_filter_matches.is_empty() {
       self.queue_state.select(None);
+      self.sync_hover_view();
       return;
     }
     let len = self.queue_filter_matches.len();
     let current = self.queue_state.selected().unwrap_or(0).min(len - 1);
     self.queue_state.select(Some(current));
+    self.sync_hover_view();
   }
 
   /// Number of rows visible in the queue pane (filtered or not).

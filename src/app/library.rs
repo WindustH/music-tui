@@ -50,6 +50,7 @@ impl App {
     let len = self.library_visible_len();
     if len == 0 {
       self.library_state.select(None);
+      self.sync_library_hover();
       return;
     }
     let selected = self.library_state.selected().unwrap_or(0).min(len - 1);
@@ -64,6 +65,7 @@ impl App {
     let mut state = TableState::default();
     state.select(Some(selected));
     self.library_state = state.with_offset(offset);
+    self.sync_library_hover();
   }
 
   pub(crate) fn select_library_row(&mut self, row: usize) {
@@ -96,7 +98,11 @@ impl App {
   pub(crate) fn scroll_library_viewport(&mut self, delta: i32) -> bool {
     let len = self.library_visible_len();
     let height = self.library_viewport_height();
-    viewport::scroll_viewport(&mut self.library_state, len, height, delta)
+    let changed = viewport::scroll_viewport(&mut self.library_state, len, height, delta);
+    if changed {
+      self.sync_library_hover();
+    }
+    changed
   }
 
   /// Scrollbar hit test for the library pane.
@@ -108,7 +114,11 @@ impl App {
   pub(crate) fn library_bar_jump(&mut self, mouse: MouseEvent, track: Rect) -> bool {
     let len = self.library_visible_len();
     let height = self.library_viewport_height();
-    viewport::bar_jump(&mut self.library_state, len, height, track, mouse.row)
+    let changed = viewport::bar_jump(&mut self.library_state, len, height, track, mouse.row);
+    if changed {
+      self.sync_library_hover();
+    }
+    changed
   }
 
   pub(crate) fn mouse_on_library(&self, mouse: MouseEvent) -> Option<Rect> {
