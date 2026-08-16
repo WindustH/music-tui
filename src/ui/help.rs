@@ -8,16 +8,16 @@ pub(super) fn draw_completion_popup(
   frame: &mut Frame,
   app: &App,
   footer: Rect,
-) {
+) -> Option<Rect> {
   let Some(completion) = app.command_state.completion() else {
-    return;
+    return None;
   };
   if app.prompt.is_none() {
-    return;
+    return None;
   }
   let rows = framework_tui::completion_rows(Some(completion), 6).min(6);
   if rows == 0 || footer.y < rows {
-    return;
+    return None;
   }
   let theme = &app.settings.theme;
   let popup = Rect {
@@ -37,6 +37,7 @@ pub(super) fn draw_completion_popup(
         .add_modifier(Modifier::BOLD),
     },
   );
+  Some(popup)
 }
 
 /// Centered, scrollable key-binding dialog (`f1`). Clears overlays and the

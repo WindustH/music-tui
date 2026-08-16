@@ -1,6 +1,7 @@
 //! Secondary detail view rendering for a queue entry.
 
 use super::*;
+use super::cover::{draw_cover_art, fitted_cover_area};
 
 /// Secondary detail surface for a queue entry (`i`): a layout tree over the
 /// cover and metadata panes (default side by side) — the sidebar data stays
@@ -13,11 +14,13 @@ pub(super) fn draw_detail_view(
   tx: &mpsc::UnboundedSender<AsyncEvent>,
   area: Rect,
   overlays: &mut Vec<ProtocolOverlay>,
+  preserve_overlays: &mut bool,
+  preserve_areas: &mut Vec<Rect>,
 ) {
   let theme = &app.settings.theme;
   let block = Block::default()
     .borders(Borders::ALL)
-    .border_style(Style::default().fg(theme.color(&theme.base.accent)))
+    .border_style(Style::default().fg(theme.color(&app.settings.theme.base.accent)))
     .title(format!(" detail: {} ", detail.title))
     .title_alignment(Alignment::Center);
   let inner = block.inner(area);
@@ -31,6 +34,8 @@ pub(super) fn draw_detail_view(
     renderer,
     tx,
     overlays,
+    preserve_overlays,
+    preserve_areas,
   };
   draw_detail_layout(frame, &mut ctx, inner, &app.detail_layout);
 }
@@ -43,6 +48,8 @@ struct DetailCtx<'a> {
   renderer: &'a mut CoverRenderStore,
   tx: &'a mpsc::UnboundedSender<AsyncEvent>,
   overlays: &'a mut Vec<ProtocolOverlay>,
+  preserve_overlays: &'a mut bool,
+  preserve_areas: &'a mut Vec<Rect>,
 }
 
 fn draw_detail_layout(
@@ -78,92 +85,28 @@ fn draw_detail_layout(
   }
 }
 
-/// Cover with the same aspect-correct fitting math as the cover pane.
+/// Cover with the same aspect-correct fitting and anti-flicker preserve as
+/// the cover pane.
 fn draw_detail_cover(frame: &mut Frame, ctx: &mut DetailCtx<'_>, cover_area: Rect) {
   let theme = &ctx.app.settings.theme;
-  let detail = ctx.detail;
-  let (cell_width, cell_height) = ctx.renderer.cell_pixels();
-  let image_area = match detail.cover_dims {
-    Some((image_width, image_height)) if image_width > 0 && image_height > 0 => {
-      let max_pixel_width = f64::from(cover_area.width) * f64::from(cell_width.max(1));
-      let max_pixel_height = f64::from(cover_area.height) * f64::from(cell_height.max(1));
-      let scale = (max_pixel_width / f64::from(image_width))
-        .min(max_pixel_height / f64::from(image_height))
-        .max(0.0);
-      let fitted_width = ((f64::from(image_width) * scale) / f64::from(cell_width.max(1)))
-        .round()
-        .clamp(1.0, f64::from(cover_area.width)) as u16;
-      let fitted_height = ((f64::from(image_height) * scale) / f64::from(cell_height.max(1)))
-        .round()
-        .clamp(1.0, f64::from(cover_area.height)) as u16;
-      Rect {
-        x: cover_area.x + cover_area.width.saturating_sub(fitted_width) / 2,
-        y: cover_area.y + cover_area.height.saturating_sub(fitted_height) / 2,
-        width: fitted_width,
-        height: fitted_height,
-      }
-    }
-    _ => cover_area,
-  };
-  match detail.cover.as_ref() {
-    Some(path) => {
-      ctx.renderer
-        .request(path, image_area.width, image_area.height, ctx.tx);
-      match ctx
-        .renderer
-        .get(path, image_area.width, image_area.height)
-      {
-        Some(RenderedImage::Symbols { text, .. }) => {
-          frame.render_widget(
-            Paragraph::new(text.clone()).wrap(Wrap { trim: false }),
-            image_area,
-          );
-        }
-        Some(RenderedImage::Protocol {
-          mode,
-          data,
-          refresh,
-          placement,
-          fingerprint,
-          erase,
-        }) => {
-          reserve_protocol_area(frame, image_area);
-          ctx.overlays.push(ProtocolOverlay {
-            area: image_area,
-            mode: *mode,
-            data: data.clone(),
-            refresh: refresh.clone(),
-            placement: placement.clone(),
-            fingerprint: *fingerprint,
-            erase: erase.clone(),
-          });
-        }
-        None => {
-          frame.render_widget(
-            Paragraph::new("rendering cover…")
-              .style(Style::default().fg(theme.color(&theme.base.muted)))
-              .alignment(Alignment::Center),
-            cover_area,
-          );
-        }
-      }
-    }
-    None => {
-      let hint = detail
-        .cover_error
-        .clone()
-        .unwrap_or_else(|| "no cover".to_string());
-      frame.render_widget(
-        Paragraph::new(hint)
-          .style(Style::default().fg(theme.color(&theme.base.muted)))
-          .alignment(Alignment::Center),
-        cover_area,
-      );
-    }
-  }
+  let image_area = fitted_cover_area(ctx.detail.cover_dims, cover_area, ctx.renderer.cell_pixels());
+  let muted = Style::default().fg(theme.color(&theme.base.muted));
+  draw_cover_art(
+    frame,
+    ctx.renderer,
+    ctx.tx,
+    muted,
+    ctx.detail.cover.as_deref(),
+    ctx.detail.cover_error.as_deref(),
+    image_area,
+    cover_area,
+    ctx.overlays,
+    ctx.preserve_overlays,
+    ctx.preserve_areas,
+  );
 }
 
-fn draw_detail_metadata(frame: &mut Frame, ctx: &DetailCtx<'_>, metadata_area: Rect) {
+fn draw_detail_metadata(frame: &mut Frame, ctx: &mut DetailCtx<'_>, metadata_area: Rect) {
   let theme = &ctx.app.settings.theme;
   let detail = ctx.detail;
   let metadata_block = Block::default()

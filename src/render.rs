@@ -66,6 +66,12 @@ impl CoverRenderStore {
   }
 
   /// Cover already rendered for this path and size, if any.
+  /// Whether the primary render mode is a terminal image protocol
+  /// (kitty/sixel/iterm) — those need pixel-preservation anti-flicker.
+  pub(crate) fn draws_with_protocol(&self) -> bool {
+    self.modes.first().is_some_and(|mode| mode.is_protocol())
+  }
+
   pub fn get(&self, path: &Path, width: u16, height: u16) -> Option<&RenderedImage> {
     let cache_key = render_cache_key(path, width, height, &self.native_config);
     self.entries.get(&cache_key)

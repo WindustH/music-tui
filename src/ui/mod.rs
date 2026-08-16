@@ -39,7 +39,7 @@ pub(crate) mod metadata;
 pub(crate) mod queue;
 pub(crate) mod visualizer;
 
-use cover::{draw_cover_pane, reserve_protocol_area};
+use cover::draw_cover_pane;
 use detail::draw_detail_view;
 use footer::draw_footer;
 use help::{draw_completion_popup, draw_help_dialog};
@@ -96,30 +96,73 @@ pub fn draw(
   draw_tab_bar(frame, app, tab_bar);
 
   let mut overlays = Vec::new();
+  // Anti-flicker state (pdf-tui/gallery-tui): while a protocol image is
+  // in flight, its old pixels are preserved instead of being erased.
+  let mut preserve_overlays = false;
+  let mut preserve_areas = Vec::new();
   let tab = app.current_tab().clone();
   if let Some(detail) = app.detail.as_ref() {
     // Secondary detail view: replaces the tab content (gallery-tui style).
-    draw_detail_view(frame, app, detail, renderer, tx, content, &mut overlays);
+    draw_detail_view(
+      frame,
+      app,
+      detail,
+      renderer,
+      tx,
+      content,
+      &mut overlays,
+      &mut preserve_overlays,
+      &mut preserve_areas,
+    );
   } else {
-    draw_layout(frame, app, renderer, tx, content, &tab.layout, &mut overlays);
+    draw_layout(
+      frame,
+      app,
+      renderer,
+      tx,
+      content,
+      &tab.layout,
+      &mut overlays,
+      &mut preserve_overlays,
+      &mut preserve_areas,
+    );
   }
 
   let mut cursor_position = draw_footer(frame, app, footer, &hints);
-  draw_completion_popup(frame, app, footer);
+  if let Some(popup) = draw_completion_popup(frame, app, footer) {
+    // The completion list covers cells: drop overlays/preserved pixels
+    // under it so the popup stays readable (gallery-tui behavior).
+    overlays.retain(|overlay| !rect_intersects(overlay.area, popup));
+    preserve_areas.retain(|area| !rect_intersects(*area, popup));
+    if preserve_areas.is_empty() {
+      preserve_overlays = false;
+    }
+  }
 
   if app.show_help {
     let (cleared_overlays, no_cursor) = draw_help_dialog(frame, app, area);
     overlays = cleared_overlays;
     cursor_position = no_cursor;
+    // Modals suppress transient protocol output entirely.
+    preserve_overlays = false;
+    preserve_areas.clear();
   }
 
   FrameOutput {
     overlays,
     protocol_writes: Vec::new(),
     cursor_position,
-    preserve_overlays: false,
-    preserve_areas: Vec::new(),
+    preserve_overlays,
+    preserve_areas,
   }
+}
+
+/// Axis-aligned rectangle intersection.
+fn rect_intersects(left: Rect, right: Rect) -> bool {
+  left.x < right.x.saturating_add(right.width)
+    && right.x < left.x.saturating_add(left.width)
+    && left.y < right.y.saturating_add(right.height)
+    && right.y < left.y.saturating_add(left.height)
 }
 
 fn draw_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -165,6 +208,8 @@ fn draw_layout(
   area: Rect,
   layout: &PaneLayout,
   overlays: &mut Vec<ProtocolOverlay>,
+  preserve_overlays: &mut bool,
+  preserve_areas: &mut Vec<Rect>,
 ) {
   match layout {
     PaneLayout::Pane(kind, source) => {
@@ -173,6 +218,8 @@ fn draw_layout(
         renderer,
         tx,
         overlays,
+        preserve_overlays,
+        preserve_areas,
       };
       draw_pane(app, area, *kind, *source, ctx)
     }
@@ -190,8 +237,8 @@ fn draw_layout(
         SplitDir::Horizontal => Layout::horizontal(constraints).areas(area),
         SplitDir::Vertical => Layout::vertical(constraints).areas(area),
       };
-      draw_layout(frame, app, renderer, tx, areas[0], first, overlays);
-      draw_layout(frame, app, renderer, tx, areas[1], second, overlays);
+      draw_layout(frame, app, renderer, tx, areas[0], first, overlays, preserve_overlays, preserve_areas);
+      draw_layout(frame, app, renderer, tx, areas[1], second, overlays, preserve_overlays, preserve_areas);
     }
   }
 }
@@ -203,6 +250,8 @@ pub(super) struct PaneCtx<'a, 'f> {
   pub(super) renderer: &'a mut CoverRenderStore,
   pub(super) tx: &'a mpsc::UnboundedSender<AsyncEvent>,
   pub(super) overlays: &'a mut Vec<ProtocolOverlay>,
+  pub(super) preserve_overlays: &'a mut bool,
+  pub(super) preserve_areas: &'a mut Vec<Rect>,
 }
 
 fn draw_pane(
@@ -217,11 +266,23 @@ fn draw_pane(
     renderer,
     tx,
     overlays,
+    preserve_overlays,
+    preserve_areas,
   } = ctx;
   match kind {
     PaneKind::Queue => draw_queue_pane(frame, app, area),
     PaneKind::Library => draw_library_pane(frame, app, area),
-    PaneKind::Cover => draw_cover_pane(frame, app, renderer, tx, area, source, overlays),
+    PaneKind::Cover => draw_cover_pane(
+      frame,
+      app,
+      renderer,
+      tx,
+      area,
+      source,
+      overlays,
+      preserve_overlays,
+      preserve_areas,
+    ),
     PaneKind::Lyrics => draw_lyrics_pane(frame, app, area, source),
     PaneKind::Metadata => draw_metadata_pane(frame, app, area, source),
     PaneKind::Visualizer => draw_visualizer_pane(frame, app, area),
