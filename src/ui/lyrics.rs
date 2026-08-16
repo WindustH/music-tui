@@ -34,16 +34,17 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
   };
 
   let elapsed = Duration::from_secs_f64(app.elapsed());
-  let active = lyrics.active_index(elapsed);
-  let karaoke = lyrics.karaoke(elapsed);
+  let group = lyrics.active_group(elapsed);
+  let (group_start, group_end) = group.unwrap_or((usize::MAX, usize::MAX));
   let cursor = (!app.lyrics_follow).then_some(app.lyrics_cursor).flatten();
 
-  // Scrolling: follow centers the active line; manual keeps the stored
-  // viewport offset and only adjusts it to keep the pointer visible
-  // (viewport is the source of truth, the pointer passively follows).
+  // Scrolling: follow centers the active group's first line; manual keeps
+  // the stored viewport offset and only adjusts it to keep the pointer
+  // visible (viewport is the source of truth, the pointer passively
+  // follows).
   let scroll = if app.lyrics_follow {
-    active
-      .map(|active| active.saturating_sub(inner.height as usize / 2))
+    group
+      .map(|(start, _)| start.saturating_sub(inner.height as usize / 2))
       .unwrap_or(app.lyrics_scroll)
   } else {
     let mut scroll = app.lyrics_scroll;
@@ -69,7 +70,7 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
     if index >= line_count {
       break;
     }
-    let is_active = active == Some(index);
+    let is_active = index >= group_start && index < group_end;
     let is_cursor = cursor == Some(index);
     let mut spans: Vec<Span> = Vec::new();
     if is_cursor {
@@ -84,7 +85,9 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
     }
 
     let text = lyrics.line(index).unwrap_or_default();
-    let sung = if is_active { karaoke.map(|(_, sung)| sung).unwrap_or(0) } else { 0 };
+    // Each line of the group tracks its own karaoke progress: word-timed
+    // originals follow their word tags, translations interpolate.
+    let sung = if is_active { lyrics.karaoke_at(index, elapsed) } else { 0 };
     if is_active && sung > 0 {
       // Karaoke: sung prefix highlighted, remainder in the base style.
       let chars: Vec<char> = text.chars().collect();

@@ -51,8 +51,11 @@ pub fn parse(body: &str) -> Result<Lyrics, String> {
   for index in 0..=last_index {
     let start = timed[index].time_secs;
     let fallback_end = start + 5.0;
-    let end = timed
-      .get(index + 1)
+    // Skip same-time duplicates (bilingual pairs) so both lines of a
+    // pair interpolate over the full span up to the next distinct line.
+    let end = timed[index + 1..]
+      .iter()
+      .find(|next| next.time_secs > start)
       .map(|next| next.time_secs.max(start + 0.05))
       .unwrap_or(fallback_end);
     timed[index].end_secs = end;

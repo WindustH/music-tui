@@ -20,6 +20,9 @@ Line-level and word-level timestamps are supported:
 
 - The active line is highlighted; with word timestamps the sung prefix is
   colored progressively (karaoke).
+- Bilingual exports that repeat one timestamp for the original line and
+  its translation light up as a group: the original follows its word
+  timings, the translation interpolates over the pair's span.
 - Auto-follow keeps the active line centered while playing.
 - Scrolling (`j`/`k`, wheel) leaves follow mode; `F` toggles it back,
   `enter` seeks to the highlighted line and resumes following.
