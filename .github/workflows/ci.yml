@@ -18,9 +18,10 @@ jobs:
           submodules: recursive
 
       - name: Clippy
-        # No `-D warnings`: path-dependency crates (framework-tui / img-tui)
-        # carry a few of their own lints and stay warning-free separately.
-        run: cargo clippy --workspace
+        # Strict for the main crate; the submodule crates (framework-tui /
+        # img-tui) keep their lints green independently and are only built
+        # here as path dependencies.
+        run: cargo clippy -p music-tui -- -D warnings
 
       - name: Tests
         run: cargo test --workspace
