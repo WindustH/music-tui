@@ -242,6 +242,17 @@ fn run(
 /// Resolved band colors handed to the render worker.
 fn open_fifo(path: &str) -> IoResult<std::fs::File> {
   use std::os::unix::fs::OpenOptionsExt;
+  // mpd only creates the fifo when it loads its config; anything that
+  // wipes it afterwards (e.g. a /tmp cleaner) leaves both sides stranded
+  // until the fifo exists again. Recreate it so mpd can reconnect on its
+  // next output open.
+  if !std::path::Path::new(path).exists()
+    && let Ok(cpath) = std::ffi::CString::new(path)
+  {
+    unsafe { libc::mkfifo(cpath.as_ptr(), 0o666) };
+    // Ignore mkfifo errors: a racing creator (or a bad path) surfaces
+    // as the open error below.
+  }
   let file = std::fs::OpenOptions::new()
     .read(true)
     .write(true)
@@ -309,5 +320,26 @@ mod tests {
     let hz_per_bin = sample_rate as f32 / window as f32;
     let edges = band_edges(8, hz_per_bin, 40.0, 16_000.0);
     assert!((9..=11).contains(&edges.len()), "hint 8 -> {} edges", edges.len());
+  }
+
+  #[test]
+  fn open_fifo_recreates_a_deleted_fifo() {
+    // A /tmp cleaner can delete the fifo under us; the reader must
+    // recreate it so mpd can reconnect on its next output open.
+    let dir = std::env::temp_dir().join(format!("music-tui-fifo-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("feed.fifo");
+    let path = path.to_string_lossy().into_owned();
+
+    let first = open_fifo(&path).unwrap();
+    assert!(std::path::Path::new(&path).exists());
+    drop(first);
+
+    std::fs::remove_file(&path).unwrap();
+    let _second = open_fifo(&path).unwrap();
+    assert!(std::path::Path::new(&path).exists(), "deleted fifo must be recreated");
+
+    std::fs::remove_file(&path).unwrap();
+    let _ = std::fs::remove_dir(&dir);
   }
 }

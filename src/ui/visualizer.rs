@@ -24,7 +24,7 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
   let Some(lines) = app.visualizer_lines.as_ref() else {
     let theme = &app.settings.theme;
     frame.render_widget(
-      Paragraph::new("waiting for audio on the mpd fifo…")
+      Paragraph::new("waiting for audio on the mpd fifo… (check that mpd is playing and its fifo output is enabled)")
         .style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
     );

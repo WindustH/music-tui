@@ -25,6 +25,11 @@
 - Some output chains (e.g. certain PipeWire setups with exclusive access) do
   not feed secondary outputs; check that the fifo output is not disabled
   (`mpc outputs`).
+- If the fifo file was deleted while mpd kept running (e.g. a `/tmp`
+  cleaner), mpd keeps writing to the unlinked inode and no reader can
+  reconnect. music-tui recreates a missing fifo itself, but a wedged mpd
+  writer needs a restart: `systemctl --user restart mpd` (state file
+  restores the queue).
 
 ## Cover renders as symbols/ASCII on a capable terminal
 
