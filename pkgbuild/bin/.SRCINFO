@@ -14,6 +14,6 @@ pkgbase = music-tui-bin
 	conflicts = music-tui-git
 	options = !strip
 	source = music-tui-0.1.1-x86_64-unknown-linux-gnu.tar.gz::https://github.com/WindustH/music-tui/releases/download/v0.1.1/music-tui-0.1.1-x86_64-unknown-linux-gnu.tar.gz
-	sha256sums = SKIP
+	sha256sums = ac8c18f09ee54e9717632c0c67e99a63e018600c75399e83a165ce7977e1722d
 
 pkgname = music-tui-bin

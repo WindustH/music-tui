@@ -157,19 +157,23 @@ impl App {
 
 /// Keep the first occurrence of each URL; a playing copy of a duplicate
 /// stays visible so the ▶ marker follows the actual playback position.
-/// Queue positions to delete for live dedup enforcement: keep the first
-/// occurrence of each URL, always keep the playing copy (same rule as the
-/// view-level `dedup_positions`). When the playing copy is itself a later
-/// duplicate, both copies stay until the song ends — the next snapshot
-/// then drops the redundant one.
+/// Queue positions to delete for live dedup enforcement: the playing
+/// copy always survives — when the playing song is itself duplicated,
+/// every other copy (first occurrence included) is deleted, so the
+/// queue converges without waiting for the song to end. Without a
+/// playing copy, the first occurrence survives.
 fn redundant_positions(urls: &[&str], playing: Option<usize>) -> Vec<usize> {
+  let playing_url = playing.and_then(|position| urls.get(position));
   let mut seen = std::collections::HashSet::new();
   let mut out = Vec::new();
   for (position, url) in urls.iter().enumerate() {
-    if playing == Some(position) || seen.insert(*url) {
+    if Some(position) == playing {
+      seen.insert(*url);
       continue;
     }
-    out.push(position);
+    if playing_url.is_some_and(|playing| *playing == *url) || !seen.insert(*url) {
+      out.push(position);
+    }
   }
   out
 }
@@ -193,8 +197,12 @@ mod tests {
   fn redundant_positions_keep_first_and_playing() {
     let urls = ["a", "b", "a", "c", "b"];
     assert_eq!(redundant_positions(&urls, None), vec![2, 4]);
-    // Playing a later duplicate keeps both copies for now.
-    assert_eq!(redundant_positions(&["a", "a"], Some(1)), Vec::<usize>::new());
+    // Playing a later duplicate: the earlier copies are deleted so the
+    // queue converges instead of waiting for the song to end.
+    assert_eq!(redundant_positions(&["a", "a"], Some(1)), vec![0]);
+    assert_eq!(redundant_positions(&["a", "b", "a"], Some(2)), vec![0]);
+    // Playing copy first: later duplicates still go.
+    assert_eq!(redundant_positions(&["a", "a"], Some(0)), vec![1]);
     // No duplicates → nothing to delete.
     assert_eq!(redundant_positions(&["a", "b"], None), Vec::<usize>::new());
   }

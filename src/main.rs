@@ -111,6 +111,7 @@ async fn run_tui(
 
   let (tx, mut rx) = mpsc::unbounded_channel::<AsyncEvent>();
   let mpd = mpd::spawn_mpd_worker(settings.config.mpd.clone(), tx.clone());
+  mpd.set_queue_dedup(settings.config.behavior.queue_dedup);
   let visualizer = visualizer::spawn_visualizer(settings.config.visualizer.clone(), tx.clone());
   let band_renderer = visualizer::spawn_band_renderer(tx.clone());
   let library_scan_tx = spawn_library_scanner(

@@ -1,11 +1,12 @@
 //! Headless `open` subcommand: queue a folder or file according to the
 //! requested mode, then hand an optional interrupt session to the TUI.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use mpd_client::{
-  commands::{Add, ClearQueue, Play, SetSingle, Status, Update},
+  commands::{Add, ClearQueue, Play, Queue, SetSingle, Status, Update},
   commands::{SingleMode, SongPosition},
   responses::PlayState,
   Client,
@@ -41,7 +42,7 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
 
   if path.is_dir() {
     let notice = if args.mode == crate::cli::OpenMode::Append {
-      open_folder_append(&client, &path, &settings.config.mpd, &music_dir, args.recursive, args.no_play).await?
+      open_folder_append(&client, &path, &settings.config.mpd, &music_dir, args.recursive, args.no_play, settings.config.behavior.queue_dedup).await?
     } else {
       open_folder(&client, &path, &settings.config.mpd, &music_dir, args.recursive, args.no_play).await?
     };
@@ -53,34 +54,48 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
   }
 
   if let Some(kind) = playlist::playlist_kind(&path) {
-    return open_playlist(&client, &path, kind, args, &settings.config.mpd, &music_dir)
+    return open_playlist(&client, &path, kind, args, &settings.config.mpd, &music_dir, settings.config.behavior.queue_dedup)
       .await
       .map(|notice| OpenOutcome { notice, interrupt: None });
   }
 
   let uri = resolve_open_uri(&client, &path, &settings.config.mpd, &music_dir).await?;
+  let dedup = settings.config.behavior.queue_dedup;
   let mut interrupt: Option<InterruptSession> = None;
   let notice = match () {
     _ if args.no_play => {
-      client.command(Add::uri(&uri)).await?;
-      format!("queued {} (not playing)", path.file_name().unwrap_or_default().to_string_lossy())
+      if dedup && queue_has(&client, &uri).await? {
+        format!("{} already queued (not playing)", short_name(&path))
+      } else {
+        client.command(Add::uri(&uri)).await?;
+        format!("queued {} (not playing)", path.file_name().unwrap_or_default().to_string_lossy())
+      }
     }
     _ if args.mode == crate::cli::OpenMode::Append => {
-      client.command(Add::uri(&uri)).await?;
-      maybe_start_if_idle(&client).await?;
-      format!("appended {}", short_name(&path))
-    }
-    _ if args.mode == crate::cli::OpenMode::Next => {
-      let status = client.command(Status).await?;
-      if let Some((position, _)) = status.current_song {
-        client
-          .command(Add::uri(&uri).at(position.0 + 1))
-          .await?;
+      if dedup && queue_has(&client, &uri).await? {
+        maybe_start_if_idle(&client).await?;
+        format!("{} already queued", short_name(&path))
       } else {
         client.command(Add::uri(&uri)).await?;
         maybe_start_if_idle(&client).await?;
+        format!("appended {}", short_name(&path))
       }
-      format!("queued {} next", short_name(&path))
+    }
+    _ if args.mode == crate::cli::OpenMode::Next => {
+      if dedup && queue_has(&client, &uri).await? {
+        format!("{} already queued", short_name(&path))
+      } else {
+        let status = client.command(Status).await?;
+        if let Some((position, _)) = status.current_song {
+          client
+            .command(Add::uri(&uri).at(position.0 + 1))
+            .await?;
+        } else {
+          client.command(Add::uri(&uri)).await?;
+          maybe_start_if_idle(&client).await?;
+        }
+        format!("queued {} next", short_name(&path))
+      }
     }
     _ if args.mode == crate::cli::OpenMode::Folder => {
       let folder = path.parent().map(Path::to_path_buf).unwrap_or_else(|| music_dir.clone());
@@ -120,6 +135,7 @@ async fn open_playlist(
   args: &OpenArgs,
   mpd_config: &MpdConfig,
   music_dir: &Path,
+  dedup: bool,
 ) -> Result<String> {
   let _ = kind;
   let entries = playlist::parse_playlist(path).map_err(anyhow::Error::msg)?;
@@ -134,8 +150,7 @@ async fn open_playlist(
   if files.is_empty() {
     bail!("no playable entries in {}", short_name(path));
   }
-  let uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
-  let skipped = entries.len() - uris.len();
+  let mut uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
   let name = short_name(path);
   // `interrupt` previews a single song; for whole playlists the natural
   // default is a plain replace (folder-style).
@@ -143,6 +158,13 @@ async fn open_playlist(
     args.mode,
     crate::cli::OpenMode::Folder | crate::cli::OpenMode::Interrupt
   );
+  if dedup {
+    skip_queued_and_batch_dups(client, &mut uris, !replace).await?;
+  }
+  if uris.is_empty() {
+    return Ok(format!("all entries from {name} already queued"));
+  }
+  let skipped = entries.len() - uris.len();
   let notice = if replace {
     client.command(ClearQueue).await?;
     for uri in &uris {
@@ -303,12 +325,19 @@ async fn open_folder_append(
   music_dir: &Path,
   recursive: bool,
   no_play: bool,
+  dedup: bool,
 ) -> Result<String> {
   let files = collect_audio_files(folder, recursive)?;
   if files.is_empty() {
     bail!("no audio files found under {}", folder.display());
   }
-  let uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
+  let mut uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
+  if dedup {
+    skip_queued_and_batch_dups(client, &mut uris, true).await?;
+  }
+  if uris.is_empty() {
+    return Ok(format!("all songs from {} already queued", folder.display()));
+  }
   for uri in &uris {
     client.command(Add::uri(uri)).await?;
   }
@@ -324,6 +353,35 @@ pub(crate) async fn maybe_start_if_idle(client: &Client) -> Result<()> {
   if status.state == PlayState::Stopped {
     client.command(Play::current()).await?;
   }
+  Ok(())
+}
+
+/// Whether the queue already contains `uri` (add-time dedup).
+async fn queue_has(client: &Client, uri: &str) -> Result<bool> {
+  let queue = client.command(Queue).await?;
+  Ok(queue.iter().any(|song| song.song.url == uri))
+}
+
+/// Drop URIs already queued and duplicates within the batch itself;
+/// `include_queue` false limits the check to batch-internal duplicates
+/// (replace modes clear the queue first).
+async fn skip_queued_and_batch_dups(
+  client: &Client,
+  uris: &mut Vec<String>,
+  include_queue: bool,
+) -> Result<()> {
+  let queued: HashSet<String> = if include_queue {
+    client
+      .command(Queue)
+      .await?
+      .into_iter()
+      .map(|song| song.song.url)
+      .collect()
+  } else {
+    HashSet::new()
+  };
+  let mut seen = HashSet::new();
+  uris.retain(|uri| seen.insert(uri.clone()) && !queued.contains(uri));
   Ok(())
 }
 

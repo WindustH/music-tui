@@ -150,6 +150,7 @@ impl App {
       }
       "queue_dedup" => {
         self.queue_dedup = !self.queue_dedup;
+        self.mpd.set_queue_dedup(self.queue_dedup);
         self.recompute_queue_filter();
         self.clamp_queue_selection();
         if self.queue_dedup {

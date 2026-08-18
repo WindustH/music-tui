@@ -5,6 +5,8 @@
 //! status + queue snapshot which is forwarded to the UI. Also implements the
 //! "interrupt preview" lifecycle used by `music-tui open --mode interrupt`.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use mpd_client::{
@@ -75,11 +77,17 @@ pub enum MpdCommand {
 #[derive(Clone)]
 pub struct MpdHandle {
   tx: mpsc::UnboundedSender<MpdCommand>,
+  queue_dedup: Arc<AtomicBool>,
 }
 
 impl MpdHandle {
   pub fn send(&self, command: MpdCommand) {
     let _ = self.tx.send(command);
+  }
+
+  /// Live toggle for add-time duplicate skipping in the worker.
+  pub fn set_queue_dedup(&self, on: bool) {
+    self.queue_dedup.store(on, Ordering::Relaxed);
   }
 }
 
@@ -88,6 +96,8 @@ pub fn spawn_mpd_worker(
   events: mpsc::UnboundedSender<AsyncEvent>,
 ) -> MpdHandle {
   let (tx, mut rx) = mpsc::unbounded_channel();
+  let queue_dedup = Arc::new(AtomicBool::new(false));
+  let worker_dedup = queue_dedup.clone();
   tokio::spawn(async move {
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -97,8 +107,15 @@ pub fn spawn_mpd_worker(
           let address = describe_address(&config);
           info!(%address, "connected to mpd");
           let _ = events.send(AsyncEvent::Mpd(MpdEvent::Connected(address)));
-          if let Err(error) =
-            run_session(&client, &mut connection_events, &mut rx, &events, &config).await
+          if let Err(error) = run_session(
+            &client,
+            &mut connection_events,
+            &mut rx,
+            &events,
+            &config,
+            &worker_dedup,
+          )
+          .await
           {
             warn!(%error, "mpd session ended");
           }
@@ -118,7 +135,7 @@ pub fn spawn_mpd_worker(
       backoff = (backoff * 2).min(Duration::from_secs(30));
     }
   });
-  MpdHandle { tx }
+  MpdHandle { tx, queue_dedup }
 }
 
 pub async fn connect(config: &MpdConfig) -> anyhow::Result<(Client, mpd_client::client::ConnectionEvents)> {

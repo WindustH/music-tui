@@ -14,6 +14,7 @@ pub(super) async fn run_session(
   command_rx: &mut mpsc::UnboundedReceiver<MpdCommand>,
   events: &mpsc::UnboundedSender<AsyncEvent>,
   config: &MpdConfig,
+  dedup: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
   let mut state = SessionState {
     interrupt: None,
@@ -55,7 +56,8 @@ pub(super) async fn run_session(
             if command_touches_queue(&command) {
               state.interrupt = None;
             }
-            run_command(client, command, config).await;
+            let dedup = dedup.load(std::sync::atomic::Ordering::Relaxed);
+            run_command(client, command, config, &state.queue, dedup).await;
           }
         }
         refresh(client, &mut state, events).await?;
@@ -160,7 +162,13 @@ async fn maybe_restore_interrupt(
   Ok(true)
 }
 
-async fn run_command(client: &Client, command: MpdCommand, config: &MpdConfig) {
+async fn run_command(
+  client: &Client,
+  command: MpdCommand,
+  config: &MpdConfig,
+  queue: &[SongInQueue],
+  dedup: bool,
+) {
   let outcome: Result<(), String> = match command {
     MpdCommand::PlayPosition(position) => client
       .command(Play::song(SongPosition(position as usize)))
@@ -234,12 +242,20 @@ async fn run_command(client: &Client, command: MpdCommand, config: &MpdConfig) {
       }
       Ok::<(), String>(())
     }
-    MpdCommand::AddUri(uri) => client
-      .command(Add::uri(&uri))
-      .await
-      .map(|_| ()).map_err(|error| error.to_string()),
+    MpdCommand::AddUri(uri) => {
+      if dedup && queue.iter().any(|song| song.song.url == *uri) {
+        debug!(uri = %uri, "skip add: already queued (dedup on)");
+        Ok::<(), String>(())
+      } else {
+        client
+          .command(Add::uri(&uri))
+          .await
+          .map(|_| ())
+          .map_err(|error| error.to_string())
+      }
+    }
     MpdCommand::PlayLibrary { path, append } => {
-      play_library_file(client, path, append, config).await
+      play_library_file(client, path, append, config, queue, dedup).await
     }
     MpdCommand::Rescan => client
       .command(commands::Rescan::new())
@@ -260,12 +276,16 @@ async fn run_command(client: &Client, command: MpdCommand, config: &MpdConfig) {
 /// Resolve a library-pane file to an MPD uri and insert it into the queue:
 /// `append` adds to the end (starting playback when idle), otherwise the
 /// track is inserted right after the current song (or at the end when
-/// nothing plays) and starts immediately.
+/// nothing plays) and starts immediately. With dedup on, a song that is
+/// already queued is never re-added — playback simply jumps to the
+/// existing entry.
 async fn play_library_file(
   client: &Client,
   path: std::path::PathBuf,
   append: bool,
   config: &MpdConfig,
+  queue: &[SongInQueue],
+  dedup: bool,
 ) -> Result<(), String> {
   let music_dir = match crate::library::resolve_music_dir(config) {
     Ok(dir) => dir,
@@ -274,6 +294,22 @@ async fn play_library_file(
   let uri = crate::open::resolve_open_uri(client, &path, config, &music_dir)
     .await
     .map_err(|error| error.to_string())?;
+
+  if dedup
+    && let Some(position) = queue.iter().position(|song| song.song.url == uri)
+  {
+    // Already queued: skip the add and reuse the existing entry.
+    if append {
+      return crate::open::maybe_start_if_idle(client)
+        .await
+        .map_err(|error| error.to_string());
+    }
+    return client
+      .command(Play::song(SongPosition(position)))
+      .await
+      .map(|_| ())
+      .map_err(|error| error.to_string());
+  }
 
   if append {
     client
