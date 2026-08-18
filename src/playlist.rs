@@ -119,6 +119,13 @@ mod tests {
     path
   }
 
+  /// Drop the shared scratch dir once the last fixture is gone; harmless
+  /// (no-op) while other fixtures still exist.
+  fn cleanup_tmp() {
+    let dir = std::env::temp_dir().join(format!("music-tui-playlist-{}", std::process::id()));
+    let _ = std::fs::remove_dir(&dir);
+  }
+
   #[test]
   fn parses_m3u_with_comments_and_relative_entries() {
     let path = write_tmp(
@@ -129,6 +136,8 @@ mod tests {
     assert_eq!(entries.len(), 2);
     assert!(entries[0].ends_with("../songs/a.flac"));
     assert_eq!(entries[1], PathBuf::from("/somewhere/b.mp3"));
+    let _ = std::fs::remove_file(&path);
+    cleanup_tmp();
   }
 
   #[test]
@@ -141,6 +150,8 @@ mod tests {
     assert_eq!(entries.len(), 2);
     assert!(entries[0].ends_with("one.ogg"));
     assert_eq!(entries[1], PathBuf::from("/abs/two.flac"));
+    let _ = std::fs::remove_file(&path);
+    cleanup_tmp();
   }
 
   #[test]
@@ -149,6 +160,8 @@ mod tests {
     let entries = parse_playlist(&path).unwrap();
     assert_eq!(entries.len(), 2);
     assert!(entries[1].to_string_lossy().contains("music/song2.flac"));
+    let _ = std::fs::remove_file(&path);
+    cleanup_tmp();
   }
 
   #[test]
@@ -186,5 +199,6 @@ mod tests {
       resolve_save_path(Some("/abs/queue.m3u"), dir).unwrap(),
       PathBuf::from("/abs/queue.m3u")
     );
+    cleanup_tmp();
   }
 }
