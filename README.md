@@ -5,6 +5,8 @@ built with Ratatui. It drives an existing MPD daemon and adds a tabbed,
 mouse-friendly interface: queue, cover art, synced lyrics, metadata editing,
 and a spectrum visualizer.
 
+https://github.com/user-attachments/assets/ed318f7b-a40b-41c5-a3dc-1a8dc9ae14b7
+
 ## Features
 
 - MPD playback control: play/pause, seek, next/previous, volume, repeat/random/single/consume.
