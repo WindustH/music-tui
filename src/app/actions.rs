@@ -148,6 +148,11 @@ impl App {
         self.set_message("queue cleared");
         true
       }
+      "queue_shuffle" => {
+        self.mpdc(MpdCommand::Shuffle);
+        self.set_message("queue shuffled");
+        true
+      }
       "queue_dedup" => {
         self.queue_dedup = !self.queue_dedup;
         self.mpd.set_queue_dedup(self.queue_dedup);

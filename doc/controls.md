@@ -34,6 +34,7 @@ wins over pane bindings in every view.
 | `enter` | play selected song |
 | `d` | remove selected song |
 | `D` | clear the queue |
+| `?` | shuffle the queue |
 | `i` | open detail view for the selected song |
 | `e` | edit the selected song's tags in `$EDITOR` |
 | `/` | filter the queue (enter keeps, `esc` clears) |

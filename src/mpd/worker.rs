@@ -78,6 +78,7 @@ fn command_touches_queue(command: &MpdCommand) -> bool {
       | MpdCommand::Next
       | MpdCommand::Previous
       | MpdCommand::ClearQueue
+      | MpdCommand::Shuffle
       | MpdCommand::DeleteAt(_)
       | MpdCommand::AddUri(_)
       | MpdCommand::PlayLibrary { .. }
@@ -220,6 +221,9 @@ async fn run_command(
     MpdCommand::SetSingle(mode) => client.command(SetSingle(mode)).await.map(|_| ()).map_err(|error| error.to_string()),
     MpdCommand::SetConsume(consume) => client.command(SetConsume(consume)).await.map(|_| ()).map_err(|error| error.to_string()),
     MpdCommand::ClearQueue => client.command(ClearQueue).await.map(|_| ()).map_err(|error| error.to_string()),
+    MpdCommand::Shuffle => {
+      client.command(Shuffle::all()).await.map(|_| ()).map_err(|error| error.to_string())
+    }
     MpdCommand::DeleteAt(position) => {
       client
         .command(Delete::range(

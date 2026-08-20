@@ -60,6 +60,7 @@ impl Default for KeymapConfig {
           key("enter", "queue_play", "Play selected song"),
           key("d", "queue_delete", "Remove selected song from queue"),
           key("D", "queue_clear", "Clear the queue"),
+          key("?", "queue_shuffle", "Shuffle the queue"),
           key([",", "d"], "queue_dedup", "Toggle hiding duplicate queue entries"),
           key("i", "queue_detail", "Open details of the selected song"),
           key("e", "edit_metadata", "Edit the selected song's metadata"),

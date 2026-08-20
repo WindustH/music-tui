@@ -14,7 +14,7 @@ use mpd_client::{
   commands::{
     self, Add, ClearQueue, Delete, DeletePlaylist, LoadPlaylist, Play, Previous,
     SaveQueueAsPlaylist, Seek, SeekMode, SetConsume, SetPause, SetRandom, SetRepeat, SetSingle,
-    SetVolume, Stop, SingleMode, SongPosition,
+    SetVolume, Shuffle, Stop, SingleMode, SongPosition,
   },
   responses::{PlayState, SongInQueue, Status},
   Client,
@@ -55,6 +55,8 @@ pub enum MpdCommand {
   SetSingle(SingleMode),
   SetConsume(bool),
   ClearQueue,
+  /// Shuffle the entire queue.
+  Shuffle,
   DeleteAt(usize),
   /// Queue-dedup maintenance: drop duplicate positions (highest first).
   /// Deliberately NOT in `command_touches_queue` — housekeeping must not

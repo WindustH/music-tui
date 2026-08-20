@@ -36,7 +36,7 @@ consults `[input]`.
 
 Queue: `queue_down`, `queue_up`, `queue_page_down`, `queue_page_up`,
 `queue_top`, `queue_end`, `queue_goto_playing`, `queue_play`, `queue_delete`,
-`queue_clear`, `queue_detail`, `queue_filter`.
+`queue_clear`, `queue_shuffle`, `queue_detail`, `queue_filter`.
 
 Lyrics: `lyrics_up`, `lyrics_down`, `lyrics_page_up`, `lyrics_page_down`,
 `lyrics_jump`, `lyrics_follow`.
