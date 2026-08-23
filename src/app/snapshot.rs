@@ -63,7 +63,19 @@ impl App {
     let urls: Vec<&str> = self.queue.iter().map(|song| song.song.url.as_str()).collect();
     let redundant = redundant_positions(&urls, playing);
     if !redundant.is_empty() {
-      self.mpdc(MpdCommand::DedupDelete(redundant));
+      // Delete by stable song id (not position): with several instances
+      // (or other MPD clients) mutating the queue concurrently, positions
+      // can shift between snapshot and command; ids keep pointing at the
+      // exact duplicate song.
+      let targets: Vec<(u64, String)> = redundant
+        .into_iter()
+        .filter_map(|position| {
+          self.queue.get(position).map(|song| {
+            (song.id.0, song.song.url.clone())
+          })
+        })
+        .collect();
+      self.mpdc(MpdCommand::DedupDelete(targets));
     }
   }
 

@@ -14,7 +14,7 @@ use mpd_client::{
   commands::{
     self, Add, ClearQueue, Delete, DeletePlaylist, LoadPlaylist, Play, Previous,
     SaveQueueAsPlaylist, Seek, SeekMode, SetConsume, SetPause, SetRandom, SetRepeat, SetSingle,
-    SetVolume, Shuffle, Stop, SingleMode, SongPosition,
+    SetVolume, Shuffle, Stop, SingleMode, SongId, SongPosition,
   },
   responses::{PlayState, SongInQueue, Status},
   Client,
@@ -61,7 +61,7 @@ pub enum MpdCommand {
   /// Queue-dedup maintenance: drop duplicate positions (highest first).
   /// Deliberately NOT in `command_touches_queue` — housekeeping must not
   /// cancel an armed interrupt-preview session.
-  DedupDelete(Vec<usize>),
+  DedupDelete(Vec<(u64, String)>),
   AddUri(String),
   /// Play (or append) a local file from the library pane. The path is
   /// resolved to an MPD URI (music dir relative, `file://`, or symlink

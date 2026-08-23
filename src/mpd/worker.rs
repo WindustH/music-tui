@@ -232,16 +232,15 @@ async fn run_command(
         .await
         .map(|_| ()).map_err(|error| error.to_string())
     }
-    MpdCommand::DedupDelete(positions) => {
-      // Highest first so earlier positions stay valid across deletes.
-      for position in positions.iter().rev() {
-        let deleted = client
-          .command(Delete::range(
-            SongPosition(*position)..SongPosition(*position + 1),
-          ))
-          .await;
+    MpdCommand::DedupDelete(targets) => {
+      // Delete by song id: positions shift when another client (or a second
+      // music-tui instance) mutates the queue between our snapshot and this
+      // command. Ids stay valid; "no such song" just means someone else
+      // removed the duplicate first, which is exactly the goal.
+      for (song_id, url) in targets {
+        let deleted = client.command(Delete::id(SongId(song_id))).await;
         if let Err(error) = deleted {
-          tracing::warn!("dedup delete at {position} failed: {error}");
+          tracing::debug!("dedup delete of {url} (id {song_id}) failed: {error}");
         }
       }
       Ok::<(), String>(())

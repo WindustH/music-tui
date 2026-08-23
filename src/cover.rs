@@ -79,7 +79,14 @@ fn extract_embedded_cover(file: &Path, covers_cache_dir: &Path) -> Result<PathBu
   if !path.exists() {
     std::fs::create_dir_all(covers_cache_dir)
       .map_err(|error| format!("failed to create covers cache: {error}"))?;
-    std::fs::write(&path, data).map_err(|error| format!("failed to write cover cache: {error}"))?;
+    // Publish atomically: another instance (or a reader in this one) must
+    // never observe a half-written image. Same digest → same bytes, so a
+    // racing writer's rename is harmless.
+    let temp = covers_cache_dir.join(format!(".{digest}.{ext}.{}.tmp", std::process::id()));
+    if let Err(error) = std::fs::write(&temp, data).and_then(|()| std::fs::rename(&temp, &path)) {
+      let _ = std::fs::remove_file(&temp);
+      return Err(format!("failed to write cover cache: {error}"));
+    }
   }
   Ok(path)
 }

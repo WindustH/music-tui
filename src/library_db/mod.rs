@@ -49,6 +49,7 @@ pub fn open_db(db_path: &Path) -> Result<Connection> {
     r#"
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
+    PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS tracks (
       id INTEGER PRIMARY KEY,
       root_id INTEGER NOT NULL,

@@ -141,9 +141,24 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
   if std::fs::read_link(&link).is_ok_and(|current| current == target) {
     return Ok(link);
   }
-  let _ = std::fs::remove_file(&link);
+  // Publish atomically: create the symlink under a per-process temp name,
+  // then rename it into place. A concurrent instance (or MPD reading the
+  // bridge dir mid-update) never observes a missing or half-replaced link;
+  // a racing writer produces the same target, so last rename wins cleanly.
   #[cfg(unix)]
-  std::os::unix::fs::symlink(target, &link)
-    .with_context(|| format!("failed to link {} -> {}", link.display(), target.display()))?;
+  {
+    let temp = dir.join(format!(".{hash}-{}.{}.tmp", name.to_string_lossy(), std::process::id()));
+    let _ = std::fs::remove_file(&temp);
+    std::os::unix::fs::symlink(target, &temp)
+      .with_context(|| format!("failed to link {} -> {}", temp.display(), target.display()))?;
+    if let Err(error) = std::fs::rename(&temp, &link) {
+      let _ = std::fs::remove_file(&temp);
+      // Someone else may have renamed an identical link into place already.
+      if std::fs::read_link(&link).is_ok_and(|current| current == target) {
+        return Ok(link);
+      }
+      return Err(error).with_context(|| format!("failed to publish {}", link.display()));
+    }
+  }
   Ok(link)
 }

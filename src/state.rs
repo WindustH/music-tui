@@ -51,7 +51,10 @@ impl PersistedState {
 fn save_inner(state: &PersistedState, state_dir: &Path) -> std::io::Result<()> {
   std::fs::create_dir_all(state_dir)?;
   let path = state_dir.join(STATE_FILE);
-  let temp = state_dir.join(format!("{STATE_FILE}.tmp"));
+  // Pid-suffixed temp: concurrent instances never fight over one tmp file
+  // (a fixed name would let one instance's rename steal or unlink the
+  // other's bytes). Rename atomically publishes; last writer wins.
+  let temp = state_dir.join(format!("{STATE_FILE}.{}.tmp", std::process::id()));
   let text = toml::to_string_pretty(state).map_err(|error| {
     std::io::Error::other(format!("serialize state: {error}"))
   })?;

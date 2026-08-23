@@ -170,9 +170,19 @@ fn run(
     if stop.load(Ordering::SeqCst) {
       return;
     }
-    let Ok(mut fifo) = open_fifo(&path) else {
-      std::thread::sleep(Duration::from_secs(2));
-      continue;
+    let opened = open_fifo(&path);
+    let mut fifo = match opened {
+      Ok(file) => file,
+      Err(error) if error.kind() == std::io::ErrorKind::ResourceBusy => {
+        // Another instance owns the fifo; retry slowly until it exits.
+        tracing::debug!("{error}");
+        std::thread::sleep(Duration::from_secs(5));
+        continue;
+      }
+      Err(_) => {
+        std::thread::sleep(Duration::from_secs(2));
+        continue;
+      }
     };
 
     loop {
@@ -241,6 +251,7 @@ fn run(
 
 /// Resolved band colors handed to the render worker.
 fn open_fifo(path: &str) -> IoResult<std::fs::File> {
+  use std::os::fd::AsRawFd;
   use std::os::unix::fs::OpenOptionsExt;
   // mpd only creates the fifo when it loads its config; anything that
   // wipes it afterwards (e.g. a /tmp cleaner) leaves both sides stranded
@@ -258,6 +269,24 @@ fn open_fifo(path: &str) -> IoResult<std::fs::File> {
     .write(true)
     .custom_flags(libc::O_NONBLOCK)
     .open(path)?;
+  // The fifo stream is single-consumer: if a second music-tui instance
+  // (or any other reader) opened it first, the kernel would split the
+  // samples between both readers and garble every spectrum. An exclusive
+  // advisory lock on the fifo makes the loser back off cleanly. The lock
+  // lives on the open file description and is released on close/drop.
+  let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+  if locked != 0 {
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+      tracing::info!("visualizer fifo {path} is held by another instance; backing off");
+      return Err(std::io::Error::new(
+        std::io::ErrorKind::ResourceBusy,
+        format!("fifo {path} is already read by another instance"),
+      ));
+    }
+    return Err(error);
+  }
+  tracing::info!("visualizer locked fifo {path}");
   Ok(file)
 }
 
@@ -338,6 +367,26 @@ mod tests {
     std::fs::remove_file(&path).unwrap();
     let _second = open_fifo(&path).unwrap();
     assert!(std::path::Path::new(&path).exists(), "deleted fifo must be recreated");
+
+    std::fs::remove_file(&path).unwrap();
+    let _ = std::fs::remove_dir(&dir);
+  }
+
+  #[test]
+  fn open_fifo_is_single_consumer() {
+    // Two readers on one fifo would each get half the samples and both
+    // spectra would be garbage. The second open must refuse (busy) until
+    // the first reader closes.
+    let dir = std::env::temp_dir().join(format!("music-tui-fifo-busy-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("feed.fifo");
+    let path = path.to_string_lossy().into_owned();
+
+    let first = open_fifo(&path).unwrap();
+    let second = open_fifo(&path);
+    assert_eq!(second.unwrap_err().kind(), std::io::ErrorKind::ResourceBusy);
+    drop(first);
+    assert!(open_fifo(&path).is_ok(), "lock must release on close");
 
     std::fs::remove_file(&path).unwrap();
     let _ = std::fs::remove_dir(&dir);

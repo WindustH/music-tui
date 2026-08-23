@@ -48,3 +48,29 @@
 - Cover cache: `~/.cache/music-tui/covers/` (safe to delete).
 - State (library database, session state): `~/.local/state/music-tui/`
   (`library.db`, `state.toml`; migrated from the cache dir automatically).
+
+## Running several instances at once
+
+Multiple `music-tui` processes against the same MPD and config are safe:
+
+- `state.toml` saves go through per-PID temp files and atomic renames —
+  the last instance to exit wins, no corruption possible.
+- The cover cache publishes files with rename (no half-written images).
+- `library.db` uses WAL with a 5 s busy timeout, so concurrent rescans
+  queue up instead of failing with `SQLITE_BUSY`.
+- Queue auto-dedup deletes duplicates by stable song id, so two
+  instances cleaning the same queue never remove the wrong song; the
+  loser of a race just logs "no such song".
+- The log file is opened in append mode by every instance; lines may
+  interleave but stay readable.
+
+Two caveats:
+
+- **Visualizer fifo is single-reader.** The first instance locks the
+  fifo (`flock`); later instances show the waiting hint instead of a
+  garbled spectrum, and take over when the first one exits. Point extra
+  instances at another fifo (mpd can feed several fifo outputs) via
+  `[visualizer] fifo_path` if you need visuals everywhere.
+- Both instances watch the same queue via `idle`, so actions from one
+  show up in the other within a tick — but each keeps its own tab,
+  selection and filters.
