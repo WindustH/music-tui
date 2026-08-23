@@ -45,7 +45,7 @@ fn visit_audio_files(dir: &Path, recursive: bool, files: &mut Vec<PathBuf>) -> R
     }
     let file_type = entry.file_type().context("failed to read file type")?;
     if file_type.is_dir() {
-      if recursive {
+      if recursive && !has_nomedia(&path) {
         visit_audio_files(&path, recursive, files)?;
       }
     } else if is_audio_file(&path) {
@@ -53,6 +53,28 @@ fn visit_audio_files(dir: &Path, recursive: bool, files: &mut Vec<PathBuf>) -> R
     }
   }
   Ok(())
+}
+
+/// Android convention: a `.nomedia` marker file inside a directory makes
+/// recursive media scans skip that directory and everything below it.
+/// An explicitly requested root is always scanned, only its children are
+/// filtered, so `music-tui open <dir>` never comes back empty by accident.
+pub fn has_nomedia(dir: &Path) -> bool {
+  dir.join(".nomedia").exists()
+}
+
+/// True when any directory from `root` down to the track (exclusive of the
+/// root itself) carries a `.nomedia` marker. Used to drop tracks from the
+/// library database after a marker appears.
+pub fn is_excluded_by_nomedia(root: &Path, rel: &Path) -> bool {
+  let mut current = root.to_path_buf();
+  for component in rel.components() {
+    current.push(component);
+    if has_nomedia(&current) {
+      return true;
+    }
+  }
+  false
 }
 
 /// Convert an absolute library path to an MPD uri relative to the music dir.
@@ -161,4 +183,62 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
     }
   }
   Ok(link)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn collect_audio_files_skips_nomedia_directories() {
+    let dir = std::env::temp_dir().join(format!("music-tui-nomedia-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("visible/ok")).unwrap();
+    std::fs::create_dir_all(dir.join("hidden/sub")).unwrap();
+    std::fs::write(dir.join("hidden/.nomedia"), b"").unwrap();
+    std::fs::write(dir.join("d.wav"), b"").unwrap();
+    std::fs::write(dir.join("visible/a.mp3"), b"").unwrap();
+    std::fs::write(dir.join("visible/ok/b.flac"), b"").unwrap();
+    std::fs::write(dir.join("hidden/c.mp3"), b"").unwrap();
+    std::fs::write(dir.join("hidden/sub/e.mp3"), b"").unwrap();
+
+    let files = collect_audio_files(&dir, true).unwrap();
+    let names: Vec<String> = files
+      .iter()
+      .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
+      .collect();
+    assert_eq!(names, ["d.wav", "a.mp3", "b.flac"]);
+
+    // Non-recursive scans never descend, so markers are irrelevant.
+    let flat = collect_audio_files(&dir, false).unwrap();
+    assert_eq!(flat.len(), 1);
+    assert!(flat[0].ends_with("d.wav"));
+
+    // An explicitly requested root is scanned even when it carries the
+    // marker itself; only its children are filtered.
+    std::fs::write(dir.join(".nomedia"), b"").unwrap();
+    let rooted = collect_audio_files(&dir, true).unwrap();
+    let names: Vec<String> = rooted
+      .iter()
+      .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
+      .collect();
+    assert_eq!(names, ["d.wav", "a.mp3", "b.flac"]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn nomedia_exclusion_covers_nested_paths() {
+    let dir = std::env::temp_dir().join(format!("music-tui-nomedia-db-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("a/b")).unwrap();
+    std::fs::write(dir.join("a/.nomedia"), b"").unwrap();
+
+    assert!(is_excluded_by_nomedia(&dir, Path::new("a/song.mp3")));
+    assert!(is_excluded_by_nomedia(&dir, Path::new("a/b/song.mp3")));
+    assert!(!is_excluded_by_nomedia(&dir, Path::new("top.mp3")));
+    assert!(!is_excluded_by_nomedia(&dir, Path::new("c/other.mp3")));
+
+    let _ = std::fs::remove_dir_all(&dir);
+  }
 }

@@ -132,7 +132,11 @@ fn drop_missing(connection: &Connection, roots: &[(i64, String)]) -> Result<()> 
       statement
         .query_map([root_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
         .filter_map(|row| row.ok())
-        .filter(|(_, rel)| !root.join(rel).exists())
+        .filter(|(_, rel)| {
+        let path = root.join(rel);
+        !path.exists()
+          || crate::library::is_excluded_by_nomedia(&root, Path::new(rel))
+      })
         .map(|(id, _)| id)
         .collect()
     };

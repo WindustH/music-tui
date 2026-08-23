@@ -108,6 +108,9 @@ are resolved through `file://` or a symlink bridge, like `music-tui open`).
 [library]
 paths = ["/home/user/Music"]   # source directories (empty = library disabled)
 recursive = true               # scan subdirectories
+# Directories containing a `.nomedia` marker file (Android convention) are
+# skipped with everything below them; already-indexed tracks under such a
+# directory are dropped from the database on the next rescan (`u`).
 
 [[library.columns]]
 field = "title"
