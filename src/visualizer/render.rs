@@ -288,7 +288,7 @@ mod tests {
       mid: Color::Yellow,
       high: Color::Red,
     };
-    let lines = build_band_lines(10, 5, &vec![100u8; 10], &colors);
+    let lines = build_band_lines(10, 5, &[100u8; 10], &colors);
     assert_eq!(lines.len(), 5);
     let width: usize = lines[0]
       .spans

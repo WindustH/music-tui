@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use framework_tui::{
-  CompletionListStyle, KeyHelpDialogStyle, KeyHintsStyle, PopupDialogStyle, PromptLineStyle,
+  KeyHelpDialogStyle, KeyHintsStyle, PopupDialogStyle, PromptLineStyle, completion_list_style,
   draw_completion_list, draw_key_help_dialog_scrolled, draw_key_hints, draw_prompt_line,
-  key_hint_columns, key_hint_rows,
+  key_hint_columns, key_hint_rows, overlay_background,
 };
 use img_tui::ProtocolOverlay;
 use mpd_client::commands::SingleMode;
@@ -43,10 +43,10 @@ use cover::draw_cover_pane;
 use detail::draw_detail_view;
 use footer::draw_footer;
 use help::{draw_completion_popup, draw_help_dialog};
+use library::draw_library_pane;
 use lyrics::draw_lyrics_pane;
 use metadata::{draw_metadata_pane, metadata_line};
 use queue::draw_queue_pane;
-use library::draw_library_pane;
 use visualizer::draw_visualizer_pane;
 
 pub fn draw(
@@ -61,7 +61,8 @@ pub fn draw(
   let hints: Vec<framework_tui::KeyHint> = if app.show_help {
     Vec::new()
   } else {
-    app.dispatcher
+    app
+      .dispatcher
       .hints()
       .iter()
       .map(|hint| framework_tui::KeyHint {
@@ -75,7 +76,10 @@ pub fn draw(
   } else {
     key_hint_rows(
       hints.len(),
-      key_hint_columns(usize::from(app.settings.theme.which_key.columns), area.width),
+      key_hint_columns(
+        usize::from(app.settings.theme.which_key.columns),
+        area.width,
+      ),
     ) as u16
   };
 
@@ -129,23 +133,20 @@ pub fn draw(
   }
 
   let mut cursor_position = draw_footer(frame, app, footer, &hints);
+  // Modal rects replace kitty U=1 placeholder cells. Uncovered cells keep
+  // displaying the image, and the regular text diff restores placeholders
+  // when a modal closes.
+  let mut occluders = Vec::new();
   if let Some(popup) = draw_completion_popup(frame, app, footer) {
-    // The completion list covers cells: drop overlays/preserved pixels
-    // under it so the popup stays readable (gallery-tui behavior).
-    overlays.retain(|overlay| !rect_intersects(overlay.area, popup));
-    preserve_areas.retain(|area| !rect_intersects(*area, popup));
-    if preserve_areas.is_empty() {
-      preserve_overlays = false;
-    }
+    occluders.push(popup);
   }
 
   if app.show_help {
-    let (cleared_overlays, no_cursor) = draw_help_dialog(frame, app, area);
-    overlays = cleared_overlays;
+    let (help_popup, no_cursor) = draw_help_dialog(frame, app, area);
     cursor_position = no_cursor;
-    // Modals suppress transient protocol output entirely.
-    preserve_overlays = false;
-    preserve_areas.clear();
+    if let Some(help_popup) = help_popup {
+      occluders.push(help_popup);
+    }
   }
 
   FrameOutput {
@@ -154,15 +155,8 @@ pub fn draw(
     cursor_position,
     preserve_overlays,
     preserve_areas,
+    occluders,
   }
-}
-
-/// Axis-aligned rectangle intersection.
-fn rect_intersects(left: Rect, right: Rect) -> bool {
-  left.x < right.x.saturating_add(right.width)
-    && right.x < left.x.saturating_add(left.width)
-    && left.y < right.y.saturating_add(right.height)
-    && right.y < left.y.saturating_add(left.height)
 }
 
 fn draw_tab_bar(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -238,8 +232,28 @@ fn draw_layout(
         SplitDir::Horizontal => Layout::horizontal(constraints).areas(area),
         SplitDir::Vertical => Layout::vertical(constraints).areas(area),
       };
-      draw_layout(frame, app, renderer, tx, areas[0], first, overlays, preserve_overlays, preserve_areas);
-      draw_layout(frame, app, renderer, tx, areas[1], second, overlays, preserve_overlays, preserve_areas);
+      draw_layout(
+        frame,
+        app,
+        renderer,
+        tx,
+        areas[0],
+        first,
+        overlays,
+        preserve_overlays,
+        preserve_areas,
+      );
+      draw_layout(
+        frame,
+        app,
+        renderer,
+        tx,
+        areas[1],
+        second,
+        overlays,
+        preserve_overlays,
+        preserve_areas,
+      );
     }
   }
 }
@@ -255,13 +269,7 @@ pub(super) struct PaneCtx<'a, 'f> {
   pub(super) preserve_areas: &'a mut Vec<Rect>,
 }
 
-fn draw_pane(
-  app: &mut App,
-  area: Rect,
-  kind: PaneKind,
-  source: PaneSource,
-  ctx: PaneCtx<'_, '_>,
-) {
+fn draw_pane(app: &mut App, area: Rect, kind: PaneKind, source: PaneSource, ctx: PaneCtx<'_, '_>) {
   let PaneCtx {
     frame,
     renderer,
@@ -300,7 +308,10 @@ fn pane_block(app: &App, title: &str, is_main: bool) -> Block<'static> {
         .add_modifier(Modifier::BOLD),
     )
   } else {
-    Span::styled(format!(" {title} "), Style::default().fg(theme.color(&theme.base.muted)))
+    Span::styled(
+      format!(" {title} "),
+      Style::default().fg(theme.color(&theme.base.muted)),
+    )
   };
   Block::bordered()
     .title(title_span)

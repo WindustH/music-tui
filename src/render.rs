@@ -140,6 +140,38 @@ async fn render_once(
     let prepared = native_image::prepare(path, width, height, native_config.cell_pixels)
       .await
       .map_err(|error| error.to_string())?;
+    if mode == RenderMode::Kitty && native_config.kitty_unicode_placeholders {
+      // yazi-style U=1: upload once (a=t), then a *virtual* placement
+      // (a=p,U=1,c=,r=) that fits the image to the pane rect. Display happens
+      // via U+10EEEE placeholder text cells managed by img-tui, so modal
+      // dialogs occlude the image per-cell and no re-transmit is needed.
+      let image_id = image_id.unwrap_or(1);
+      let upload = native_image::render_prepared_kitty_upload(&prepared, native_config, image_id)
+        .await
+        .map_err(|error| error.to_string())?;
+      let virtual_placement = String::from_utf8(native_image::render_kitty_virtual_placement(
+        native_config,
+        image_id,
+        width,
+        height,
+      ))
+      .map_err(|error| error.to_string())?;
+      let fingerprint = render_fingerprint(&upload.data);
+      let mut data = String::from_utf8(upload.data).map_err(|error| error.to_string())?;
+      data.push_str(&virtual_placement);
+      return Ok(RenderedImage::Protocol {
+        mode,
+        data,
+        refresh: Some(virtual_placement),
+        placement: Some(ProtocolPlacement::KittyUnicode { image_id }),
+        fingerprint,
+        erase: native_image::erase_sequence(
+          mode,
+          native_config.passthrough.as_deref(),
+          Some(image_id),
+        ),
+      });
+    }
     if mode == RenderMode::Kitty
       && let Some(placement_id) = placement_id
     {
@@ -187,10 +219,7 @@ async fn render_once(
       .map_err(|error| error.to_string())?;
     let fingerprint = render_fingerprint(&data);
     let data = String::from_utf8(data).map_err(|error| error.to_string())?;
-    let placement = match (mode, native_config.kitty_unicode_placeholders, image_id) {
-      (RenderMode::Kitty, true, Some(image_id)) => Some(ProtocolPlacement::KittyUnicode { image_id }),
-      _ => None,
-    };
+    let placement = None;
     let erase = native_image::erase_sequence(mode, native_config.passthrough.as_deref(), image_id);
     Ok(RenderedImage::Protocol {
       mode,
@@ -297,8 +326,7 @@ fn kitty_image_id(path: &Path, width: u16, height: u16, mode: RenderMode) -> Opt
   hasher.update(width.to_le_bytes());
   hasher.update(height.to_le_bytes());
   let digest = hasher.finalize();
-  let image_id = u32::from_le_bytes(digest[..4].try_into().unwrap_or_default()) & 0x7fff_ffff;
-  Some(image_id.max(1))
+  Some(native_image::kitty_image_id(&digest))
 }
 
 fn kitty_placement_id(path: &Path, image_id: Option<u32>) -> Option<u32> {

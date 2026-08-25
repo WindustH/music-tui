@@ -1073,6 +1073,7 @@ dependencies = [
  "rayon",
  "tokio",
  "tracing",
+ "unicode-width",
 ]
 
 [[package]]

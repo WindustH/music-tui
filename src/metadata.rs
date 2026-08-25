@@ -325,6 +325,24 @@ fn format_duration(duration: Duration) -> String {
   format!("{}:{:02}", total / 60, total % 60)
 }
 
+fn toml_string(value: &str) -> String {
+  let mut out = String::with_capacity(value.len() + 2);
+  out.push('"');
+  for ch in value.chars() {
+    match ch {
+      '\\' => out.push_str("\\\\"),
+      '"' => out.push_str("\\\""),
+      '\n' => out.push_str("\\n"),
+      '\r' => out.push_str("\\r"),
+      '\t' => out.push_str("\\t"),
+      ch if ch.is_control() => out.push(' '),
+      ch => out.push(ch),
+    }
+  }
+  out.push('"');
+  out
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -382,22 +400,4 @@ mod tests {
     let edited = "[metadata]\nTitle = \"珊瑚海\"\n";
     assert!(metadata_changes(&entries, edited).unwrap().is_empty());
   }
-}
-
-fn toml_string(value: &str) -> String {
-  let mut out = String::with_capacity(value.len() + 2);
-  out.push('"');
-  for ch in value.chars() {
-    match ch {
-      '\\' => out.push_str("\\\\"),
-      '"' => out.push_str("\\\""),
-      '\n' => out.push_str("\\n"),
-      '\r' => out.push_str("\\r"),
-      '\t' => out.push_str("\\t"),
-      ch if ch.is_control() => out.push(' '),
-      ch => out.push(ch),
-    }
-  }
-  out.push('"');
-  out
 }

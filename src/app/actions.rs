@@ -244,9 +244,7 @@ impl App {
         if self.hover_lyrics_active() {
           self.scroll_hover_lyrics(-1);
         } else {
-          self.lyrics_follow = false;
-          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-          self.lyrics_cursor = Some(cursor.saturating_sub(1));
+          self.move_lyrics_cursor(-1);
         }
         true
       }
@@ -254,10 +252,7 @@ impl App {
         if self.hover_lyrics_active() {
           self.scroll_hover_lyrics(1);
         } else {
-          self.lyrics_follow = false;
-          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-          let limit = self.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(1).saturating_sub(1);
-          self.lyrics_cursor = Some((cursor + 1).min(limit));
+          self.move_lyrics_cursor(1);
         }
         true
       }
@@ -265,9 +260,7 @@ impl App {
         if self.hover_lyrics_active() {
           self.scroll_hover_lyrics(-10);
         } else {
-          self.lyrics_follow = false;
-          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-          self.lyrics_cursor = Some(cursor.saturating_sub(10));
+          self.move_lyrics_cursor(-10);
         }
         true
       }
@@ -275,10 +268,7 @@ impl App {
         if self.hover_lyrics_active() {
           self.scroll_hover_lyrics(10);
         } else {
-          self.lyrics_follow = false;
-          let cursor = self.lyrics_cursor.unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-          let limit = self.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(1).saturating_sub(1);
-          self.lyrics_cursor = Some((cursor + 10).min(limit));
+          self.move_lyrics_cursor(10);
         }
         true
       }
@@ -319,6 +309,18 @@ impl App {
       }
       _ => false,
     }
+  }
+
+  fn move_lyrics_cursor(&mut self, delta: i32) {
+    self.lyrics_follow = false;
+    let cursor = self
+      .lyrics_cursor
+      .or_else(|| self.active_lyrics_index())
+      .unwrap_or(0);
+    self.lyrics_cursor = self
+      .lyrics
+      .as_ref()
+      .and_then(|lyrics| lyrics.move_item_index(cursor, delta));
   }
 
 }

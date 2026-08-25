@@ -27,6 +27,7 @@ pub(super) fn draw_footer(
 
   // --- which-key hints (pending key sequences) ---
   if !hints.is_empty() {
+    let background = overlay_background();
     draw_key_hints(
       frame,
       hints,
@@ -34,17 +35,17 @@ pub(super) fn draw_footer(
       &KeyHintsStyle {
         base: Style::default()
           .fg(theme.color(&theme.which_key.foreground))
-          .bg(theme.color(&theme.which_key.background)),
+          .bg(background),
         key: Style::default()
           .fg(theme.color(&theme.which_key.key))
-          .bg(theme.color(&theme.which_key.background))
+          .bg(background)
           .add_modifier(Modifier::BOLD),
         separator: Style::default()
           .fg(theme.color(&theme.which_key.separator_color))
-          .bg(theme.color(&theme.which_key.background)),
+          .bg(background),
         description: Style::default()
           .fg(theme.color(&theme.which_key.description))
-          .bg(theme.color(&theme.which_key.background)),
+          .bg(background),
         separator_text: theme.which_key.separator.clone(),
         columns: key_hint_columns(usize::from(theme.which_key.columns), area.width),
       },

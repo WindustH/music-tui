@@ -69,16 +69,51 @@ impl Lyrics {
   /// Range `[start, end)` of lines sharing the active line's timestamp —
   /// a bilingual original/translation pair lights up together.
   pub fn active_group(&self, elapsed: Duration) -> Option<(usize, usize)> {
-    let Lyrics::Synced(lines) = self else {
-      return None;
-    };
     let start = self.active_index(elapsed)?;
-    let time = lines[start].time_secs;
-    let mut end = start + 1;
-    while end < lines.len() && lines[end].time_secs == time {
-      end += 1;
+    self.item_group(start)
+  }
+
+  /// Range `[start, end)` of the navigation item containing `index`.
+  /// Synced lines with the same timestamp form one item; plain lyrics keep
+  /// one physical line per item.
+  pub fn item_group(&self, index: usize) -> Option<(usize, usize)> {
+    match self {
+      Lyrics::Synced(lines) => {
+        let time = lines.get(index)?.time_secs;
+        let mut start = index;
+        while start > 0 && lines[start - 1].time_secs == time {
+          start -= 1;
+        }
+        let mut end = index + 1;
+        while end < lines.len() && lines[end].time_secs == time {
+          end += 1;
+        }
+        Some((start, end))
+      }
+      Lyrics::Plain(lines) => (index < lines.len()).then_some((index, index + 1)),
     }
-    Some((start, end))
+  }
+
+  /// Move from `index` by logical lyric items and return the destination
+  /// item's first line. Repeated timestamps therefore consume one step.
+  pub fn move_item_index(&self, index: usize, delta: i32) -> Option<usize> {
+    let (mut start, mut end) = self.item_group(index)?;
+    if delta < 0 {
+      for _ in 0..delta.unsigned_abs() {
+        if start == 0 {
+          break;
+        }
+        start = self.item_group(start - 1)?.0;
+      }
+    } else {
+      for _ in 0..delta as usize {
+        if end >= self.line_count() {
+          break;
+        }
+        (start, end) = self.item_group(end)?;
+      }
+    }
+    Some(start)
   }
 
   /// Sung char count for the line at `index` at `elapsed`.
@@ -270,6 +305,28 @@ mod tests {
   }
 
   #[test]
+  fn keyboard_navigation_treats_equal_timestamps_as_one_item() {
+    let lyrics = parse(
+      "[00:01]original one\n[00:01]translation one\n[00:02]original two\n[00:02]translation two\n[00:03]last\n",
+    )
+    .unwrap();
+
+    assert_eq!(lyrics.item_group(1), Some((0, 2)));
+    assert_eq!(lyrics.move_item_index(0, 1), Some(2));
+    assert_eq!(lyrics.move_item_index(1, 1), Some(2));
+    assert_eq!(lyrics.move_item_index(3, -1), Some(0));
+    assert_eq!(lyrics.move_item_index(0, 10), Some(4));
+    assert_eq!(lyrics.move_item_index(4, -10), Some(0));
+  }
+
+  #[test]
+  fn plain_lyrics_navigation_remains_line_based() {
+    let lyrics = parse("one\ntwo\nthree\n").unwrap();
+    assert_eq!(lyrics.move_item_index(0, 1), Some(1));
+    assert_eq!(lyrics.move_item_index(2, -1), Some(1));
+  }
+
+  #[test]
   fn finds_same_name_lrc_in_extra_dir() {
     let root = std::env::temp_dir().join(format!("music-tui-test-{}", std::process::id()));
     let lyrics_dir = root.join("lyrics");
@@ -279,7 +336,7 @@ mod tests {
     std::fs::write(&song, b"not audio").unwrap();
     std::fs::write(lyrics_dir.join("song.lrc"), "[00:01]extra dir\n").unwrap();
 
-    let found = load(&song, &[lyrics_dir.clone()], None, None).unwrap();
+    let found = load(&song, &[lyrics_dir], None, None).unwrap();
     assert!(matches!(&found, Lyrics::Synced(lines) if lines[0].text == "extra dir"));
 
     std::fs::remove_dir_all(&root).ok();
@@ -296,7 +353,7 @@ mod tests {
     std::fs::write(lyrics_dir.join("song.lrc"), "same name\n").unwrap();
     std::fs::write(lyrics_dir.join("artist - title.lrc"), "artist title\n").unwrap();
 
-    let found = load(&song, &[lyrics_dir.clone()], Some("artist"), Some("title")).unwrap();
+    let found = load(&song, &[lyrics_dir], Some("artist"), Some("title")).unwrap();
     assert!(matches!(&found, Lyrics::Plain(lines) if lines[0] == "same name"));
 
     std::fs::remove_dir_all(&root).ok();

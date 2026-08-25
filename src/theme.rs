@@ -100,7 +100,7 @@ pub struct WhichKeySection {
 impl Default for WhichKeySection {
   fn default() -> Self {
     Self {
-      background: "black".to_string(),
+      background: "reset".to_string(),
       foreground: "white".to_string(),
       key: "light_cyan".to_string(),
       description: "light_magenta".to_string(),
