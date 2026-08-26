@@ -8,15 +8,18 @@ Configuration lives in `~/.config/music-tui/`:
 
 Files are created with commented defaults on first run. An incompatible or
 invalid file is backed up (`config.toml.bak.<timestamp>`) and rewritten.
+If MPD itself has no startup config, music-tui also creates a minimal
+Unix-socket config without `music_directory`. Existing MPD configs are left
+untouched.
 
 ## `config.toml`
 
 ```toml
 [mpd]
-host = "127.0.0.1"   # a path starting with / selects a UNIX socket
+host = "~/.config/mpd/socket"  # generated first-run local socket
 port = 6600
 password = ""        # optional MPD password
-music_dir = ""       # optional; auto-detected from ~/.config/mpd/mpd.conf
+music_dir = ""       # optional; auto-detected, unnecessary for file:// over a UNIX socket
 
 [behavior]
 tick_ms = 1000         # status refresh while idle
@@ -57,6 +60,10 @@ name = "playlist"
 layout = "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))"
 main = "queue"
 ```
+
+If an MPD config already exists, music-tui preserves it and the connection
+host you selected; TCP (`127.0.0.1:6600` by default) remains available for
+remote/container setups.
 
 ## Layout DSL
 
@@ -102,7 +109,9 @@ lazily, only when some pane uses the source.
 
 The library pane indexes directories you configure — independent of MPD's
 music directory (files outside the MPD library are still playable: they
-are resolved through `file://` or a symlink bridge, like `music-tui open`).
+are resolved through `file://` over a UNIX socket or a symlink bridge over
+TCP, like `music-tui open`). The UNIX socket route needs no `music_dir`; the
+TCP bridge does.
 
 ```toml
 [library]

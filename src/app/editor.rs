@@ -21,7 +21,7 @@ impl App {
     {
       let url = song.song.url.to_string();
       let Some(path) = self.song_path(&url) else {
-        self.set_message("song is not under music_dir");
+        self.set_message("local song path is unavailable");
         return;
       };
       (url, path, None)
@@ -31,7 +31,7 @@ impl App {
         return;
       };
       let Some(path) = self.current_song_path() else {
-        self.set_message("music directory is not configured");
+        self.set_message("local song path is unavailable");
         return;
       };
       (url, path, self.metadata_entries.clone())

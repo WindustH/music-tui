@@ -383,7 +383,7 @@ impl App {
 
   pub fn current_song_path(&self) -> Option<PathBuf> {
     let url = self.current_song_url()?;
-    self.music_dir.as_ref().map(|dir| uri_to_path(dir, &url))
+    uri_to_path(self.music_dir.as_deref(), &url)
   }
 
   pub fn elapsed(&self) -> f64 {

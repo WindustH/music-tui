@@ -271,14 +271,14 @@ impl App {
       return;
     };
     let path = expand_home(target);
-    let Some(music_dir) = self.music_dir.clone() else {
-      self.set_message("music directory is not configured");
-      return;
-    };
     let resolved = if path.is_absolute() {
       path
     } else {
-      music_dir.join(&path)
+      let Some(music_dir) = self.music_dir.as_ref() else {
+        self.set_message("relative paths require a configured music directory");
+        return;
+      };
+      music_dir.join(path)
     };
     let canonical = match resolved.canonicalize() {
       Ok(canonical) => canonical,
@@ -296,28 +296,37 @@ impl App {
           return;
         }
       };
-      let count = files.len();
+      let mut count = 0;
       for file in files {
-        if let Ok(uri) = crate::library::path_to_uri(&music_dir, &file) {
+        if let Some(uri) = crate::open::direct_open_uri(
+          &file,
+          &self.settings.config.mpd,
+          self.music_dir.as_deref(),
+        ) {
           self.mpdc(MpdCommand::AddUri(uri));
+          count += 1;
         }
       }
-      self.set_message(format!("queued {count} song(s)"));
-    } else if let Ok(uri) = crate::library::path_to_uri(&music_dir, &canonical) {
+      if count == 0 {
+        self.set_message("local files over TCP require a configured music directory");
+      } else {
+        self.set_message(format!("queued {count} song(s)"));
+      }
+    } else if let Some(uri) = crate::open::direct_open_uri(
+      &canonical,
+      &self.settings.config.mpd,
+      self.music_dir.as_deref(),
+    ) {
       self.mpdc(MpdCommand::AddUri(uri));
       self.set_message(format!("queued {}", canonical.display()));
     } else {
-      self.set_message("path is outside the music directory".to_string());
+      self.set_message("local files over TCP require a configured music directory");
     }
   }
   /// `:save [path]` — export the current queue as an m3u8 file. Bare file
   /// names resolve under `playlist.save_dir` (default
   /// `~/.local/state/music-tui/playlists`); relative paths are rejected.
   fn command_save(&mut self, arg: Option<&str>) {
-    if self.music_dir.is_none() {
-      self.set_message("music directory unknown; cannot resolve song paths");
-      return;
-    }
     let save_dir = self.settings.config.playlist.effective_save_dir();
     let target = match crate::playlist::resolve_save_path(arg, &save_dir) {
       Ok(target) => target,
@@ -327,6 +336,7 @@ impl App {
       }
     };
     let mut body = String::from("#EXTM3U\n");
+    let mut written = 0;
     for song in &self.queue {
       let song = &song.song;
       let artist = song_artist(song).map(str::to_string).unwrap_or_default();
@@ -336,15 +346,12 @@ impl App {
         _ => song.url.clone(),
       };
       let seconds = song.duration.map(|duration| duration.as_secs()).unwrap_or(0);
-      let path = self
-        .music_dir
-        .as_ref()
-        .map(|dir| crate::library::uri_to_path(dir, &song.url));
+      let path = crate::library::uri_to_path(self.music_dir.as_deref(), &song.url);
       if let Some(path) = path {
         body.push_str(&format!("#EXTINF:{seconds},{label}\n{}\n", path.display()));
+        written += 1;
       }
     }
-    let written = body.lines().count().saturating_sub(1);
     if let Some(parent) = target.parent()
       && let Err(error) = std::fs::create_dir_all(parent)
     {

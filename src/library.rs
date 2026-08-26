@@ -11,10 +11,18 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 
 /// Resolve the music library root: config override first, then mpd.conf.
 pub fn resolve_music_dir(config: &MpdConfig) -> Result<PathBuf> {
-  if let Some(dir) = &config.music_dir {
-    return Ok(expand_home(dir));
+  if let Some(dir) = configured_music_dir(config) {
+    return Ok(dir);
   }
   detect_music_dir().context("music_dir is not configured and music_directory was not found in ~/.config/mpd/mpd.conf")
+}
+
+fn configured_music_dir(config: &MpdConfig) -> Option<PathBuf> {
+  config
+    .music_dir
+    .as_deref()
+    .filter(|dir| !dir.trim().is_empty())
+    .map(expand_home)
 }
 
 pub fn is_audio_file(path: &Path) -> bool {
@@ -88,14 +96,28 @@ pub fn path_to_uri(music_dir: &Path, path: &Path) -> Result<String> {
   Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
-/// Map an MPD uri back to an absolute path inside the library.
-/// `file://` uris (songs outside the library) decode to their own path.
-pub fn uri_to_path(music_dir: &Path, uri: &str) -> PathBuf {
-  if let Some(path) = file_uri_to_path(uri) {
-    return path;
+/// Map an MPD uri back to a local path. `file://` uris decode without a
+/// configured music directory; relative MPD uris require one.
+pub fn uri_to_path(music_dir: Option<&Path>, uri: &str) -> Option<PathBuf> {
+  if let Some(path) = local_uri_to_path(uri) {
+    return Some(path);
   }
   let relative = uri.trim_start_matches('/');
-  music_dir.join(relative)
+  music_dir.map(|dir| dir.join(relative))
+}
+
+/// Decode a local URI as returned by MPD. MPD accepts `file://` over a
+/// Unix socket, then normalizes it to a plain absolute path in queue data.
+pub fn local_uri_to_path(uri: &str) -> Option<PathBuf> {
+  file_uri_to_path(uri).or_else(|| Path::new(uri).is_absolute().then(|| PathBuf::from(uri)))
+}
+
+/// Compare MPD song URIs while accounting for its `file://` normalization.
+pub fn same_song_uri(left: &str, right: &str) -> bool {
+  left == right
+    || local_uri_to_path(left)
+      .zip(local_uri_to_path(right))
+      .is_some_and(|(left, right)| left == right)
 }
 
 /// True when the host selects a UNIX socket connection — the only
@@ -124,19 +146,19 @@ pub fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
   if rest.is_empty() {
     return None;
   }
-  let mut path = String::with_capacity(rest.len());
+  let mut path = Vec::with_capacity(rest.len());
   let mut bytes = rest.bytes();
   while let Some(byte) = bytes.next() {
     if byte == b'%' {
       let high = bytes.next()?;
       let low = bytes.next()?;
       let value = u8::from_str_radix(&format!("{}{}", high as char, low as char), 16).ok()?;
-      path.push(value as char);
+      path.push(value);
     } else {
-      path.push(byte as char);
+      path.push(byte);
     }
   }
-  Some(PathBuf::from(path))
+  String::from_utf8(path).ok().map(PathBuf::from)
 }
 
 /// Directory holding the symlink bridge for files outside the library.
@@ -188,6 +210,32 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn blank_music_dir_is_not_configured() {
+    let config = MpdConfig {
+      music_dir: Some("  ".to_string()),
+      ..MpdConfig::default()
+    };
+    assert_eq!(configured_music_dir(&config), None);
+  }
+
+  #[test]
+  fn file_uri_resolves_without_music_dir() {
+    let path = Path::new("/tmp/音乐/a song.flac");
+    assert_eq!(uri_to_path(None, &file_uri(path)), Some(path.to_path_buf()));
+    assert_eq!(uri_to_path(None, path.to_str().unwrap()), Some(path.to_path_buf()));
+    assert!(same_song_uri(&file_uri(path), path.to_str().unwrap()));
+  }
+
+  #[test]
+  fn relative_uri_requires_music_dir() {
+    assert_eq!(uri_to_path(None, "Artist/song.flac"), None);
+    assert_eq!(
+      uri_to_path(Some(Path::new("/music")), "Artist/song.flac"),
+      Some(PathBuf::from("/music/Artist/song.flac")),
+    );
+  }
 
   #[test]
   fn collect_audio_files_skips_nomedia_directories() {

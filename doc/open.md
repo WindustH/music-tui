@@ -6,17 +6,20 @@
 music-tui open <PATH> [OPTIONS]
 ```
 
-The path must be inside MPD's music directory (auto-detected or configured) —
-except playlist files, which may live anywhere. Folders take every audio
-file inside (sorted); `-r`/`--recursive` recurses.
+Folders take every audio file inside (sorted); `-r`/`--recursive` recurses.
+Paths inside a configured or auto-detected MPD music directory use relative
+MPD URIs. With a UNIX socket connection, any local path instead works through
+`file://`, even when neither MPD nor music-tui configures a music directory.
+TCP connections require a music directory so outside files can use the
+symlink bridge.
 
 ## Playlist and path-list files
 
 `open` also accepts playlists (`.m3u`/`.m3u8`/`.pls`) and plain-text lists
 of song paths (`.txt`, one path per line, `#` comments ignored). Entries
-resolve relative to the list's own folder (or `~`), must stay inside the
-music directory, and non-audio lines are skipped (the notice reports the
-count).
+resolve relative to the list's own folder (and may use `~`); non-audio lines
+are skipped (the notice reports the count). The same UNIX socket / TCP path
+rules described above apply.
 
 - `append` adds all entries to the queue;
 - `next` inserts them right after the current song;

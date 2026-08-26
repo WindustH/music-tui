@@ -112,7 +112,7 @@ impl App {
   }
 
   pub(crate) fn song_path(&self, url: &str) -> Option<PathBuf> {
-    self.music_dir.as_ref().map(|dir| uri_to_path(dir, url))
+    uri_to_path(self.music_dir.as_deref(), url)
   }
 
   /// Refresh the `:hovered` data view for the queue's selected row. Cheap

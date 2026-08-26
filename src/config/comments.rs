@@ -10,11 +10,11 @@ use super::AppConfig;
 pub fn config_comment(key: &str) -> Option<&'static str> {
   match key {
     "mpd" => Some("Connection settings for the MPD daemon."),
-    "mpd.host" => Some("MPD host. A path starting with / or ~ (e.g. ~/.config/mpd/socket) connects over a unix socket, which enables playing files outside the music library via file:// uris."),
+    "mpd.host" => Some("MPD host. A path starting with / or ~ connects over a unix socket. First-run MPD setup uses ~/.config/mpd/socket so local file:// songs need no music directory."),
     "mpd.port" => Some("MPD TCP port."),
     "mpd.password" => Some("Optional MPD password."),
     "mpd.music_dir" => Some(
-      "Music library root for cover art and lyrics files. Empty reads music_directory from mpd.conf.",
+      "Optional local music root. Empty reads music_directory from mpd.conf; file:// songs over a unix socket work without either setting.",
     ),
     "behavior" => Some("Interactive behavior settings."),
     "behavior.tick_ms" => Some("Status refresh interval while idle."),
@@ -119,4 +119,3 @@ fn toml_field_key(line: &str) -> Option<&str> {
   let key = key.trim();
   (!key.is_empty()).then_some(key)
 }
-

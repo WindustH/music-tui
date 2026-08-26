@@ -67,7 +67,7 @@ impl App {
       return true;
     }
     let Some(path) = self.song_path(&url) else {
-      self.set_message("song is not under music_dir");
+      self.set_message("local song path is unavailable");
       return true;
     };
     let title = song_title(&song.song)

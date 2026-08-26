@@ -16,8 +16,9 @@ pub struct MpdConfig {
   pub port: u16,
   /// Optional MPD password.
   pub password: Option<String>,
-  /// Music library root used to read cover art and lyrics files. When empty,
-  /// music-tui tries to read `music_directory` from ~/.config/mpd/mpd.conf.
+  /// Local music root for resolving MPD's relative song uris. When empty,
+  /// music-tui tries `music_directory` from ~/.config/mpd/mpd.conf. Songs
+  /// queued as `file://` over a unix socket do not require a root.
   pub music_dir: Option<String>,
   /// Directory for the symlink bridge used to queue files outside the
   /// library on TCP connections. Empty = `<music_dir>/.music-tui-links`.
@@ -319,4 +320,3 @@ impl super::AppConfig {
     Ok(())
   }
 }
-

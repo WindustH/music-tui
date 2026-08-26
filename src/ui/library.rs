@@ -101,13 +101,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   // Currently playing song path (to mark the row like the queue does).
   let playing_path = app
     .current_song_url()
-    .and_then(|url| app.music_dir.as_ref().map(|dir| crate::library::uri_to_path(dir, &url)))
-    .or_else(|| {
-      app
-        .current_song_url()
-        .as_deref()
-        .and_then(crate::library::file_uri_to_path)
-    });
+    .and_then(|url| crate::library::uri_to_path(app.music_dir.as_deref(), &url));
 
   let header = Row::new(
     std::iter::once(Cell::from(""))

@@ -18,6 +18,8 @@ pub use crate::theme::ThemeConfig;
 use crate::keymap::format_keymap_toml;
 
 mod comments;
+#[cfg(unix)]
+mod mpd_bootstrap;
 mod paths;
 mod schema;
 
@@ -70,7 +72,23 @@ pub async fn load_or_create() -> Result<Settings> {
   migrate_state_files_from_cache(&cache_dir, &state_dir);
 
   let config_path = config_dir.join("config.toml");
-  let config = read_or_write_default(&config_path, AppConfig::default()).await?;
+  let mut config = read_or_write_default(&config_path, AppConfig::default()).await?;
+  #[cfg(unix)]
+  let generated_socket = if config.mpd.host == MpdConfig::default().host {
+    mpd_bootstrap::ensure_mpd_config()
+      .await?
+      .map(|bootstrap| bootstrap.socket_path)
+  } else {
+    None
+  };
+  #[cfg(not(unix))]
+  let generated_socket: Option<PathBuf> = None;
+  if let Some(socket) = generated_socket.as_deref()
+    && adopt_generated_socket(&mut config, socket)
+  {
+    let body = app_config_toml(&config)?;
+    write_bytes_atomic(&config_path, body.as_bytes()).await?;
+  }
   let keymap =
     read_or_write_keymap_default(&config_dir.join("keymap.toml"), KeymapConfig::default()).await?;
   let theme =
@@ -83,6 +101,14 @@ pub async fn load_or_create() -> Result<Settings> {
     cache_dir,
     state_dir,
   })
+}
+
+fn adopt_generated_socket(config: &mut AppConfig, socket: &Path) -> bool {
+  if config.mpd.host != MpdConfig::default().host {
+    return false;
+  }
+  config.mpd.host = socket.to_string_lossy().into_owned();
+  true
 }
 
 /// State files (library.db, state.toml) used to live in the cache dir;
@@ -316,5 +342,17 @@ mod tests {
     assert!(body.contains("# music-tui main configuration."));
     assert!(body.contains("# Connection settings for the MPD daemon."));
   }
-}
 
+  #[test]
+  fn generated_socket_replaces_only_the_default_tcp_host() {
+    let socket = Path::new("/tmp/mpd/socket");
+    let mut default = AppConfig::default();
+    assert!(adopt_generated_socket(&mut default, socket));
+    assert_eq!(default.mpd.host, "/tmp/mpd/socket");
+
+    let mut custom = AppConfig::default();
+    custom.mpd.host = "music.example.test".to_string();
+    assert!(!adopt_generated_socket(&mut custom, socket));
+    assert_eq!(custom.mpd.host, "music.example.test");
+  }
+}

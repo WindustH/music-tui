@@ -6,13 +6,17 @@
   `mpd.host`/`mpd.port` in `~/.config/music-tui/config.toml` match
   `bind_to_address`/`port` in `mpd.conf`.
 - A host starting with `/` is treated as a UNIX socket path.
+- On first run without an MPD config, music-tui generates a local socket
+  config (`~/.mpd/mpd.conf` on macOS). A missing socket file means the MPD
+  daemon has not started yet; start/restart its system service.
 - music-tui reconnects automatically with backoff; the footer shows the
   connection state.
 
 ## Covers or lyrics missing
 
-- Both require the music directory: verify `mpd.music_dir` or that
-  `~/.config/mpd/mpd.conf` has a readable `music_directory`.
+- Songs queued as local `file://` URIs resolve without a music directory.
+  Relative MPD song URIs require `mpd.music_dir` or a readable
+  `music_directory` in one of MPD's normal config locations.
 - Covers accept embedded pictures and sibling files (`cover.*`, `folder.*`,
   `front.*`, `<basename>.*`). Minimum pane size applies.
 - Lyrics lookup order is documented in [Lyrics](lyrics.md).

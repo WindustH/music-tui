@@ -246,7 +246,7 @@ async fn run_command(
       Ok::<(), String>(())
     }
     MpdCommand::AddUri(uri) => {
-      if dedup && queue.iter().any(|song| song.song.url == *uri) {
+      if dedup && queue.iter().any(|song| crate::library::same_song_uri(&song.song.url, &uri)) {
         debug!(uri = %uri, "skip add: already queued (dedup on)");
         Ok::<(), String>(())
       } else {
@@ -290,16 +290,15 @@ async fn play_library_file(
   queue: &[SongInQueue],
   dedup: bool,
 ) -> Result<(), String> {
-  let music_dir = match crate::library::resolve_music_dir(config) {
-    Ok(dir) => dir,
-    Err(error) => return Err(error.to_string()),
-  };
-  let uri = crate::open::resolve_open_uri(client, &path, config, &music_dir)
+  let music_dir = crate::library::resolve_music_dir(config).ok();
+  let uri = crate::open::resolve_open_uri(client, &path, config, music_dir.as_deref())
     .await
     .map_err(|error| error.to_string())?;
 
   if dedup
-    && let Some(position) = queue.iter().position(|song| song.song.url == uri)
+    && let Some(position) = queue
+      .iter()
+      .position(|song| crate::library::same_song_uri(&song.song.url, &uri))
   {
     // Already queued: skip the add and reuse the existing entry.
     if append {

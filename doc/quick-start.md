@@ -1,17 +1,26 @@
 # Quick Start
 
-`music-tui` is a client for an already running [MPD](https://www.musicpd.org/)
-daemon. Make sure MPD is running and reachable (default `127.0.0.1:6600`),
-then start the client:
+`music-tui` is a client for an [MPD](https://www.musicpd.org/) daemon. Make
+sure MPD is installed, then start the client:
 
 ```sh
 music-tui
 ```
 
-The music directory is auto-detected from `~/.config/mpd/mpd.conf`
+When no MPD startup config exists, music-tui creates a minimal one on first
+launch and configures both sides to use `~/.config/mpd/socket`. On macOS the
+generated config is `~/.mpd/mpd.conf`; on other Unix systems it is
+`$XDG_CONFIG_HOME/mpd/mpd.conf`. It does not set `music_directory` and never
+overwrites an existing MPD config or a custom music-tui host. Start MPD with
+your service manager after installation; music-tui reconnects automatically.
+
+The music directory is auto-detected from the usual MPD config locations
 (`music_directory`); it can also be set explicitly in `config.toml`
-(`mpd.music_dir`). The directory is needed for covers, lyrics, and metadata
-editing — queue-only usage works without it.
+(`mpd.music_dir`). Neither setting is required when music-tui connects through
+a UNIX socket and songs are queued as local `file://` URIs: `open`, Library
+playback, covers, lyrics, and metadata editing can resolve those paths
+directly. MPD-relative queue URIs and local-file playback over TCP still need
+the music directory.
 
 Default configuration files are created on first run:
 

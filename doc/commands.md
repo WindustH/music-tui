@@ -26,7 +26,7 @@ Press `:` to open the command prompt. Tab completion completes command names;
 | `:save` | export the queue to `<state>/playlists/music-tui-<time>.m3u` |
 | `:save <name>` | export to `<state>/playlists/<name>.m3u` (`.m3u` added if missing) |
 | `:save /abs/path.m3u` | export to an absolute path (relative paths are rejected) |
-| `:add <path>` | append a file or folder (relative to `music_dir` if not absolute) |
+| `:add <path>` | append a file or folder (relative paths need `music_dir`; absolute paths work without it over a UNIX socket) |
 | `:add <dir> -r` | append a folder recursively |
 
 Examples:

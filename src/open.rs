@@ -18,7 +18,7 @@ use crate::{
   config::{MpdConfig, Settings},
   library::{
     collect_audio_files, ensure_link, file_uri, is_audio_file, is_socket_host, links_dir,
-    path_to_uri, resolve_music_dir,
+    path_to_uri, resolve_music_dir, same_song_uri,
   },
   mpd::{InterruptSession, capture_interrupt_session, connect},
   playlist::{self, PlaylistKind},
@@ -34,7 +34,7 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
     .path
     .canonicalize()
     .with_context(|| format!("failed to resolve {}", args.path.display()))?;
-  let music_dir = resolve_music_dir(&settings.config.mpd)?;
+  let music_dir = resolve_music_dir(&settings.config.mpd).ok();
   let client = connect(&settings.config.mpd)
     .await
     .context("failed to connect to mpd")?;
@@ -42,9 +42,9 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
 
   if path.is_dir() {
     let notice = if args.mode == crate::cli::OpenMode::Append {
-      open_folder_append(&client, &path, &settings.config.mpd, &music_dir, args.recursive, args.no_play, settings.config.behavior.queue_dedup).await?
+      open_folder_append(&client, &path, &settings.config.mpd, music_dir.as_deref(), args.recursive, args.no_play, settings.config.behavior.queue_dedup).await?
     } else {
-      open_folder(&client, &path, &settings.config.mpd, &music_dir, args.recursive, args.no_play).await?
+      open_folder(&client, &path, &settings.config.mpd, music_dir.as_deref(), args.recursive, args.no_play).await?
     };
     return Ok(OpenOutcome { notice, interrupt: None });
   }
@@ -54,12 +54,12 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
   }
 
   if let Some(kind) = playlist::playlist_kind(&path) {
-    return open_playlist(&client, &path, kind, args, &settings.config.mpd, &music_dir, settings.config.behavior.queue_dedup)
+    return open_playlist(&client, &path, kind, args, &settings.config.mpd, music_dir.as_deref(), settings.config.behavior.queue_dedup)
       .await
       .map(|notice| OpenOutcome { notice, interrupt: None });
   }
 
-  let uri = resolve_open_uri(&client, &path, &settings.config.mpd, &music_dir).await?;
+  let uri = resolve_open_uri(&client, &path, &settings.config.mpd, music_dir.as_deref()).await?;
   let dedup = settings.config.behavior.queue_dedup;
   let mut interrupt: Option<InterruptSession> = None;
   let notice = match () {
@@ -98,10 +98,10 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       }
     }
     _ if args.mode == crate::cli::OpenMode::Folder => {
-      let folder = path.parent().map(Path::to_path_buf).unwrap_or_else(|| music_dir.clone());
+      let folder = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("/"));
       let files = collect_audio_files(&folder, args.recursive)?;
       let target = files.iter().position(|file| file == &path);
-      let uris = resolve_open_uris(&client, &files, &settings.config.mpd, &music_dir).await?;
+      let uris = resolve_open_uris(&client, &files, &settings.config.mpd, music_dir.as_deref()).await?;
       client.command(ClearQueue).await?;
       for file_uri in &uris {
         client.command(Add::uri(file_uri)).await?;
@@ -134,7 +134,7 @@ async fn open_playlist(
   kind: PlaylistKind,
   args: &OpenArgs,
   mpd_config: &MpdConfig,
-  music_dir: &Path,
+  music_dir: Option<&Path>,
   dedup: bool,
 ) -> Result<String> {
   let _ = kind;
@@ -207,9 +207,9 @@ pub(crate) async fn resolve_open_uri(
   client: &Client,
   path: &Path,
   mpd_config: &MpdConfig,
-  music_dir: &Path,
+  music_dir: Option<&Path>,
 ) -> Result<String> {
-  if let Ok(uri) = path_to_uri(music_dir, path) {
+  if let Some(uri) = direct_open_uri(path, mpd_config, music_dir) {
     return Ok(uri);
   }
   let owned = path.to_path_buf();
@@ -218,23 +218,38 @@ pub(crate) async fn resolve_open_uri(
     .map(|mut uris| uris.remove(0))
 }
 
+/// Resolve a path without touching MPD. Relative library URIs are preferred
+/// when a root is known; otherwise Unix socket connections can use `file://`.
+pub(crate) fn direct_open_uri(
+  path: &Path,
+  mpd_config: &MpdConfig,
+  music_dir: Option<&Path>,
+) -> Option<String> {
+  if let Some(music_dir) = music_dir
+    && let Ok(uri) = path_to_uri(music_dir, path)
+  {
+    return Some(uri);
+  }
+  is_socket_host(&mpd_config.host).then(|| file_uri(path))
+}
+
 /// Resolve a batch of files (mixed in/outside paths allowed), preserving
 /// the caller's order.
 async fn resolve_open_uris(
   client: &Client,
   files: &[PathBuf],
   mpd_config: &MpdConfig,
-  music_dir: &Path,
+  music_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
   let inside: Vec<(usize, String)> = files
     .iter()
     .enumerate()
-    .filter_map(|(index, file)| path_to_uri(music_dir, file).ok().map(|uri| (index, uri)))
+    .filter_map(|(index, file)| direct_open_uri(file, mpd_config, music_dir).map(|uri| (index, uri)))
     .collect();
   let outside: Vec<(usize, PathBuf)> = files
     .iter()
     .enumerate()
-    .filter(|(_, file)| path_to_uri(music_dir, file).is_err())
+    .filter(|(_, file)| direct_open_uri(file, mpd_config, music_dir).is_none())
     .map(|(index, file)| (index, file.clone()))
     .collect();
   if outside.is_empty() {
@@ -260,11 +275,14 @@ async fn resolve_outside_uris(
   client: &Client,
   outside: &[PathBuf],
   mpd_config: &MpdConfig,
-  music_dir: &Path,
+  music_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
   if is_socket_host(&mpd_config.host) {
     return Ok(outside.iter().map(|path| file_uri(path)).collect());
   }
+  let Some(music_dir) = music_dir else {
+    bail!("cannot open local files over TCP without a music directory; configure mpd.music_dir or connect through a Unix socket");
+  };
   let dir = links_dir(music_dir, &mpd_config.link_dir);
   let mut links = Vec::with_capacity(outside.len());
   for path in outside {
@@ -296,7 +314,7 @@ async fn open_folder(
   client: &Client,
   folder: &Path,
   mpd_config: &MpdConfig,
-  music_dir: &Path,
+  music_dir: Option<&Path>,
   recursive: bool,
   no_play: bool,
 ) -> Result<String> {
@@ -322,7 +340,7 @@ async fn open_folder_append(
   client: &Client,
   folder: &Path,
   mpd_config: &MpdConfig,
-  music_dir: &Path,
+  music_dir: Option<&Path>,
   recursive: bool,
   no_play: bool,
   dedup: bool,
@@ -359,7 +377,7 @@ pub(crate) async fn maybe_start_if_idle(client: &Client) -> Result<()> {
 /// Whether the queue already contains `uri` (add-time dedup).
 async fn queue_has(client: &Client, uri: &str) -> Result<bool> {
   let queue = client.command(Queue).await?;
-  Ok(queue.iter().any(|song| song.song.url == uri))
+  Ok(queue.iter().any(|song| same_song_uri(&song.song.url, uri)))
 }
 
 /// Drop URIs already queued and duplicates within the batch itself;
@@ -370,7 +388,7 @@ async fn skip_queued_and_batch_dups(
   uris: &mut Vec<String>,
   include_queue: bool,
 ) -> Result<()> {
-  let queued: HashSet<String> = if include_queue {
+  let queued: Vec<String> = if include_queue {
     client
       .command(Queue)
       .await?
@@ -378,10 +396,12 @@ async fn skip_queued_and_batch_dups(
       .map(|song| song.song.url)
       .collect()
   } else {
-    HashSet::new()
+    Vec::new()
   };
   let mut seen = HashSet::new();
-  uris.retain(|uri| seen.insert(uri.clone()) && !queued.contains(uri));
+  uris.retain(|uri| {
+    seen.insert(uri.clone()) && !queued.iter().any(|queued| same_song_uri(queued, uri))
+  });
   Ok(())
 }
 
@@ -390,4 +410,45 @@ fn short_name(path: &Path) -> String {
     .file_name()
     .map(|name| name.to_string_lossy().into_owned())
     .unwrap_or_else(|| path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn config(host: &str) -> MpdConfig {
+    MpdConfig {
+      host: host.to_string(),
+      ..MpdConfig::default()
+    }
+  }
+
+  #[test]
+  fn socket_uses_file_uri_without_music_dir() {
+    let path = Path::new("/tmp/Music/a song.flac");
+    assert_eq!(
+      direct_open_uri(path, &config("/tmp/mpd.sock"), None),
+      Some(file_uri(path)),
+    );
+  }
+
+  #[test]
+  fn tcp_requires_music_dir_for_local_files() {
+    assert_eq!(
+      direct_open_uri(Path::new("/tmp/song.flac"), &config("127.0.0.1"), None),
+      None,
+    );
+  }
+
+  #[test]
+  fn configured_library_uses_relative_uri() {
+    assert_eq!(
+      direct_open_uri(
+        Path::new("/music/Artist/song.flac"),
+        &config("127.0.0.1"),
+        Some(Path::new("/music")),
+      ),
+      Some("Artist/song.flac".to_string()),
+    );
+  }
 }

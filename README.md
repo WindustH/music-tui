@@ -25,10 +25,15 @@ https://github.com/user-attachments/assets/ed318f7b-a40b-41c5-a3dc-1a8dc9ae14b7
 ## Usage
 
 ```sh
-music-tui              # connect to MPD (127.0.0.1:6600 by default)
+music-tui              # connect to MPD (first-run local socket by default)
 music-tui open ~/Music/album   # replace the queue with a folder
 music-tui open song.flac      # see the open modes below
 ```
+
+If MPD has no configuration yet, the first music-tui launch creates a minimal
+local Unix-socket config without a `music_directory` and points music-tui at
+that socket. Existing MPD configs and custom remote hosts are never replaced.
+The MPD daemon still needs to be started by the system service manager.
 
 `open` modes (`-m`/`--mode`, default `interrupt`):
 
