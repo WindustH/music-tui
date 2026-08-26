@@ -126,39 +126,20 @@ pub fn is_socket_host(host: &str) -> bool {
   expand_home(host).to_string_lossy().starts_with('/')
 }
 
-/// Percent-encode an absolute path as a `file://` uri for MPD.
+/// Prefix an absolute path as a `file://` uri for MPD. MPD's local-file
+/// handler expects the filesystem path verbatim; it does not URL-decode
+/// percent escapes.
 pub fn file_uri(path: &Path) -> String {
-  let mut uri = String::from("file://");
-  for byte in path.to_string_lossy().bytes() {
-    match byte {
-      b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-        uri.push(byte as char)
-      }
-      _ => uri.push_str(&format!("%{byte:02X}")),
-    }
-  }
-  uri
+  format!("file://{}", path.to_string_lossy())
 }
 
-/// Decode a `file://` uri back into a filesystem path.
+/// Strip MPD's `file://` prefix back into a filesystem path.
 pub fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
   let rest = uri.strip_prefix("file://")?;
   if rest.is_empty() {
     return None;
   }
-  let mut path = Vec::with_capacity(rest.len());
-  let mut bytes = rest.bytes();
-  while let Some(byte) = bytes.next() {
-    if byte == b'%' {
-      let high = bytes.next()?;
-      let low = bytes.next()?;
-      let value = u8::from_str_radix(&format!("{}{}", high as char, low as char), 16).ok()?;
-      path.push(value);
-    } else {
-      path.push(byte);
-    }
-  }
-  String::from_utf8(path).ok().map(PathBuf::from)
+  Some(PathBuf::from(rest))
 }
 
 /// Directory holding the symlink bridge for files outside the library.
@@ -222,7 +203,8 @@ mod tests {
 
   #[test]
   fn file_uri_resolves_without_music_dir() {
-    let path = Path::new("/tmp/音乐/a song.flac");
+    let path = Path::new("/tmp/音乐/100% a song.flac");
+    assert_eq!(file_uri(path), "file:///tmp/音乐/100% a song.flac");
     assert_eq!(uri_to_path(None, &file_uri(path)), Some(path.to_path_buf()));
     assert_eq!(uri_to_path(None, path.to_str().unwrap()), Some(path.to_path_buf()));
     assert!(same_song_uri(&file_uri(path), path.to_str().unwrap()));
