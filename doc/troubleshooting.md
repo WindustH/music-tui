@@ -37,8 +37,9 @@
 
 ## Cover renders as symbols/ASCII on a capable terminal
 
-- Check `MUSIC_TUI_RENDER_MODES` and `render.auto_detect`; inside Zellij set
-  `render.zellij_sixel = true` or a `render.passthrough`.
+- Check `MUSIC_TUI_RENDER_MODES` and `render.auto_detect`. Zellij 0.45+ KGP is
+  auto-detected; set `render.zellij_sixel = true` only to additionally allow
+  Sixel.
 
 ## Metadata edit does not stick
 
