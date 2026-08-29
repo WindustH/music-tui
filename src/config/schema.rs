@@ -102,7 +102,14 @@ pub struct VisualizerConfig {
 impl Default for VisualizerConfig {
   fn default() -> Self {
     Self {
+      #[cfg(unix)]
       fifo_path: "/tmp/mpd.fifo".to_string(),
+      #[cfg(windows)]
+      fifo_path: {
+        let mut p = std::env::temp_dir();
+        p.push("mpd.fifo");
+        p.to_string_lossy().into_owned()
+      },
       sample_rate: 44100,
       channels: 2,
       bars: 256,

@@ -122,8 +122,11 @@ pub fn same_song_uri(left: &str, right: &str) -> bool {
 
 /// True when the host selects a UNIX socket connection — the only
 /// transport MPD accepts `file://` uris on.
-pub fn is_socket_host(host: &str) -> bool {
-  expand_home(host).to_string_lossy().starts_with('/')
+pub fn is_socket_host(_host: &str) -> bool {
+  #[cfg(unix)]
+  { expand_home(_host).to_string_lossy().starts_with('/') }
+  #[cfg(not(unix))]
+  { false }
 }
 
 /// Prefix an absolute path as a `file://` uri for MPD. MPD's local-file
@@ -184,6 +187,21 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
       }
       return Err(error).with_context(|| format!("failed to publish {}", link.display()));
     }
+  }
+  #[cfg(not(unix))]
+  {
+    // Windows: symlink_file requires admin or developer mode; fallback to copy
+    if link.exists() {
+      let same_size = std::fs::metadata(&link)
+        .ok()
+        .zip(std::fs::metadata(target).ok())
+        .is_some_and(|(a, b)| a.len() == b.len());
+      if same_size {
+        return Ok(link);
+      }
+    }
+    std::fs::copy(target, &link)
+      .with_context(|| format!("failed to copy {} -> {}", target.display(), link.display()))?;
   }
   Ok(link)
 }

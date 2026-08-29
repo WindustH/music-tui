@@ -80,6 +80,13 @@ cargo install --path .
 
 Requires `mpd`, `chafa` and `sqlite`.
 
+### Windows
+
+See [doc/windows.md](doc/windows.md) for MPD setup and Windows-specific
+notes. In short: install MPD, create a `mpd.conf` with
+`bind_to_address "127.0.0.1"`, register it as a Windows service
+(`sc.exe create mpd ...`), then run `music-tui`.
+
 ## Documentation
 
 [doc/index.md](doc/index.md).

@@ -250,44 +250,57 @@ fn run(
 }
 
 /// Resolved band colors handed to the render worker.
-fn open_fifo(path: &str) -> IoResult<std::fs::File> {
-  use std::os::fd::AsRawFd;
-  use std::os::unix::fs::OpenOptionsExt;
-  // mpd only creates the fifo when it loads its config; anything that
-  // wipes it afterwards (e.g. a /tmp cleaner) leaves both sides stranded
-  // until the fifo exists again. Recreate it so mpd can reconnect on its
-  // next output open.
-  if !std::path::Path::new(path).exists()
-    && let Ok(cpath) = std::ffi::CString::new(path)
+fn open_fifo(_path: &str) -> IoResult<std::fs::File> {
+  #[cfg(windows)]
   {
-    unsafe { libc::mkfifo(cpath.as_ptr(), 0o666) };
-    // Ignore mkfifo errors: a racing creator (or a bad path) surfaces
-    // as the open error below.
+    let _ = _path;
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::Unsupported,
+      "FIFO visualizer is not supported on Windows; configure MPD with a TCP-capable audio output",
+    ));
   }
-  let file = std::fs::OpenOptions::new()
-    .read(true)
-    .write(true)
-    .custom_flags(libc::O_NONBLOCK)
-    .open(path)?;
-  // The fifo stream is single-consumer: if a second music-tui instance
-  // (or any other reader) opened it first, the kernel would split the
-  // samples between both readers and garble every spectrum. An exclusive
-  // advisory lock on the fifo makes the loser back off cleanly. The lock
-  // lives on the open file description and is released on close/drop.
-  let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-  if locked != 0 {
-    let error = std::io::Error::last_os_error();
-    if error.kind() == std::io::ErrorKind::WouldBlock {
-      tracing::info!("visualizer fifo {path} is held by another instance; backing off");
-      return Err(std::io::Error::new(
-        std::io::ErrorKind::ResourceBusy,
-        format!("fifo {path} is already read by another instance"),
-      ));
+
+  #[cfg(unix)]
+  {
+    let path = _path;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    // mpd only creates the fifo when it loads its config; anything that
+    // wipes it afterwards (e.g. a /tmp cleaner) leaves both sides stranded
+    // until the fifo exists again. Recreate it so mpd can reconnect on its
+    // next output open.
+    if !std::path::Path::new(path).exists()
+      && let Ok(cpath) = std::ffi::CString::new(path)
+    {
+      unsafe { libc::mkfifo(cpath.as_ptr(), 0o666) };
+      // Ignore mkfifo errors: a racing creator (or a bad path) surfaces
+      // as the open error below.
     }
-    return Err(error);
+    let file = std::fs::OpenOptions::new()
+      .read(true)
+      .write(true)
+      .custom_flags(libc::O_NONBLOCK)
+      .open(path)?;
+    // The fifo stream is single-consumer: if a second music-tui instance
+    // (or any other reader) opened it first, the kernel would split the
+    // samples between both readers and garble every spectrum. An exclusive
+    // advisory lock on the fifo makes the loser back off cleanly. The lock
+    // lives on the open file description and is released on close/drop.
+    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if locked != 0 {
+      let error = std::io::Error::last_os_error();
+      if error.kind() == std::io::ErrorKind::WouldBlock {
+        tracing::info!("visualizer fifo {path} is held by another instance; backing off");
+        return Err(std::io::Error::new(
+          std::io::ErrorKind::ResourceBusy,
+          format!("fifo {path} is already read by another instance"),
+        ));
+      }
+      return Err(error);
+    }
+    tracing::info!("visualizer locked fifo {path}");
+    Ok(file)
   }
-  tracing::info!("visualizer locked fifo {path}");
-  Ok(file)
 }
 
 fn compute_spectrum(
