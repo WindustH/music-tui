@@ -41,3 +41,4 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 dirs = "5"
 rusqlite = { version = "0.32", default-features = false, features = ["column_decltype", "bundled"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

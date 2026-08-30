@@ -35,7 +35,7 @@ replace it with a real output (e.g. `sox`, `wasapi`) when you are ready.
 Register MPD so it starts automatically at boot and runs in the background:
 
 ```powershell
-sc.exe create mpd binPath= "\"C:\path\to\mpd.exe\" \"C:\path\to\mpd.conf\"" DisplayName= "Music Player Daemon" start= auto
+sc.exe create mpd binPath= '"C:\path\to\mpd.exe" "C:\path\to\mpd.conf"' DisplayName= "Music Player Daemon" start= auto
 ```
 
 Replace the paths with your actual `mpd.exe` and `mpd.conf` locations.

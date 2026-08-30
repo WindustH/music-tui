@@ -15,6 +15,7 @@ pub enum AsyncEvent {
   MetadataWrite(MetadataWriteOutcome),
   Cover(CoverOutcome),
   Render(RenderOutcome),
+  #[cfg(unix)]
   Spectrum(Vec<u8>),
   /// Precomputed visualizer pane lines from the band-render worker.
   VisualizerFrame(Vec<ratatui::text::Line<'static>>),

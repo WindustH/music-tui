@@ -6,14 +6,19 @@
 mod render;
 
 use std::{
-  io::{Read, Result as IoResult},
   sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
   },
+};
+
+#[cfg(unix)]
+use std::{
+  io::{Read, Result as IoResult},
   time::{Duration, Instant},
 };
 
+#[cfg(unix)]
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use tokio::sync::mpsc;
 
@@ -54,6 +59,7 @@ impl VisualizerHandle {
 /// every band owns at least one distinct bin, so neighboring low-frequency
 /// bands (where a pure log grid is narrower than the FFT resolution) never
 /// sample the same bin and render as duplicated identical bars.
+#[cfg(unix)]
 fn band_edges(hint: usize, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec<f32> {
   let hint = hint.max(2);
   let mut edges =
@@ -74,6 +80,7 @@ fn band_edges(hint: usize, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec
   edges
 }
 
+#[cfg(unix)]
 fn build_band_edges(ratio: f32, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec<f32> {
   let mut edges = vec![min_freq];
   loop {
@@ -89,6 +96,7 @@ fn build_band_edges(ratio: f32, hz_per_bin: f32, min_freq: f32, max_freq: f32) -
 
 /// Map band edges to FFT bin ranges `[start, end)`; every range contains
 /// at least one bin and consecutive ranges are disjoint.
+#[cfg(unix)]
 fn band_bin_ranges(edges: &[f32], window: usize, sample_rate: u32) -> Vec<(usize, usize)> {
   let bins = window / 2;
   let nyquist = sample_rate as f32 / 2.0;
@@ -113,10 +121,11 @@ fn band_bin_ranges(edges: &[f32], window: usize, sample_rate: u32) -> Vec<(usize
     })
 }
 
+#[cfg(unix)]
 pub fn spawn_visualizer(
   config: VisualizerConfig,
   events: mpsc::UnboundedSender<AsyncEvent>,
-) -> VisualizerHandle {
+) -> Option<VisualizerHandle> {
   let stop = Arc::new(AtomicBool::new(false));
   // Until the UI reports a pane width, analyze at the configured cap.
   let columns = Arc::new(AtomicUsize::new(config.bars.max(1)));
@@ -130,9 +139,18 @@ pub fn spawn_visualizer(
       run(config, events, stop, columns);
     })
     .expect("failed to spawn visualizer thread");
-  handle
+  Some(handle)
 }
 
+#[cfg(not(unix))]
+pub fn spawn_visualizer(
+  _config: VisualizerConfig,
+  _events: mpsc::UnboundedSender<AsyncEvent>,
+) -> Option<VisualizerHandle> {
+  None
+}
+
+#[cfg(unix)]
 fn run(
   config: VisualizerConfig,
   events: mpsc::UnboundedSender<AsyncEvent>,
@@ -250,59 +268,48 @@ fn run(
 }
 
 /// Resolved band colors handed to the render worker.
-fn open_fifo(_path: &str) -> IoResult<std::fs::File> {
-  #[cfg(windows)]
+#[cfg(unix)]
+fn open_fifo(path: &str) -> IoResult<std::fs::File> {
+  use std::os::fd::AsRawFd;
+  use std::os::unix::fs::OpenOptionsExt;
+  // mpd only creates the fifo when it loads its config; anything that
+  // wipes it afterwards (e.g. a /tmp cleaner) leaves both sides stranded
+  // until the fifo exists again. Recreate it so mpd can reconnect on its
+  // next output open.
+  if !std::path::Path::new(path).exists()
+    && let Ok(cpath) = std::ffi::CString::new(path)
   {
-    let _ = _path;
-    return Err(std::io::Error::new(
-      std::io::ErrorKind::Unsupported,
-      "FIFO visualizer is not supported on Windows; configure MPD with a TCP-capable audio output",
-    ));
+    unsafe { libc::mkfifo(cpath.as_ptr(), 0o666) };
+    // Ignore mkfifo errors: a racing creator (or a bad path) surfaces
+    // as the open error below.
   }
-
-  #[cfg(unix)]
-  {
-    let path = _path;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
-    // mpd only creates the fifo when it loads its config; anything that
-    // wipes it afterwards (e.g. a /tmp cleaner) leaves both sides stranded
-    // until the fifo exists again. Recreate it so mpd can reconnect on its
-    // next output open.
-    if !std::path::Path::new(path).exists()
-      && let Ok(cpath) = std::ffi::CString::new(path)
-    {
-      unsafe { libc::mkfifo(cpath.as_ptr(), 0o666) };
-      // Ignore mkfifo errors: a racing creator (or a bad path) surfaces
-      // as the open error below.
+  let file = std::fs::OpenOptions::new()
+    .read(true)
+    .write(true)
+    .custom_flags(libc::O_NONBLOCK)
+    .open(path)?;
+  // The fifo stream is single-consumer: if a second music-tui instance
+  // (or any other reader) opened it first, the kernel would split the
+  // samples between both readers and garble every spectrum. An exclusive
+  // advisory lock on the fifo makes the loser back off cleanly. The lock
+  // lives on the open file description and is released on close/drop.
+  let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+  if locked != 0 {
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+      tracing::info!("visualizer fifo {path} is held by another instance; backing off");
+      return Err(std::io::Error::new(
+        std::io::ErrorKind::ResourceBusy,
+        format!("fifo {path} is already read by another instance"),
+      ));
     }
-    let file = std::fs::OpenOptions::new()
-      .read(true)
-      .write(true)
-      .custom_flags(libc::O_NONBLOCK)
-      .open(path)?;
-    // The fifo stream is single-consumer: if a second music-tui instance
-    // (or any other reader) opened it first, the kernel would split the
-    // samples between both readers and garble every spectrum. An exclusive
-    // advisory lock on the fifo makes the loser back off cleanly. The lock
-    // lives on the open file description and is released on close/drop.
-    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if locked != 0 {
-      let error = std::io::Error::last_os_error();
-      if error.kind() == std::io::ErrorKind::WouldBlock {
-        tracing::info!("visualizer fifo {path} is held by another instance; backing off");
-        return Err(std::io::Error::new(
-          std::io::ErrorKind::ResourceBusy,
-          format!("fifo {path} is already read by another instance"),
-        ));
-      }
-      return Err(error);
-    }
-    tracing::info!("visualizer locked fifo {path}");
-    Ok(file)
+    return Err(error);
   }
+  tracing::info!("visualizer locked fifo {path}");
+  Ok(file)
 }
 
+#[cfg(unix)]
 fn compute_spectrum(
   frame: &[f32],
   fft: &Arc<dyn Fft<f32>>,
@@ -331,7 +338,7 @@ fn compute_spectrum(
   values
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
   use super::*;
 

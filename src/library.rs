@@ -155,8 +155,8 @@ pub fn links_dir(music_dir: &Path, configured: &str) -> PathBuf {
   }
 }
 
-/// Ensure a symlink under `dir` pointing at `target` (reused when intact);
-/// returns the link path. MPD follows outside symlinks by default.
+/// Ensure a bridge entry under `dir` for `target` (reused when current).
+/// Unix uses a symlink; Windows uses an atomically published cached copy.
 pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
   use sha2::{Digest, Sha256};
   std::fs::create_dir_all(dir)
@@ -188,22 +188,91 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
       return Err(error).with_context(|| format!("failed to publish {}", link.display()));
     }
   }
-  #[cfg(not(unix))]
+  #[cfg(windows)]
   {
-    // Windows: symlink_file requires admin or developer mode; fallback to copy
-    if link.exists() {
-      let same_size = std::fs::metadata(&link)
-        .ok()
-        .zip(std::fs::metadata(target).ok())
-        .is_some_and(|(a, b)| a.len() == b.len());
-      if same_size {
+    // Windows symlinks require admin or developer mode, so publish a copy.
+    // Comparing modification time as well as size prevents stale same-size
+    // files from being reused after the source is edited.
+    if same_file_version(&link, target) {
+      return Ok(link);
+    }
+
+    let temp = dir.join(format!(
+      ".{hash}-{}.{}.tmp",
+      name.to_string_lossy(),
+      std::process::id(),
+    ));
+    let _ = std::fs::remove_file(&temp);
+
+    // Retry once when the source changes while it is being copied. The
+    // stable bridge name is replaced only after a complete copy exists.
+    for attempt in 0..2 {
+      std::fs::copy(target, &temp)
+        .with_context(|| format!("failed to copy {} -> {}", target.display(), temp.display()))?;
+      if !same_file_version(&temp, target) {
+        let _ = std::fs::remove_file(&temp);
+        if attempt == 0 {
+          continue;
+        }
+        bail!("{} changed while it was being copied", target.display());
+      }
+
+      if let Err(error) = replace_file(&temp, &link) {
+        let _ = std::fs::remove_file(&temp);
+        // A concurrent instance may have published the same version first.
+        if same_file_version(&link, target) {
+          return Ok(link);
+        }
+        return Err(error).with_context(|| format!("failed to publish {}", link.display()));
+      }
+      if same_file_version(&link, target) {
         return Ok(link);
       }
+      if attempt == 0 {
+        continue;
+      }
+      bail!("{} changed while its bridge copy was published", target.display());
     }
-    std::fs::copy(target, &link)
-      .with_context(|| format!("failed to copy {} -> {}", target.display(), link.display()))?;
   }
   Ok(link)
+}
+
+#[cfg(windows)]
+fn same_file_version(left: &Path, right: &Path) -> bool {
+  std::fs::metadata(left)
+    .ok()
+    .zip(std::fs::metadata(right).ok())
+    .is_some_and(|(left, right)| {
+      left.len() == right.len()
+        && left
+          .modified()
+          .ok()
+          .zip(right.modified().ok())
+          .is_some_and(|(left, right)| left == right)
+    })
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+  use std::os::windows::ffi::OsStrExt;
+  use windows_sys::Win32::Storage::FileSystem::{
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+  };
+
+  let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+  let destination: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+  let moved = unsafe {
+    MoveFileExW(
+      source.as_ptr(),
+      destination.as_ptr(),
+      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+    )
+  };
+  if moved == 0 {
+    Err(std::io::Error::last_os_error())
+  } else {
+    Ok(())
+  }
 }
 
 #[cfg(test)]
@@ -219,6 +288,7 @@ mod tests {
     assert_eq!(configured_music_dir(&config), None);
   }
 
+  #[cfg(unix)]
   #[test]
   fn file_uri_resolves_without_music_dir() {
     let path = Path::new("/tmp/音乐/100% a song.flac");
@@ -235,6 +305,28 @@ mod tests {
       uri_to_path(Some(Path::new("/music")), "Artist/song.flac"),
       Some(PathBuf::from("/music/Artist/song.flac")),
     );
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn bridge_copy_refreshes_after_same_size_edit() {
+    let root = std::env::temp_dir().join(format!("music-tui-bridge-{}", std::process::id()));
+    let source = root.join("source.mp3");
+    let bridge = root.join("bridge");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(&source, b"first").unwrap();
+
+    let linked = ensure_link(&bridge, &source).unwrap();
+    assert_eq!(std::fs::read(&linked).unwrap(), b"first");
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(&source, b"other").unwrap();
+    let refreshed = ensure_link(&bridge, &source).unwrap();
+    assert_eq!(refreshed, linked);
+    assert_eq!(std::fs::read(&refreshed).unwrap(), b"other");
+
+    let _ = std::fs::remove_dir_all(&root);
   }
 
   #[test]

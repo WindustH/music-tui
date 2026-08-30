@@ -423,6 +423,7 @@ mod tests {
     }
   }
 
+  #[cfg(unix)]
   #[test]
   fn socket_uses_file_uri_without_music_dir() {
     let path = Path::new("/tmp/Music/a song.flac");

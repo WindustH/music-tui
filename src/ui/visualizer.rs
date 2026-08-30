@@ -14,6 +14,16 @@ pub(super) fn draw_visualizer_pane(frame: &mut Frame, app: &mut App, area: Rect)
     return;
   }
 
+  if app.visualizer.is_none() {
+    let theme = &app.settings.theme;
+    frame.render_widget(
+      Paragraph::new("spectrum visualizer is unavailable on this platform")
+        .style(Style::default().fg(theme.color(&theme.base.muted))),
+      inner,
+    );
+    return;
+  }
+
   // Keep the analysis band count in sync with the pane width, and let the
   // app re-render the band lines off-thread when the geometry changes.
   if let Some(visualizer) = app.visualizer.as_ref() {

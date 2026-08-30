@@ -222,16 +222,22 @@ impl LayoutConfig {
   }
 
   fn with_default_tabs() -> Self {
+    let tabs = vec![
+      TabConfig::playlist(),
+      TabConfig::library(),
+      TabConfig::playing(),
+      TabConfig::metadata(),
+      TabConfig::lyrics(),
+    ];
+    #[cfg(unix)]
+    let tabs = {
+      let mut tabs = tabs;
+      tabs.push(TabConfig::visualizer());
+      tabs
+    };
     Self {
       detail: layout::DEFAULT_DETAIL_LAYOUT.to_string(),
-      tabs: vec![
-        TabConfig::playlist(),
-        TabConfig::library(),
-        TabConfig::playing(),
-        TabConfig::metadata(),
-        TabConfig::lyrics(),
-        TabConfig::visualizer(),
-      ],
+      tabs,
     }
   }
 }
@@ -290,6 +296,7 @@ impl TabConfig {
     }
   }
 
+  #[cfg(unix)]
   fn visualizer() -> Self {
     Self {
       name: "visualizer".to_string(),
