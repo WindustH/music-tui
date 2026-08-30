@@ -260,7 +260,10 @@ mod tests {
   #[test]
   fn default_config_parses() {
     let tabs = parse_tabs(&LayoutConfig::default()).expect("default layouts");
+    #[cfg(unix)]
     assert_eq!(tabs.len(), 6);
+    #[cfg(windows)]
+    assert_eq!(tabs.len(), 5);
     assert_eq!(tabs[0].main, PaneKind::Queue);
     assert!(tabs[0].layout.contains(PaneKind::Cover));
     assert!(tabs[0].layout.contains(PaneKind::Metadata));

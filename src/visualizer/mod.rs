@@ -6,14 +6,19 @@
 mod render;
 
 use std::{
-  io::{Read, Result as IoResult},
   sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
   },
+};
+
+#[cfg(unix)]
+use std::{
+  io::{Read, Result as IoResult},
   time::{Duration, Instant},
 };
 
+#[cfg(unix)]
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use tokio::sync::mpsc;
 
@@ -54,6 +59,7 @@ impl VisualizerHandle {
 /// every band owns at least one distinct bin, so neighboring low-frequency
 /// bands (where a pure log grid is narrower than the FFT resolution) never
 /// sample the same bin and render as duplicated identical bars.
+#[cfg(unix)]
 fn band_edges(hint: usize, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec<f32> {
   let hint = hint.max(2);
   let mut edges =
@@ -74,6 +80,7 @@ fn band_edges(hint: usize, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec
   edges
 }
 
+#[cfg(unix)]
 fn build_band_edges(ratio: f32, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec<f32> {
   let mut edges = vec![min_freq];
   loop {
@@ -89,6 +96,7 @@ fn build_band_edges(ratio: f32, hz_per_bin: f32, min_freq: f32, max_freq: f32) -
 
 /// Map band edges to FFT bin ranges `[start, end)`; every range contains
 /// at least one bin and consecutive ranges are disjoint.
+#[cfg(unix)]
 fn band_bin_ranges(edges: &[f32], window: usize, sample_rate: u32) -> Vec<(usize, usize)> {
   let bins = window / 2;
   let nyquist = sample_rate as f32 / 2.0;
@@ -113,10 +121,11 @@ fn band_bin_ranges(edges: &[f32], window: usize, sample_rate: u32) -> Vec<(usize
     })
 }
 
+#[cfg(unix)]
 pub fn spawn_visualizer(
   config: VisualizerConfig,
   events: mpsc::UnboundedSender<AsyncEvent>,
-) -> VisualizerHandle {
+) -> Option<VisualizerHandle> {
   let stop = Arc::new(AtomicBool::new(false));
   // Until the UI reports a pane width, analyze at the configured cap.
   let columns = Arc::new(AtomicUsize::new(config.bars.max(1)));
@@ -130,9 +139,18 @@ pub fn spawn_visualizer(
       run(config, events, stop, columns);
     })
     .expect("failed to spawn visualizer thread");
-  handle
+  Some(handle)
 }
 
+#[cfg(not(unix))]
+pub fn spawn_visualizer(
+  _config: VisualizerConfig,
+  _events: mpsc::UnboundedSender<AsyncEvent>,
+) -> Option<VisualizerHandle> {
+  None
+}
+
+#[cfg(unix)]
 fn run(
   config: VisualizerConfig,
   events: mpsc::UnboundedSender<AsyncEvent>,
@@ -250,6 +268,7 @@ fn run(
 }
 
 /// Resolved band colors handed to the render worker.
+#[cfg(unix)]
 fn open_fifo(path: &str) -> IoResult<std::fs::File> {
   use std::os::fd::AsRawFd;
   use std::os::unix::fs::OpenOptionsExt;
@@ -290,6 +309,7 @@ fn open_fifo(path: &str) -> IoResult<std::fs::File> {
   Ok(file)
 }
 
+#[cfg(unix)]
 fn compute_spectrum(
   frame: &[f32],
   fft: &Arc<dyn Fft<f32>>,
@@ -318,7 +338,7 @@ fn compute_spectrum(
   values
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
   use super::*;
 

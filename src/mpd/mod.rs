@@ -142,6 +142,8 @@ pub fn spawn_mpd_worker(
 
 pub async fn connect(config: &MpdConfig) -> anyhow::Result<(Client, mpd_client::client::ConnectionEvents)> {
   let host = crate::config::expand_home(&config.host);
+
+  #[cfg(unix)]
   if host.to_string_lossy().starts_with('/') {
     let stream = tokio::net::UnixStream::connect(&host).await?;
     let (client, events) = Client::connect_with_password_opt(stream, config.password.as_deref())
@@ -158,11 +160,11 @@ pub async fn connect(config: &MpdConfig) -> anyhow::Result<(Client, mpd_client::
 }
 
 fn describe_address(config: &MpdConfig) -> String {
+  #[cfg(unix)]
   if config.host.starts_with('/') {
-    config.host.clone()
-  } else {
-    format!("{}:{}", config.host, config.port)
+    return config.host.clone();
   }
+  format!("{}:{}", config.host, config.port)
 }
 
 mod interrupt;

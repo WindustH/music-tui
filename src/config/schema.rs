@@ -102,7 +102,14 @@ pub struct VisualizerConfig {
 impl Default for VisualizerConfig {
   fn default() -> Self {
     Self {
+      #[cfg(unix)]
       fifo_path: "/tmp/mpd.fifo".to_string(),
+      #[cfg(windows)]
+      fifo_path: {
+        let mut p = std::env::temp_dir();
+        p.push("mpd.fifo");
+        p.to_string_lossy().into_owned()
+      },
       sample_rate: 44100,
       channels: 2,
       bars: 256,
@@ -215,16 +222,22 @@ impl LayoutConfig {
   }
 
   fn with_default_tabs() -> Self {
+    let tabs = vec![
+      TabConfig::playlist(),
+      TabConfig::library(),
+      TabConfig::playing(),
+      TabConfig::metadata(),
+      TabConfig::lyrics(),
+    ];
+    #[cfg(unix)]
+    let tabs = {
+      let mut tabs = tabs;
+      tabs.push(TabConfig::visualizer());
+      tabs
+    };
     Self {
       detail: layout::DEFAULT_DETAIL_LAYOUT.to_string(),
-      tabs: vec![
-        TabConfig::playlist(),
-        TabConfig::library(),
-        TabConfig::playing(),
-        TabConfig::metadata(),
-        TabConfig::lyrics(),
-        TabConfig::visualizer(),
-      ],
+      tabs,
     }
   }
 }
@@ -283,6 +296,7 @@ impl TabConfig {
     }
   }
 
+  #[cfg(unix)]
   fn visualizer() -> Self {
     Self {
       name: "visualizer".to_string(),

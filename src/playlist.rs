@@ -128,28 +128,36 @@ mod tests {
 
   #[test]
   fn parses_m3u_with_comments_and_relative_entries() {
+    let absolute = std::env::temp_dir().join("music-tui-absolute.mp3");
     let path = write_tmp(
       "list.m3u",
-      "#EXTM3U\n#EXTINF:123,Artist - Title\n../songs/a.flac\n/somewhere/b.mp3\n\n\n",
+      &format!(
+        "#EXTM3U\n#EXTINF:123,Artist - Title\n../songs/a.flac\n{}\n\n\n",
+        absolute.display(),
+      ),
     );
     let entries = parse_playlist(&path).unwrap();
     assert_eq!(entries.len(), 2);
     assert!(entries[0].ends_with("../songs/a.flac"));
-    assert_eq!(entries[1], PathBuf::from("/somewhere/b.mp3"));
+    assert_eq!(entries[1], absolute);
     let _ = std::fs::remove_file(&path);
     cleanup_tmp();
   }
 
   #[test]
   fn parses_pls_file_entries_only() {
+    let absolute = std::env::temp_dir().join("music-tui-absolute.flac");
     let path = write_tmp(
       "list.pls",
-      "[playlist]\nFile1=one.ogg\nTitle1=x\nFile2=/abs/two.flac\nLength1=10\n",
+      &format!(
+        "[playlist]\nFile1=one.ogg\nTitle1=x\nFile2={}\nLength1=10\n",
+        absolute.display(),
+      ),
     );
     let entries = parse_playlist(&path).unwrap();
     assert_eq!(entries.len(), 2);
     assert!(entries[0].ends_with("one.ogg"));
-    assert_eq!(entries[1], PathBuf::from("/abs/two.flac"));
+    assert_eq!(entries[1], absolute);
     let _ = std::fs::remove_file(&path);
     cleanup_tmp();
   }
@@ -192,12 +200,13 @@ mod tests {
 
   #[test]
   fn save_path_rejects_relative_paths() {
-    let dir = Path::new("/state/playlists");
-    assert!(resolve_save_path(Some("sub/queue.m3u"), dir).is_err());
-    assert!(resolve_save_path(Some("../queue.m3u"), dir).is_err());
+    let dir = std::env::temp_dir().join("music-tui-playlists");
+    assert!(resolve_save_path(Some("sub/queue.m3u"), &dir).is_err());
+    assert!(resolve_save_path(Some("../queue.m3u"), &dir).is_err());
+    let absolute = std::env::temp_dir().join("music-tui-queue.m3u");
     assert_eq!(
-      resolve_save_path(Some("/abs/queue.m3u"), dir).unwrap(),
-      PathBuf::from("/abs/queue.m3u")
+      resolve_save_path(Some(absolute.to_str().unwrap()), &dir).unwrap(),
+      absolute,
     );
     cleanup_tmp();
   }

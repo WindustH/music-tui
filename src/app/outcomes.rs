@@ -149,6 +149,7 @@ impl App {
     handled || self.tab_contains(PaneKind::Cover)
   }
 
+  #[cfg(unix)]
   pub fn handle_spectrum(&mut self, bars: Vec<u8>) -> bool {
     self.spectrum = bars;
     self.request_visualizer_frame();

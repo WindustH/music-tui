@@ -113,7 +113,9 @@ async fn run_tui(
   let mpd = mpd::spawn_mpd_worker(settings.config.mpd.clone(), tx.clone());
   mpd.set_queue_dedup(settings.config.behavior.queue_dedup);
   let visualizer = visualizer::spawn_visualizer(settings.config.visualizer.clone(), tx.clone());
-  let band_renderer = visualizer::spawn_band_renderer(tx.clone());
+  let band_renderer = visualizer
+    .as_ref()
+    .map(|_| visualizer::spawn_band_renderer(tx.clone()));
   let library_scan_tx = spawn_library_scanner(
     &settings.config.library,
     &settings.state_dir,
@@ -128,8 +130,8 @@ async fn run_tui(
   let mut renderer = CoverRenderStore::new(render_config, native_config, render_modes);
   let mut tui = Tui::new(protocol_reset)?;
   let mut app = App::new(settings, mpd, tx.clone(), initial_notice, interrupt);
-  app.visualizer = Some(visualizer.clone());
-  app.visualizer_renderer = Some(band_renderer);
+  app.visualizer = visualizer.clone();
+  app.visualizer_renderer = band_renderer;
   app.library_scan_tx = library_scan_tx;
   app.restore_state(state::PersistedState::load(&app.settings.state_dir));
   let mut saved_state = app.snapshot_state();
@@ -178,7 +180,9 @@ async fn run_tui(
       saved_state = current_state;
     }
   }
-  visualizer.stop();
+  if let Some(visualizer) = visualizer {
+    visualizer.stop();
+  }
   tui.restore()?;
   let final_state = app.snapshot_state();
   if final_state != saved_state {
@@ -210,6 +214,7 @@ fn handle_async_event(
     AsyncEvent::MetadataWrite(outcome) => app.handle_metadata_write_outcome(outcome),
     AsyncEvent::Cover(outcome) => app.handle_cover_outcome(outcome),
     AsyncEvent::Render(outcome) => renderer.finish(outcome),
+    #[cfg(unix)]
     AsyncEvent::Spectrum(bars) => app.handle_spectrum(bars),
     AsyncEvent::VisualizerFrame(lines) => app.handle_visualizer_frame(lines),
     AsyncEvent::Library(event) => match event {

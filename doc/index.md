@@ -26,4 +26,5 @@ This directory contains the full user and configuration documentation for
 
 ## Operational Notes
 
+- [Windows](windows.md): MPD setup and platform differences on Windows.
 - [Troubleshooting](troubleshooting.md): connection, rendering, and fifo issues.

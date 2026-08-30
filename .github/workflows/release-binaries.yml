@@ -25,6 +25,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-15
             target: aarch64-apple-darwin
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
 
     steps:
       - name: Resolve tag
@@ -48,10 +50,14 @@ jobs:
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
 
+      - name: Test
+        run: cargo test --locked --target ${{ matrix.target }}
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Package Unix
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -74,6 +80,25 @@ jobs:
             sha256sum "dist/${package}.tar.gz" > "dist/${package}.tar.gz.sha256"
           fi
 
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.release.outputs.version }}"
+          $target = "${{ matrix.target }}"
+          $package = "music-tui-$version-$target"
+          $staging = "dist/$package"
+          $archive = "dist/$package.zip"
+
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target/$target/release/music-tui.exe" $staging
+          Copy-Item LICENSE, README.md $staging
+          Copy-Item doc "$staging/doc" -Recurse
+          Compress-Archive -Path "$staging/*" -DestinationPath $archive -Force
+
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          "$hash  $package.zip" | Set-Content -Encoding ascii "$archive.sha256"
+
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,5 +106,5 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          assets=(dist/*.tar.gz dist/*.sha256)
+          assets=(dist/*.tar.gz dist/*.zip dist/*.sha256)
           gh release upload "$TAG" "${assets[@]}" --clobber
