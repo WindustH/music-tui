@@ -279,7 +279,7 @@ fn open_fifo(path: &str) -> IoResult<std::fs::File> {
   if !std::path::Path::new(path).exists()
     && let Ok(cpath) = std::ffi::CString::new(path)
   {
-    unsafe { libc::mkfifo(cpath.as_ptr(), 0o666) };
+    unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) };
     // Ignore mkfifo errors: a racing creator (or a bad path) surfaces
     // as the open error below.
   }
