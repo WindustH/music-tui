@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use mpd_client::{
+  Client,
   commands::{Add, ClearQueue, Play, Queue, SetSingle, Status, Update},
   commands::{SingleMode, SongPosition},
   responses::PlayState,
-  Client,
 };
 use tracing::info;
 
@@ -42,11 +42,31 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
 
   if path.is_dir() {
     let notice = if args.mode == crate::cli::OpenMode::Append {
-      open_folder_append(&client, &path, &settings.config.mpd, music_dir.as_deref(), args.recursive, args.no_play, settings.config.behavior.queue_dedup).await?
+      open_folder_append(
+        &client,
+        &path,
+        &settings.config.mpd,
+        music_dir.as_deref(),
+        args.recursive,
+        args.no_play,
+        settings.config.behavior.queue_dedup,
+      )
+      .await?
     } else {
-      open_folder(&client, &path, &settings.config.mpd, music_dir.as_deref(), args.recursive, args.no_play).await?
+      open_folder(
+        &client,
+        &path,
+        &settings.config.mpd,
+        music_dir.as_deref(),
+        args.recursive,
+        args.no_play,
+      )
+      .await?
     };
-    return Ok(OpenOutcome { notice, interrupt: None });
+    return Ok(OpenOutcome {
+      notice,
+      interrupt: None,
+    });
   }
 
   if !path.is_file() {
@@ -54,9 +74,20 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
   }
 
   if let Some(kind) = playlist::playlist_kind(&path) {
-    return open_playlist(&client, &path, kind, args, &settings.config.mpd, music_dir.as_deref(), settings.config.behavior.queue_dedup)
-      .await
-      .map(|notice| OpenOutcome { notice, interrupt: None });
+    return open_playlist(
+      &client,
+      &path,
+      kind,
+      args,
+      &settings.config.mpd,
+      music_dir.as_deref(),
+      settings.config.behavior.queue_dedup,
+    )
+    .await
+    .map(|notice| OpenOutcome {
+      notice,
+      interrupt: None,
+    });
   }
 
   let uri = resolve_open_uri(&client, &path, &settings.config.mpd, music_dir.as_deref()).await?;
@@ -68,7 +99,10 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
         format!("{} already queued (not playing)", short_name(&path))
       } else {
         client.command(Add::uri(&uri)).await?;
-        format!("queued {} (not playing)", path.file_name().unwrap_or_default().to_string_lossy())
+        format!(
+          "queued {} (not playing)",
+          path.file_name().unwrap_or_default().to_string_lossy()
+        )
       }
     }
     _ if args.mode == crate::cli::OpenMode::Append => {
@@ -87,9 +121,7 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       } else {
         let status = client.command(Status).await?;
         if let Some((position, _)) = status.current_song {
-          client
-            .command(Add::uri(&uri).at(position.0 + 1))
-            .await?;
+          client.command(Add::uri(&uri).at(position.0 + 1)).await?;
         } else {
           client.command(Add::uri(&uri)).await?;
           maybe_start_if_idle(&client).await?;
@@ -98,19 +130,25 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       }
     }
     _ if args.mode == crate::cli::OpenMode::Folder => {
-      let folder = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("/"));
+      let folder = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("/"));
       let files = collect_audio_files(&folder, args.recursive)?;
       let target = files.iter().position(|file| file == &path);
-      let uris = resolve_open_uris(&client, &files, &settings.config.mpd, music_dir.as_deref()).await?;
+      let uris =
+        resolve_open_uris(&client, &files, &settings.config.mpd, music_dir.as_deref()).await?;
       client.command(ClearQueue).await?;
       for file_uri in &uris {
         client.command(Add::uri(file_uri)).await?;
       }
       let position = target.unwrap_or(0);
-      client
-        .command(Play::song(SongPosition(position)))
-        .await?;
-      format!("playing {} from folder queue ({} songs)", short_name(&path), uris.len())
+      client.command(Play::song(SongPosition(position))).await?;
+      format!(
+        "playing {} from folder queue ({} songs)",
+        short_name(&path),
+        uris.len()
+      )
     }
     _ => {
       // Interrupt: snapshot state, replace queue with the single song, arm restore.
@@ -121,7 +159,10 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       client.command(Play::current()).await?;
       info!(playlist = ?session.playlist, "interrupt preview started");
       interrupt = Some(session);
-      format!("previewing {} (queue will be restored afterwards)", short_name(&path))
+      format!(
+        "previewing {} (queue will be restored afterwards)",
+        short_name(&path)
+      )
     }
   };
 
@@ -141,7 +182,9 @@ async fn open_playlist(
   let entries = playlist::parse_playlist(path).map_err(anyhow::Error::msg)?;
   let mut files = Vec::new();
   for entry in &entries {
-    let Ok(resolved) = entry.canonicalize() else { continue };
+    let Ok(resolved) = entry.canonicalize() else {
+      continue;
+    };
     if !is_audio_file(&resolved) {
       continue;
     }
@@ -176,7 +219,10 @@ async fn open_playlist(
     format!("queued {} song(s) from {name}", uris.len())
   } else if args.mode == crate::cli::OpenMode::Next {
     let status = client.command(Status).await?;
-    let start = status.current_song.map(|(position, _)| position.0 + 1).unwrap_or(0);
+    let start = status
+      .current_song
+      .map(|(position, _)| position.0 + 1)
+      .unwrap_or(0);
     for (offset, uri) in uris.iter().enumerate() {
       client.command(Add::uri(uri).at(start + offset)).await?;
     }
@@ -195,7 +241,10 @@ async fn open_playlist(
   };
   let mut notice = notice;
   if skipped > 0 {
-    notice.push_str(&format!(" ({skipped} entr{} skipped)", if skipped == 1 { "y" } else { "ies" }));
+    notice.push_str(&format!(
+      " ({skipped} entr{} skipped)",
+      if skipped == 1 { "y" } else { "ies" }
+    ));
   }
   Ok(notice)
 }
@@ -244,7 +293,9 @@ async fn resolve_open_uris(
   let inside: Vec<(usize, String)> = files
     .iter()
     .enumerate()
-    .filter_map(|(index, file)| direct_open_uri(file, mpd_config, music_dir).map(|uri| (index, uri)))
+    .filter_map(|(index, file)| {
+      direct_open_uri(file, mpd_config, music_dir).map(|uri| (index, uri))
+    })
     .collect();
   let outside: Vec<(usize, PathBuf)> = files
     .iter()
@@ -258,12 +309,7 @@ async fn resolve_open_uris(
   let outside_paths: Vec<PathBuf> = outside.iter().map(|(_, path)| path.clone()).collect();
   let resolved = resolve_outside_uris(client, &outside_paths, mpd_config, music_dir).await?;
   let mut mixed: Vec<(usize, String)> = inside;
-  mixed.extend(
-    outside
-      .iter()
-      .map(|(index, _)| *index)
-      .zip(resolved),
-  );
+  mixed.extend(outside.iter().map(|(index, _)| *index).zip(resolved));
   mixed.sort_by_key(|(index, _)| *index);
   Ok(mixed.into_iter().map(|(_, uri)| uri).collect())
 }
@@ -281,7 +327,9 @@ async fn resolve_outside_uris(
     return Ok(outside.iter().map(|path| file_uri(path)).collect());
   }
   let Some(music_dir) = music_dir else {
-    bail!("cannot open local files over TCP without a music directory; configure mpd.music_dir or connect through a Unix socket");
+    bail!(
+      "cannot open local files over TCP without a music directory; configure mpd.music_dir or connect through a Unix socket"
+    );
   };
   let dir = links_dir(music_dir, &mpd_config.link_dir);
   let mut links = Vec::with_capacity(outside.len());
@@ -354,7 +402,10 @@ async fn open_folder_append(
     skip_queued_and_batch_dups(client, &mut uris, true).await?;
   }
   if uris.is_empty() {
-    return Ok(format!("all songs from {} already queued", folder.display()));
+    return Ok(format!(
+      "all songs from {} already queued",
+      folder.display()
+    ));
   }
   for uri in &uris {
     client.command(Add::uri(uri)).await?;

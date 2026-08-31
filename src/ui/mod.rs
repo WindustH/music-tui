@@ -19,6 +19,7 @@ use ratatui::{
   widgets::{Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, Wrap},
 };
 use tokio::sync::mpsc;
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
   app::{App, song_album, song_artist, song_title},
@@ -331,26 +332,89 @@ pub(crate) fn format_duration_line(duration: Duration) -> String {
   }
 }
 
+/// Display width of one char in terminal columns (CJK chars are 2).
+pub(super) fn char_display_width(ch: char) -> usize {
+  ch.width().unwrap_or(0)
+}
+
+/// Total display width of `text` in terminal columns.
+fn text_display_width(text: &str) -> usize {
+  text.chars().map(char_display_width).sum()
+}
+
+/// Number of chars starting strictly before `byte` (its char index).
+fn chars_starting_before(text: &str, byte: usize) -> usize {
+  text.char_indices().take_while(|(b, _)| *b < byte).count()
+}
+
 /// Pick a horizontal window for long field values so the match sits
-/// visibly inside it. Returns the char offset to start drawing at plus
-/// the match range (kept in full-text byte coordinates).
-pub(super) fn match_window(
-  text: &str,
-  range: (usize, usize),
-  budget: usize,
-) -> (usize, Option<(usize, usize)>) {
-  let char_count = text.chars().count();
-  if budget == 0 || char_count <= budget {
-    return (0, Some(range));
+/// visibly inside it, measured in terminal columns: CJK chars occupy
+/// two columns, so a char-counted budget can overflow the cell. Returns
+/// the char offset to start drawing at.
+pub(super) fn match_window(text: &str, range: (usize, usize), budget: usize) -> usize {
+  let total = text_display_width(text);
+  if budget == 0 || total <= budget {
+    return 0;
   }
-  // Char offset of the match start.
-  let start_char = text
-    .char_indices()
-    .take_while(|(byte, _)| *byte < range.0)
-    .count();
-  let lead = budget / 3;
-  let window_start = start_char.saturating_sub(lead).min(char_count - budget);
-  (window_start, Some(range))
+  let chars: Vec<char> = text.chars().collect();
+  let anchor = chars_starting_before(text, range.0);
+  let match_end = chars_starting_before(text, range.1);
+  // Lead the match in by up to a third of the budget, walking back by
+  // display columns (never splitting a wide char).
+  let lead_budget = budget / 3;
+  let mut start = anchor;
+  let mut lead = 0;
+  while start > 0 {
+    let width = char_display_width(chars[start - 1]);
+    if lead + width > lead_budget {
+      break;
+    }
+    lead += width;
+    start -= 1;
+  }
+  // If the match still does not fit, slide the window forward until it does.
+  while start < match_end
+    && chars[start..match_end]
+      .iter()
+      .map(|ch| char_display_width(*ch))
+      .sum::<usize>()
+      > budget
+  {
+    start += 1;
+  }
+  start.min(chars.len() - 1)
+}
+
+/// The visible slice of `text` starting at char `start`, cut at the
+/// first char that would overflow `budget` display columns.
+pub(super) fn window_text(text: &str, start: usize, budget: usize) -> String {
+  let mut used = 0;
+  let mut window = String::new();
+  for ch in text.chars().skip(start) {
+    let width = char_display_width(ch);
+    if used + width > budget {
+      break;
+    }
+    used += width;
+    window.push(ch);
+  }
+  window
+}
+
+/// Window for a filtered cell: anchored on the leftmost term match so
+/// whichever match sorts first stays visible (anchoring on
+/// `ranges.first()` can scroll an earlier match out of view). Returns
+/// the visible text and its char offset into `text`.
+pub(super) fn filter_window(
+  text: &str,
+  ranges: &[(usize, usize)],
+  budget: usize,
+) -> (String, usize) {
+  let start = match ranges.iter().copied().min() {
+    Some(range) => match_window(text, range, budget),
+    None => 0,
+  };
+  (window_text(text, start, budget), start)
 }
 
 /// Largest char boundary <= `index` in `text`.
@@ -419,4 +483,47 @@ pub(super) fn highlighted_ranges_spans(
     spans.push(Span::styled(window.to_string(), base));
   }
   spans
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn match_window_measures_display_columns() {
+    // 28 CJK chars = 56 columns; a 30-column budget must scroll.
+    let text = format!("{}夜曲{}", "曲".repeat(20), "词".repeat(6));
+    let start_byte = text.find("夜曲").unwrap();
+    let range = (start_byte, start_byte + "夜曲".len());
+    let start = match_window(&text, range, 30);
+    let window = window_text(&text, start, 30);
+    assert!(window.contains("夜曲"), "window {window:?} hides the match");
+    assert!(
+      window.chars().map(char_display_width).sum::<usize>() <= 30,
+      "window overflows the column budget"
+    );
+  }
+
+  #[test]
+  fn filter_window_anchors_on_leftmost_match() {
+    // "love" matches late in the text, "beatles" at the very start:
+    // the leftmost match must stay visible.
+    let text = format!("Beatles Band Song{} Love Song", " pad".repeat(10));
+    let love = text.find("Love").unwrap();
+    let beatles = text.find("Beatles").unwrap();
+    let ranges = [(love, love + 4), (beatles, beatles + 7)];
+    let (window, _) = filter_window(&text, &ranges, 20);
+    assert!(
+      window.contains("Beatles"),
+      "window {window:?} hides the leftmost match"
+    );
+  }
+
+  #[test]
+  fn window_text_never_splits_wide_chars() {
+    // 7 columns fit only 3 double-width chars.
+    assert_eq!(window_text("曲曲曲", 0, 7).chars().count(), 3);
+    assert_eq!(window_text("曲曲曲", 0, 5).chars().count(), 2);
+    assert_eq!(window_text("夜曲", 1, 10), "曲");
+  }
 }

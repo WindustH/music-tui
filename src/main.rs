@@ -10,14 +10,14 @@ mod layout;
 mod library;
 mod library_db;
 mod logging;
-mod strip;
 mod lyrics;
 mod metadata;
 mod mpd;
-mod playlist;
 mod open;
+mod playlist;
 mod render;
 mod state;
+mod strip;
 mod terminal;
 mod theme;
 mod ui;
@@ -25,8 +25,8 @@ mod visualizer;
 
 use std::{
   sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
   },
   thread,
   time::Duration,
@@ -116,11 +116,8 @@ async fn run_tui(
   let band_renderer = visualizer
     .as_ref()
     .map(|_| visualizer::spawn_band_renderer(tx.clone()));
-  let library_scan_tx = spawn_library_scanner(
-    &settings.config.library,
-    &settings.state_dir,
-    tx.clone(),
-  );
+  let library_scan_tx =
+    spawn_library_scanner(&settings.config.library, &settings.state_dir, tx.clone());
 
   let input_enabled = Arc::new(AtomicBool::new(true));
   let input_generation = Arc::new(AtomicU64::new(0));
@@ -203,7 +200,10 @@ fn handle_async_event(
       if generation == current_generation {
         app.handle_input(event)
       } else {
-        debug!(?event, generation, current_generation, "input event ignored");
+        debug!(
+          ?event,
+          generation, current_generation, "input event ignored"
+        );
         false
       }
     }
@@ -282,19 +282,21 @@ fn spawn_input_thread(
   enabled: Arc<AtomicBool>,
   generation: Arc<AtomicU64>,
 ) {
-  thread::spawn(move || loop {
-    if !enabled.load(Ordering::SeqCst) {
-      thread::sleep(Duration::from_millis(10));
-      continue;
-    }
-    match crossterm::event::read() {
-      Ok(event) => {
-        let generation = generation.load(Ordering::SeqCst);
-        if tx.send(AsyncEvent::Input { event, generation }).is_err() {
-          break;
-        }
+  thread::spawn(move || {
+    loop {
+      if !enabled.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(10));
+        continue;
       }
-      Err(_) => thread::sleep(Duration::from_millis(10)),
+      match crossterm::event::read() {
+        Ok(event) => {
+          let generation = generation.load(Ordering::SeqCst);
+          if tx.send(AsyncEvent::Input { event, generation }).is_err() {
+            break;
+          }
+        }
+        Err(_) => thread::sleep(Duration::from_millis(10)),
+      }
     }
   });
 }

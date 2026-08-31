@@ -65,7 +65,6 @@ pub(crate) fn band_layout(width: usize, bands: usize) -> BandLayout {
   }
 }
 
-
 #[derive(Clone, Copy)]
 pub(crate) struct VisualizerColors {
   pub low: Color,
@@ -197,7 +196,6 @@ pub(crate) fn build_band_lines(
   }
   lines
 }
-
 
 #[cfg(test)]
 mod tests {

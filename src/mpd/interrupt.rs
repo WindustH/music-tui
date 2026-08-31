@@ -12,9 +12,7 @@ pub async fn capture_interrupt_session(client: &Client) -> anyhow::Result<Interr
       .unwrap_or_default()
       .as_secs();
     let name = format!("music-tui-preview-{stamp}");
-    client
-      .command(SaveQueueAsPlaylist(name.as_str()))
-      .await?;
+    client.command(SaveQueueAsPlaylist(name.as_str())).await?;
     Some(name)
   } else {
     None

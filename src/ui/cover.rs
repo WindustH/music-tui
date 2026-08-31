@@ -98,8 +98,21 @@ pub(super) fn draw_cover_pane(
   preserve_overlays: &mut bool,
   preserve_areas: &mut Vec<Rect>,
 ) {
-  if matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) {
-    draw_hover_cover_pane(frame, app, renderer, tx, area, overlays, source, preserve_overlays, preserve_areas);
+  if matches!(
+    source,
+    PaneSource::QueueHovered | PaneSource::LibraryHovered
+  ) {
+    draw_hover_cover_pane(
+      frame,
+      app,
+      renderer,
+      tx,
+      area,
+      overlays,
+      source,
+      preserve_overlays,
+      preserve_areas,
+    );
     return;
   }
   let theme = &app.settings.theme;

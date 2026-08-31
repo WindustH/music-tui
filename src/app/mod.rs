@@ -21,12 +21,15 @@ pub(crate) use tracing::debug;
 
 pub(crate) use crate::{
   config::{Settings, expand_home},
-  cover, metadata,
-  event::{AsyncEvent, CoverOutcome, LyricsOutcome, MpdEvent, MetadataOutcome, MetadataWriteOutcome},
+  cover,
+  event::{
+    AsyncEvent, CoverOutcome, LyricsOutcome, MetadataOutcome, MetadataWriteOutcome, MpdEvent,
+  },
+  keymap::KeymapConfig,
   layout::{PaneKind, PaneLayout, PaneSource, TabLayout, parse_detail, parse_tabs},
   library::{resolve_music_dir, uri_to_path},
-  keymap::KeymapConfig,
   lyrics::{self, Lyrics},
+  metadata,
   mpd::{InterruptSession, MpdCommand, MpdHandle},
 };
 
@@ -42,21 +45,21 @@ pub enum EditorRequest {
 /// Secondary detail view for a queue entry (the `i` key), in the spirit of
 pub(crate) mod actions;
 pub(crate) mod bindings;
+pub(crate) mod commands;
+mod detail;
 pub(crate) mod editor;
+pub(crate) mod input;
 pub(crate) mod labels;
 pub(crate) mod library;
 pub(crate) mod loading;
+pub(crate) mod mouse;
 pub(crate) mod outcomes;
 pub(crate) mod snapshot;
-pub(crate) mod commands;
-mod detail;
-pub(crate) mod input;
-pub(crate) mod mouse;
 pub(crate) mod viewport;
 
+use crate::strip::StrippedText;
 pub use detail::SongView;
 pub(crate) use labels::{song_album, song_artist, song_title};
-use crate::strip::StrippedText;
 pub(crate) use library::FilterTarget;
 
 pub struct App {
@@ -387,18 +390,28 @@ impl App {
   }
 
   pub fn elapsed(&self) -> f64 {
-    let Some(status) = &self.status else { return 0.0 };
-    status.elapsed.map(|elapsed| elapsed.as_secs_f64()).unwrap_or(0.0)
+    let Some(status) = &self.status else {
+      return 0.0;
+    };
+    status
+      .elapsed
+      .map(|elapsed| elapsed.as_secs_f64())
+      .unwrap_or(0.0)
   }
 
   pub fn duration(&self) -> Option<f64> {
-    self.status.as_ref().and_then(|status| status.duration).map(|d| d.as_secs_f64())
+    self
+      .status
+      .as_ref()
+      .and_then(|status| status.duration)
+      .map(|d| d.as_secs_f64())
   }
 
   // --- event application -------------------------------------------------
 
   pub(crate) fn active_lyrics_index(&self) -> Option<usize> {
-    self.lyrics
+    self
+      .lyrics
       .as_ref()
       .and_then(|lyrics| lyrics.active_index(Duration::from_secs_f64(self.elapsed())))
   }
@@ -431,8 +444,8 @@ impl App {
     if len == 0 {
       return false;
     }
-    let next = (self.queue_state.selected().unwrap_or(0) as i32 + delta)
-      .clamp(0, len as i32 - 1) as usize;
+    let next =
+      (self.queue_state.selected().unwrap_or(0) as i32 + delta).clamp(0, len as i32 - 1) as usize;
     self.queue_state.select(Some(next));
     self.sync_hover_view();
     true
@@ -450,7 +463,9 @@ impl App {
   fn scroll_metadata_by(&mut self, delta: i32) {
     if let Some(detail) = self.detail.as_mut() {
       detail.metadata_scroll = if delta < 0 {
-        detail.metadata_scroll.saturating_sub(delta.unsigned_abs() as usize)
+        detail
+          .metadata_scroll
+          .saturating_sub(delta.unsigned_abs() as usize)
       } else {
         detail.metadata_scroll.saturating_add(delta as usize)
       };
@@ -462,12 +477,16 @@ impl App {
       && let Some(hover) = self.hover.as_mut()
     {
       hover.metadata_scroll = if delta < 0 {
-        hover.metadata_scroll.saturating_sub(delta.unsigned_abs() as usize)
+        hover
+          .metadata_scroll
+          .saturating_sub(delta.unsigned_abs() as usize)
       } else {
         hover.metadata_scroll.saturating_add(delta as usize)
       };
     } else if delta < 0 {
-      self.metadata_scroll = self.metadata_scroll.saturating_sub(delta.unsigned_abs() as usize);
+      self.metadata_scroll = self
+        .metadata_scroll
+        .saturating_sub(delta.unsigned_abs() as usize);
     } else {
       self.metadata_scroll = self.metadata_scroll.saturating_add(delta as usize);
     }
@@ -475,7 +494,8 @@ impl App {
 
   /// Whether the active tab's main lyrics pane reads the hovered song.
   fn hover_lyrics_active(&self) -> bool {
-    self.main_pane() == PaneKind::Lyrics && matches!(
+    self.main_pane() == PaneKind::Lyrics
+      && matches!(
         self.main_pane_source(),
         PaneSource::QueueHovered | PaneSource::LibraryHovered
       )
@@ -514,12 +534,13 @@ impl App {
     );
     let max_scroll = line_count.saturating_sub(height);
     hover.lyrics_scroll = if delta < 0 {
-      hover.lyrics_scroll.saturating_sub(delta.unsigned_abs() as usize)
+      hover
+        .lyrics_scroll
+        .saturating_sub(delta.unsigned_abs() as usize)
     } else {
       (hover.lyrics_scroll + delta as usize).min(max_scroll)
     };
   }
-
 
   /// Binding tables for the current tab as a priority queue: the main
   /// pane first, then the tab's other panes in layout order (dedup).

@@ -55,6 +55,31 @@ pub(crate) fn viewport_height(areas: &[Rect]) -> usize {
     .unwrap_or(1)
 }
 
+/// Clamp a pane's `(selected, offset)` pair after its row list changed
+/// length (filtering, refresh).
+///
+/// When the selection falls outside the new list (a filter shrank it),
+/// land on the best row — the top of the list — instead of pinning the
+/// selection to the last row. Returns `None` for an empty list.
+pub(crate) fn clamp_selection(
+  selected: Option<usize>,
+  offset: usize,
+  len: usize,
+  height: usize,
+) -> Option<(usize, usize)> {
+  if len == 0 {
+    return None;
+  }
+  let height = height.max(1);
+  let offset = offset.min(len.saturating_sub(height));
+  let selected = match selected {
+    Some(selected) if selected < len => selected.clamp(offset, (offset + height - 1).min(len - 1)),
+    // No selection yet, or it fell off the shortened list.
+    _ => return Some((0, 0)),
+  };
+  Some((selected, offset))
+}
+
 /// Set the viewport offset absolutely, clamping the selection into the
 /// new window (the selection follows the viewport).
 pub(crate) fn set_viewport<S: PaneState>(
@@ -131,4 +156,43 @@ pub(crate) fn bar_jump<S: PaneState>(
     .round()
     .clamp(0.0, len.saturating_sub(height) as f64) as usize;
   set_viewport(state, len, height, next)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::clamp_selection;
+
+  #[test]
+  fn clamp_selection_resets_when_selection_falls_off() {
+    // Filter shrank the list under the selection: best row, at the top.
+    assert_eq!(clamp_selection(Some(3000), 2900, 5, 30), Some((0, 0)));
+    assert_eq!(clamp_selection(None, 900, 900, 30), Some((0, 0)));
+  }
+
+  #[test]
+  fn clamp_selection_keeps_selection_inside_window() {
+    assert_eq!(clamp_selection(Some(3), 0, 900, 30), Some((3, 0)));
+    // Selection above the viewport: pull it down to the window top.
+    assert_eq!(clamp_selection(Some(2), 10, 900, 30), Some((10, 10)));
+    // Last row stays visible with a viewport near the end.
+    assert_eq!(clamp_selection(Some(899), 870, 900, 30), Some((899, 870)));
+  }
+
+  #[test]
+  fn clamp_selection_pulls_offset_back_to_the_list() {
+    // Offset beyond the shortened list clamps to len - height; a still
+    // valid selection follows the window.
+    assert_eq!(clamp_selection(Some(4), 2900, 5, 30), Some((4, 0)));
+    assert_eq!(clamp_selection(Some(29), 20, 30, 10), Some((29, 20)));
+    // Selection left above the window: pull it down to the window top.
+    assert_eq!(clamp_selection(Some(5), 20, 30, 10), Some((20, 20)));
+    // Offset past the end (len - height): clamp it back.
+    assert_eq!(clamp_selection(Some(25), 25, 30, 10), Some((25, 20)));
+  }
+
+  #[test]
+  fn clamp_selection_empty_list_clears_selection() {
+    assert_eq!(clamp_selection(Some(3), 0, 0, 30), None);
+    assert_eq!(clamp_selection(None, 0, 0, 30), None);
+  }
 }

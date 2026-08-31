@@ -9,7 +9,6 @@ fn hint_rows_for(hints: &[framework_tui::KeyHint], width: u16) -> u16 {
   key_hint_rows(hints.len(), key_hint_columns(3, width)) as u16
 }
 
-
 pub(super) fn draw_footer(
   frame: &mut Frame,
   app: &mut App,
@@ -58,22 +57,36 @@ pub(super) fn draw_footer(
   match app.status.as_ref().map(|status| status.state) {
     Some(PlayState::Playing) => spans.push(Span::styled("▶ ", state_style(&theme.footer.playing))),
     Some(PlayState::Paused) => spans.push(Span::styled("⏸ ", state_style(&theme.footer.paused))),
-    Some(PlayState::Stopped) | None => spans.push(Span::styled("■ ", state_style(&theme.footer.stopped))),
+    Some(PlayState::Stopped) | None => {
+      spans.push(Span::styled("■ ", state_style(&theme.footer.stopped)))
+    }
   }
   if let Some(song) = app.current_song() {
     let title = song_title(&song.song)
       .map(str::to_string)
       .unwrap_or_else(|| song.song.url.clone());
-    let artist = song_artist(&song.song).map(str::to_string).unwrap_or_default();
-    let label = if artist.is_empty() { title } else { format!("{title} — {artist}") };
-    spans.push(Span::styled(label, Style::default().fg(theme.color(&theme.base.foreground))));
+    let artist = song_artist(&song.song)
+      .map(str::to_string)
+      .unwrap_or_default();
+    let label = if artist.is_empty() {
+      title
+    } else {
+      format!("{title} — {artist}")
+    };
+    spans.push(Span::styled(
+      label,
+      Style::default().fg(theme.color(&theme.base.foreground)),
+    ));
   } else if let Some(error) = app.connection_error.as_ref() {
     spans.push(Span::styled(
       format!("mpd offline: {error}"),
       Style::default().fg(theme.color(&theme.footer.stopped)),
     ));
   } else {
-    spans.push(Span::styled("idle", Style::default().fg(theme.color(&theme.base.muted))));
+    spans.push(Span::styled(
+      "idle",
+      Style::default().fg(theme.color(&theme.base.muted)),
+    ));
   }
 
   let mut flags = String::new();
@@ -94,11 +107,18 @@ pub(super) fn draw_footer(
   let volume = app.status.as_ref().map(|status| status.volume).unwrap_or(0);
   let right = format!(
     " {}vol:{}%{} ",
-    if flags.is_empty() { String::new() } else { format!("[{flags}] ") },
+    if flags.is_empty() {
+      String::new()
+    } else {
+      format!("[{flags}] ")
+    },
     volume,
     if app.follow_current { " ⌖" } else { "" },
   );
-  spans.push(Span::styled(right, Style::default().fg(theme.color(&theme.base.muted))));
+  spans.push(Span::styled(
+    right,
+    Style::default().fg(theme.color(&theme.base.muted)),
+  ));
   frame.render_widget(
     Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true }),
     status_line,

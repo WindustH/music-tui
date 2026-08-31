@@ -7,7 +7,10 @@ use ratatui::text::Text;
 
 #[derive(Debug)]
 pub enum AsyncEvent {
-  Input { event: Event, generation: u64 },
+  Input {
+    event: Event,
+    generation: u64,
+  },
   Mpd(MpdEvent),
   Tick,
   Lyrics(LyricsOutcome),
@@ -26,7 +29,10 @@ pub enum AsyncEvent {
 #[derive(Debug)]
 pub enum LibraryEvent {
   /// Periodic progress while scanning (scanned files, changed files).
-  Scanning { scanned: usize, changed: usize },
+  Scanning {
+    scanned: usize,
+    changed: usize,
+  },
   /// Scan finished; carries the full track list.
   Loaded(Vec<crate::library_db::LibraryTrack>),
   Error(String),
@@ -35,7 +41,10 @@ pub enum LibraryEvent {
 #[derive(Debug)]
 pub enum MpdEvent {
   Connected(String),
-  Snapshot { status: Status, queue: Vec<SongInQueue> },
+  Snapshot {
+    status: Status,
+    queue: Vec<SongInQueue>,
+  },
   ConnectionLost(String),
   Notice(String),
 }
@@ -75,7 +84,10 @@ pub struct RenderOutcome {
 
 #[derive(Debug, Clone)]
 pub enum RenderedImage {
-  Symbols { mode: RenderMode, text: Text<'static> },
+  Symbols {
+    mode: RenderMode,
+    text: Text<'static>,
+  },
   Protocol {
     mode: RenderMode,
     data: String,

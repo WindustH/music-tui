@@ -11,7 +11,6 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-
 pub use crate::keymap::KeymapConfig;
 pub use crate::theme::ThemeConfig;
 
@@ -24,8 +23,8 @@ mod paths;
 mod schema;
 
 pub use comments::app_config_toml;
-pub use paths::{detect_music_dir, expand_home};
 use paths::{app_cache_dir, app_config_dir, app_state_dir};
+pub use paths::{detect_music_dir, expand_home};
 pub use schema::{
   BehaviorConfig, LayoutConfig, LibraryColumn, LibraryConfig, LyricsConfig, MpdConfig,
   PlaylistConfig, RenderConfig, TabConfig, VisualizerConfig,
@@ -114,7 +113,12 @@ fn adopt_generated_socket(config: &mut AppConfig, socket: &Path) -> bool {
 /// State files (library.db, state.toml) used to live in the cache dir;
 /// move them to the state dir on first run after the switch.
 fn migrate_state_files_from_cache(cache_dir: &Path, state_dir: &Path) {
-  for name in ["library.db", "library.db-wal", "library.db-shm", "state.toml"] {
+  for name in [
+    "library.db",
+    "library.db-wal",
+    "library.db-shm",
+    "state.toml",
+  ] {
     let from = cache_dir.join(name);
     let to = state_dir.join(name);
     if !from.is_file() || to.exists() {

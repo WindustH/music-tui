@@ -201,16 +201,43 @@ const THEME_HEADER: &str = "\
 ";
 
 const SECTION_COMMENTS: &[(&str, &str)] = &[
-  ("base", "# Shared colors: default text, pane borders, dimmed text,\n# accents, and the secondary accent (artist/genre fields, notices).\n"),
-  ("tab_bar", "# Tab bar: the active tab title and the inactive ones.\n"),
-  ("queue", "# Queue pane: the playing/paused row markers and the filter\n# keyword highlight color.\n"),
-  ("library", "# Library pane: playing/paused markers, filter keyword highlight,\n# the selected-row bar, and the per-field text colors\n# (title/album/filename use field_primary, artist/genre/lyrics use\n# field_secondary).\n"),
-  ("footer", "# Footer status line: the play-state icon, the song title while\n# stopped, and transient messages.\n"),
-  ("progress", "# Bottom progress band: the played portion and the remainder.\n"),
-  ("lyrics", "# Lyrics pane: the active line / sung characters and the manual\n# navigation cursor marker.\n"),
+  (
+    "base",
+    "# Shared colors: default text, pane borders, dimmed text,\n# accents, and the secondary accent (artist/genre fields, notices).\n",
+  ),
+  (
+    "tab_bar",
+    "# Tab bar: the active tab title and the inactive ones.\n",
+  ),
+  (
+    "queue",
+    "# Queue pane: the playing/paused row markers and the filter\n# keyword highlight color.\n",
+  ),
+  (
+    "library",
+    "# Library pane: playing/paused markers, filter keyword highlight,\n# the selected-row bar, and the per-field text colors\n# (title/album/filename use field_primary, artist/genre/lyrics use\n# field_secondary).\n",
+  ),
+  (
+    "footer",
+    "# Footer status line: the play-state icon, the song title while\n# stopped, and transient messages.\n",
+  ),
+  (
+    "progress",
+    "# Bottom progress band: the played portion and the remainder.\n",
+  ),
+  (
+    "lyrics",
+    "# Lyrics pane: the active line / sung characters and the manual\n# navigation cursor marker.\n",
+  ),
   ("metadata", "# Metadata pane: the field label column.\n"),
-  ("visualizer", "# Visualizer bands by frequency range: low / mid / high.\n"),
-  ("which_key", "# Which-key hint bar (pending key sequences). `separator` is the\n# text between key and description; `columns` wraps hints when the\n# bar gets crowded.\n"),
+  (
+    "visualizer",
+    "# Visualizer bands by frequency range: low / mid / high.\n",
+  ),
+  (
+    "which_key",
+    "# Which-key hint bar (pending key sequences). `separator` is the\n# text between key and description; `columns` wraps hints when the\n# bar gets crowded.\n",
+  ),
 ];
 
 /// Serialize the theme into the commented `theme.toml` representation.
@@ -220,11 +247,14 @@ pub(crate) fn format_theme_toml(theme: &ThemeConfig) -> String {
   };
   let mut out = String::from(THEME_HEADER);
   for line in body.lines() {
-    if let Some(section) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']'))
-      && let Some((_, comment)) = SECTION_COMMENTS.iter().find(|(name, _)| *name == section) {
-        out.push('\n');
-        out.push_str(comment);
-      }
+    if let Some(section) = line
+      .strip_prefix('[')
+      .and_then(|rest| rest.strip_suffix(']'))
+      && let Some((_, comment)) = SECTION_COMMENTS.iter().find(|(name, _)| *name == section)
+    {
+      out.push('\n');
+      out.push_str(comment);
+    }
     out.push_str(line);
     out.push('\n');
   }

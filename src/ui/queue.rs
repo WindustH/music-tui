@@ -7,9 +7,17 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Queue;
   let title = match app.queue_filter.as_deref() {
-    Some(filter) => format!("queue {}/{} · /{filter}", app.queue_filter_matches.len(), app.queue.len()),
+    Some(filter) => format!(
+      "queue {}/{} · /{filter}",
+      app.queue_filter_matches.len(),
+      app.queue.len()
+    ),
     None if app.queue_dedup && app.queue_filter_matches.len() < app.queue.len() => {
-      format!("queue {}/{} · dedup", app.queue_filter_matches.len(), app.queue.len())
+      format!(
+        "queue {}/{} · dedup",
+        app.queue_filter_matches.len(),
+        app.queue.len()
+      )
     }
     None => format!("queue ({})", app.queue.len()),
   };
@@ -23,7 +31,10 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
 
   if app.queue.is_empty() {
     let hint = if app.connection_error.is_some() {
-      format!("mpd connection lost: {}", app.connection_error.as_deref().unwrap_or_default())
+      format!(
+        "mpd connection lost: {}",
+        app.connection_error.as_deref().unwrap_or_default()
+      )
     } else if app.connected.is_some() {
       "queue is empty — try `music-tui open <path>` or :add <path>".to_string()
     } else {
@@ -36,7 +47,10 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     return;
   }
   if app.queue_filter_matches.is_empty() {
-    let hint = format!("no matches for /{}", app.queue_filter.as_deref().unwrap_or_default());
+    let hint = format!(
+      "no matches for /{}",
+      app.queue_filter.as_deref().unwrap_or_default()
+    );
     frame.render_widget(
       Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
@@ -83,16 +97,27 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   });
 }
 
-fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize>) -> Line<'static> {
+fn queue_line(
+  app: &App,
+  index: usize,
+  song: &SongInQueue,
+  playing: Option<usize>,
+) -> Line<'static> {
   let theme = &app.settings.theme;
   let title = song_title(&song.song)
     .map(str::to_string)
     .unwrap_or_else(|| song.song.url.clone());
-  let artist = song_artist(&song.song).map(str::to_string).unwrap_or_default();
+  let artist = song_artist(&song.song)
+    .map(str::to_string)
+    .unwrap_or_default();
   let marker = if playing == Some(index) {
     match app.status.as_ref().map(|status| status.state) {
-      Some(PlayState::Playing) => Span::styled("▶ ", Style::default().fg(theme.color(&theme.queue.playing))),
-      Some(PlayState::Paused) => Span::styled("⏸ ", Style::default().fg(theme.color(&theme.queue.paused))),
+      Some(PlayState::Playing) => {
+        Span::styled("▶ ", Style::default().fg(theme.color(&theme.queue.playing)))
+      }
+      Some(PlayState::Paused) => {
+        Span::styled("⏸ ", Style::default().fg(theme.color(&theme.queue.paused)))
+      }
       _ => Span::raw("  "),
     }
   } else {
@@ -125,7 +150,12 @@ fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize
       .flat_map(|term| title_text.find_all(term))
       .collect();
     spans.extend(highlighted_ranges_spans(
-      &title, &title, 0, title_ranges, base, highlight,
+      &title,
+      &title,
+      0,
+      title_ranges,
+      base,
+      highlight,
     ));
     if !artist.is_empty() {
       let artist_text = StrippedText::new(&artist);
@@ -135,7 +165,12 @@ fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize
         .collect();
       spans.push(Span::styled(" — ", base));
       spans.extend(highlighted_ranges_spans(
-        &artist, &artist, 0, artist_ranges, base, highlight,
+        &artist,
+        &artist,
+        0,
+        artist_ranges,
+        base,
+        highlight,
       ));
     }
     // Terms that only match the album or the URL still need a visible
@@ -148,7 +183,9 @@ fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize
         .collect();
       if !ranges.is_empty() {
         spans.push(Span::styled(" · ", muted));
-        spans.extend(highlighted_ranges_spans(album, album, 0, ranges, muted, highlight));
+        spans.extend(highlighted_ranges_spans(
+          album, album, 0, ranges, muted, highlight,
+        ));
       }
     }
     let url_text = StrippedText::new(&song.song.url);
@@ -159,7 +196,12 @@ fn queue_line(app: &App, index: usize, song: &SongInQueue, playing: Option<usize
     if !url_ranges.is_empty() {
       spans.push(Span::styled(" ⟨", muted));
       spans.extend(highlighted_ranges_spans(
-        &song.song.url, &song.song.url, 0, url_ranges, muted, highlight,
+        &song.song.url,
+        &song.song.url,
+        0,
+        url_ranges,
+        muted,
+        highlight,
       ));
       spans.push(Span::styled("⟩", muted));
     }

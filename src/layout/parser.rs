@@ -15,16 +15,24 @@ fn parse_node(tokens: &mut Tokenizer) -> Result<PaneLayout, String> {
     Some('H') | Some('V') => parse_split(tokens),
     Some(_) => {
       let word = tokens.read_word();
-      let kind = PaneKind::parse(&word)
-        .ok_or_else(|| format!("unknown pane {word:?} (expected queue/library/cover/lyrics/metadata/visualizer)"))?;
+      let kind = PaneKind::parse(&word).ok_or_else(|| {
+        format!("unknown pane {word:?} (expected queue/library/cover/lyrics/metadata/visualizer)")
+      })?;
       // Optional `:source` suffix on data panes (cover/lyrics/metadata).
       let source = if tokens.peek() == Some(':') {
         tokens.next();
         let source_word = tokens.read_word();
-        let source = PaneSource::parse(&source_word)
-          .ok_or_else(|| format!("unknown source {source_word:?} (expected playing/hovered/library)"))?;
-        if !matches!(kind, PaneKind::Cover | PaneKind::Lyrics | PaneKind::Metadata) {
-          return Err(format!("pane {:?} does not take a data source", kind.title()));
+        let source = PaneSource::parse(&source_word).ok_or_else(|| {
+          format!("unknown source {source_word:?} (expected playing/hovered/library)")
+        })?;
+        if !matches!(
+          kind,
+          PaneKind::Cover | PaneKind::Lyrics | PaneKind::Metadata
+        ) {
+          return Err(format!(
+            "pane {:?} does not take a data source",
+            kind.title()
+          ));
         }
         source
       } else {

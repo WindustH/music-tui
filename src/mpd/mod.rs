@@ -10,14 +10,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use mpd_client::{
+  Client,
   client::ConnectionEvent,
   commands::{
     self, Add, ClearQueue, Delete, DeletePlaylist, LoadPlaylist, Play, Previous,
     SaveQueueAsPlaylist, Seek, SeekMode, SetConsume, SetPause, SetRandom, SetRepeat, SetSingle,
-    SetVolume, Shuffle, Stop, SingleMode, SongId, SongPosition,
+    SetVolume, Shuffle, SingleMode, SongPosition, Stop,
   },
   responses::{PlayState, SongInQueue, Status},
-  Client,
 };
 use tokio::{net::TcpStream, sync::mpsc, time::sleep};
 use tracing::{debug, info, warn};
@@ -58,10 +58,6 @@ pub enum MpdCommand {
   /// Shuffle the entire queue.
   Shuffle,
   DeleteAt(usize),
-  /// Queue-dedup maintenance: drop duplicate positions (highest first).
-  /// Deliberately NOT in `command_touches_queue` — housekeeping must not
-  /// cancel an armed interrupt-preview session.
-  DedupDelete(Vec<(u64, String)>),
   AddUri(String),
   /// Play (or append) a local file from the library pane. The path is
   /// resolved to an MPD URI (music dir relative, `file://`, or symlink
@@ -93,10 +89,7 @@ impl MpdHandle {
   }
 }
 
-pub fn spawn_mpd_worker(
-  config: MpdConfig,
-  events: mpsc::UnboundedSender<AsyncEvent>,
-) -> MpdHandle {
+pub fn spawn_mpd_worker(config: MpdConfig, events: mpsc::UnboundedSender<AsyncEvent>) -> MpdHandle {
   let (tx, mut rx) = mpsc::unbounded_channel();
   let queue_dedup = Arc::new(AtomicBool::new(false));
   let worker_dedup = queue_dedup.clone();
@@ -140,7 +133,9 @@ pub fn spawn_mpd_worker(
   MpdHandle { tx, queue_dedup }
 }
 
-pub async fn connect(config: &MpdConfig) -> anyhow::Result<(Client, mpd_client::client::ConnectionEvents)> {
+pub async fn connect(
+  config: &MpdConfig,
+) -> anyhow::Result<(Client, mpd_client::client::ConnectionEvents)> {
   let host = crate::config::expand_home(&config.host);
 
   #[cfg(unix)]

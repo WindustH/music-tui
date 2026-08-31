@@ -38,7 +38,11 @@ pub fn read_metadata(path: &Path) -> Result<Vec<MetadataEntry>, String> {
   let mut entries = Vec::new();
 
   let properties = tagged.properties();
-  push_file_entry(&mut entries, "duration", format_duration(properties.duration()));
+  push_file_entry(
+    &mut entries,
+    "duration",
+    format_duration(properties.duration()),
+  );
   if let Some(bitrate) = properties.overall_bitrate() {
     push_file_entry(&mut entries, "bitrate", format!("{bitrate} kbps"));
   }
@@ -162,7 +166,10 @@ pub fn metadata_draft(path: &Path, entries: &[MetadataEntry]) -> String {
 /// block** — saving then normalizes every block to the draft value, so a
 /// corrupted duplicate (e.g. GBK RIFF INFO) is fixed even when the primary
 /// value already matches the draft.
-pub fn metadata_changes(entries: &[MetadataEntry], edited: &str) -> Result<Vec<MetadataChange>, String> {
+pub fn metadata_changes(
+  entries: &[MetadataEntry],
+  edited: &str,
+) -> Result<Vec<MetadataChange>, String> {
   let value = edited
     .parse::<toml::Table>()
     .map_err(|err| format!("metadata draft is not valid TOML: {err}"))?;
@@ -198,9 +205,9 @@ pub fn metadata_changes(entries: &[MetadataEntry], edited: &str) -> Result<Vec<M
     };
     let old_value = original.get(tag.as_str()).cloned();
     let differs_from_primary = old_value.as_deref().unwrap_or_default() != new_value;
-    let differs_from_extra = extras
-      .iter()
-      .any(|(extra_tag, extra_value)| extra_tag.as_str() == tag.as_str() && extra_value.as_str() != new_value);
+    let differs_from_extra = extras.iter().any(|(extra_tag, extra_value)| {
+      extra_tag.as_str() == tag.as_str() && extra_value.as_str() != new_value
+    });
     if differs_from_primary || differs_from_extra {
       changes.push(MetadataChange {
         tag: tag.to_string(),
@@ -224,7 +231,8 @@ pub fn write_metadata(path: &Path, changes: &[MetadataChange]) -> Result<usize, 
     let tag_type = tagged.file_type().primary_tag_type();
     tagged.insert_tag(lofty::tag::Tag::new(tag_type));
   }
-  let block_types: Vec<lofty::tag::TagType> = tagged.tags().iter().map(|tag| tag.tag_type()).collect();
+  let block_types: Vec<lofty::tag::TagType> =
+    tagged.tags().iter().map(|tag| tag.tag_type()).collect();
   for tag_type in block_types {
     let Some(tag) = tagged.tag_mut(tag_type) else {
       continue;
@@ -295,7 +303,12 @@ fn write_tag_value(tag: &mut lofty::tag::Tag, name: &str, value: &str) {
         let normalized = if value.trim().parse::<u32>().is_ok() {
           value.trim().to_string()
         } else {
-          value.split(['/', ':']).next().unwrap_or("").trim().to_string()
+          value
+            .split(['/', ':'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string()
         };
         if normalized.is_empty() {
           tag.remove_key(&key);

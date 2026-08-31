@@ -119,6 +119,7 @@ pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
       .rank()
       .cmp(&b.field.rank())
       .then_with(|| a.track.artist.cmp(&b.track.artist))
+      .then_with(|| a.track.album.cmp(&b.track.album))
       .then_with(|| a.track.title.cmp(&b.track.title))
   });
   out
@@ -138,6 +139,17 @@ mod tests {
   }
 
   #[test]
+  fn filter_orders_by_artist_album_title() {
+    let mut later = track("same title", "artist", "");
+    later.album = "Album Z".to_string();
+    let mut earlier = track("same title", "artist", "");
+    earlier.album = "Album A".to_string();
+    let hits = filter_tracks(&[later, earlier], "title");
+    assert_eq!(hits[0].track.album, "Album A");
+    assert_eq!(hits[1].track.album, "Album Z");
+  }
+
+  #[test]
   fn filter_matches_all_terms_and_picks_priority_field() {
     let tracks = vec![
       track("夜的第七章", "周杰伦", "夜曲不停写"),
@@ -151,7 +163,7 @@ mod tests {
   #[test]
   fn filter_ranks_title_over_album() {
     let tracks = vec![
-      track("album-hit", "a", ""),   // title match
+      track("album-hit", "a", ""), // title match
       track("song", "b", "album-hit in lyrics"),
     ];
     let hits = filter_tracks(&tracks, "album-hit");

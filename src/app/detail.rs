@@ -108,8 +108,8 @@ impl App {
     let row = self
       .queue_filter_matches
       .iter()
-      .position(|candidate| *candidate == position.0 .0)
-      .unwrap_or(position.0 .0);
+      .position(|candidate| *candidate == position.0.0)
+      .unwrap_or(position.0.0);
     self.select_queue_row(row);
     true
   }

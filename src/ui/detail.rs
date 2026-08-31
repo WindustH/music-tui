@@ -1,7 +1,7 @@
 //! Secondary detail view rendering for a queue entry.
 
-use super::*;
 use super::cover::{draw_cover_art, fitted_cover_area};
+use super::*;
 
 /// Secondary detail surface for a queue entry (`i`): a layout tree over the
 /// cover and metadata panes (default side by side) — the sidebar data stays
@@ -53,12 +53,7 @@ struct DetailCtx<'a> {
   preserve_areas: &'a mut Vec<Rect>,
 }
 
-fn draw_detail_layout(
-  frame: &mut Frame,
-  ctx: &mut DetailCtx<'_>,
-  area: Rect,
-  layout: &PaneLayout,
-) {
+fn draw_detail_layout(frame: &mut Frame, ctx: &mut DetailCtx<'_>, area: Rect, layout: &PaneLayout) {
   match layout {
     PaneLayout::Pane(kind, _) => match kind {
       PaneKind::Cover => draw_detail_cover(frame, ctx, area),
@@ -90,7 +85,11 @@ fn draw_detail_layout(
 /// the cover pane.
 fn draw_detail_cover(frame: &mut Frame, ctx: &mut DetailCtx<'_>, cover_area: Rect) {
   let theme = &ctx.app.settings.theme;
-  let image_area = fitted_cover_area(ctx.detail.cover_dims, cover_area, ctx.renderer.cell_pixels());
+  let image_area = fitted_cover_area(
+    ctx.detail.cover_dims,
+    cover_area,
+    ctx.renderer.cell_pixels(),
+  );
   let muted = Style::default().fg(theme.color(&theme.base.muted));
   draw_cover_art(
     frame,

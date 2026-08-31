@@ -34,7 +34,10 @@ pub fn parse(body: &str) -> Result<Lyrics, String> {
       return Err("lyrics file is empty".to_string());
     }
     return Ok(Lyrics::Plain(
-      plain.into_iter().filter(|line| !line.trim().is_empty()).collect(),
+      plain
+        .into_iter()
+        .filter(|line| !line.trim().is_empty())
+        .collect(),
     ));
   }
 

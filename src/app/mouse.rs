@@ -22,14 +22,9 @@ impl App {
   fn handle_mouse_on_interface(&mut self, mouse: MouseEvent) -> bool {
     // Clicking a tab label in the tab bar switches to that tab.
     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-      && let Some(index) = self
-        .tab_hit_areas
-        .iter()
-        .position(|area| {
-          mouse.row == area.y
-            && mouse.column >= area.x
-            && mouse.column < area.x + area.width
-        })
+      && let Some(index) = self.tab_hit_areas.iter().position(|area| {
+        mouse.row == area.y && mouse.column >= area.x && mouse.column < area.x + area.width
+      })
       && index != self.tab
     {
       self.goto_tab(index);
@@ -164,16 +159,23 @@ impl App {
       .lyrics_pane_sources
       .iter()
       .zip(self.lyrics_pane_areas.iter())
-      .any(|(source, pane)| matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) && *pane == area)
+      .any(|(source, pane)| {
+        matches!(
+          source,
+          PaneSource::QueueHovered | PaneSource::LibraryHovered
+        ) && *pane == area
+      })
   }
 
   /// Wheel on a lyrics pane: scroll the hovered lyrics when that pane is
   /// the hovered source, otherwise the playing lyrics.
   fn scroll_lyrics_wheel(&mut self, delta: i32) -> bool {
-    let hovered_pane = self
-      .lyrics_pane_sources
-      .iter()
-      .any(|source| matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered));
+    let hovered_pane = self.lyrics_pane_sources.iter().any(|source| {
+      matches!(
+        source,
+        PaneSource::QueueHovered | PaneSource::LibraryHovered
+      )
+    });
     if hovered_pane
       && (self
         .hover
@@ -262,11 +264,7 @@ impl App {
   /// semantics as the queue view.
   fn scroll_lyrics_viewport(&mut self, delta: i32) -> bool {
     self.lyrics_follow = false;
-    let line_count = self
-      .lyrics
-      .as_ref()
-      .map(Lyrics::line_count)
-      .unwrap_or(0);
+    let line_count = self.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(0);
     if line_count == 0 {
       return false;
     }
@@ -285,7 +283,9 @@ impl App {
     let pointer = self
       .lyrics_cursor
       .unwrap_or_else(|| self.active_lyrics_index().unwrap_or(0));
-    let last_visible = (next + height).saturating_sub(1).min(line_count.saturating_sub(1));
+    let last_visible = (next + height)
+      .saturating_sub(1)
+      .min(line_count.saturating_sub(1));
     self.lyrics_cursor = Some(pointer.clamp(next, last_visible));
     true
   }
@@ -296,7 +296,9 @@ impl App {
       return false;
     }
     let next = if delta < 0 {
-      self.help_scroll.saturating_sub(delta.unsigned_abs() as usize)
+      self
+        .help_scroll
+        .saturating_sub(delta.unsigned_abs() as usize)
     } else {
       self.help_scroll.saturating_add(delta as usize)
     };
@@ -315,7 +317,9 @@ impl App {
   }
 
   pub(crate) fn select_queue_row(&mut self, row: usize) {
-    self.queue_state.select(Some(row.min(self.visible_len().saturating_sub(1))));
+    self
+      .queue_state
+      .select(Some(row.min(self.visible_len().saturating_sub(1))));
     self.sync_hover_view();
   }
 

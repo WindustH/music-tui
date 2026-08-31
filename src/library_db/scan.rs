@@ -19,7 +19,7 @@ pub fn scan_roots(
 ) -> Result<()> {
   let roots: Vec<(i64, String)> = {
     let mut statement = connection.prepare("SELECT id, path FROM roots")?;
-    
+
     statement
       .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
       .collect::<std::result::Result<Vec<_>, _>>()?
@@ -99,8 +99,15 @@ pub fn scan_roots(
           "UPDATE tracks SET title=?1, artist=?2, album=?3, genre=?4, filename=?5,
              duration_secs=?6, lyrics=?7, mtime=?8 WHERE id=?9",
           rusqlite::params![
-            title, artist, track.album, track.genre, track.filename,
-            track.duration_secs, lyrics, mtime as i64, id
+            title,
+            artist,
+            track.album,
+            track.genre,
+            track.filename,
+            track.duration_secs,
+            lyrics,
+            mtime as i64,
+            id
           ],
         )?;
       } else {
@@ -108,8 +115,16 @@ pub fn scan_roots(
           "INSERT INTO tracks (root_id, rel_path, title, artist, album, genre, filename,
              duration_secs, lyrics, mtime) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
           rusqlite::params![
-            root_id, rel, title, artist, track.album, track.genre, track.filename,
-            track.duration_secs, lyrics, mtime as i64
+            root_id,
+            rel,
+            title,
+            artist,
+            track.album,
+            track.genre,
+            track.filename,
+            track.duration_secs,
+            lyrics,
+            mtime as i64
           ],
         )?;
       }
@@ -128,15 +143,16 @@ fn drop_missing(connection: &Connection, roots: &[(i64, String)]) -> Result<()> 
     let vanished: Vec<i64> = {
       let mut statement =
         connection.prepare("SELECT id, rel_path FROM tracks WHERE root_id = ?1")?;
-      
+
       statement
-        .query_map([root_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([root_id], |row| {
+          Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
         .filter_map(|row| row.ok())
         .filter(|(_, rel)| {
-        let path = root.join(rel);
-        !path.exists()
-          || crate::library::is_excluded_by_nomedia(&root, Path::new(rel))
-      })
+          let path = root.join(rel);
+          !path.exists() || crate::library::is_excluded_by_nomedia(&root, Path::new(rel))
+        })
         .map(|(id, _)| id)
         .collect()
     };
@@ -147,9 +163,11 @@ fn drop_missing(connection: &Connection, roots: &[(i64, String)]) -> Result<()> 
   let configured: Vec<String> = roots.iter().map(|(_, path)| path.clone()).collect();
   let stale: Vec<i64> = {
     let mut statement = connection.prepare("SELECT id, path FROM roots")?;
-    
+
     statement
-      .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+      .query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+      })?
       .filter_map(|row| row.ok())
       .filter(|(_, path)| !configured.contains(path))
       .map(|(id, _)| id)

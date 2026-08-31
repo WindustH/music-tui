@@ -3,7 +3,10 @@
 use super::*;
 
 pub(super) fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
-  if matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) {
+  if matches!(
+    source,
+    PaneSource::QueueHovered | PaneSource::LibraryHovered
+  ) {
     draw_hover_metadata_pane(frame, app, area, source);
     return;
   }
@@ -49,7 +52,10 @@ pub(super) fn metadata_line(app: &App, name: &str, value: &str) -> Line<'static>
         .fg(theme.color(&theme.base.accent))
         .add_modifier(Modifier::BOLD),
     ),
-    Span::styled(value.to_string(), Style::default().fg(theme.color(&theme.base.foreground))),
+    Span::styled(
+      value.to_string(),
+      Style::default().fg(theme.color(&theme.base.foreground)),
+    ),
   ])
 }
 

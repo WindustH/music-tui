@@ -43,8 +43,8 @@ pub fn open_db(db_path: &Path) -> Result<Connection> {
     std::fs::create_dir_all(parent)
       .with_context(|| format!("failed to create {}", parent.display()))?;
   }
-  let connection = Connection::open(db_path)
-    .with_context(|| format!("failed to open {}", db_path.display()))?;
+  let connection =
+    Connection::open(db_path).with_context(|| format!("failed to open {}", db_path.display()))?;
   connection.execute_batch(
     r#"
     PRAGMA journal_mode = WAL;

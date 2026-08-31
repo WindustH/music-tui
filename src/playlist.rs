@@ -47,7 +47,9 @@ pub fn parse_playlist(path: &Path) -> Result<Vec<PathBuf>, String> {
 fn pls_entry(line: &str) -> Option<&str> {
   let (key, value) = line.split_once('=')?;
   let key = key.trim();
-  if key.len() >= 5 && key[..4].eq_ignore_ascii_case("file") && key[4..].chars().all(|c| c.is_ascii_digit())
+  if key.len() >= 5
+    && key[..4].eq_ignore_ascii_case("file")
+    && key[4..].chars().all(|c| c.is_ascii_digit())
   {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
@@ -177,11 +179,13 @@ mod tests {
     let dir = Path::new("/state/playlists");
     let resolved = resolve_save_path(None, dir).unwrap();
     assert!(resolved.starts_with(dir));
-    assert!(resolved
-      .file_name()
-      .unwrap()
-      .to_string_lossy()
-      .starts_with("music-tui-"));
+    assert!(
+      resolved
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("music-tui-")
+    );
     assert_eq!(resolved.extension().unwrap(), "m3u");
   }
 

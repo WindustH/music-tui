@@ -158,11 +158,6 @@ impl App {
         self.mpd.set_queue_dedup(self.queue_dedup);
         self.recompute_queue_filter();
         self.clamp_queue_selection();
-        if self.queue_dedup {
-          // Enforce immediately: turning dedup on is itself a change the
-          // current queue should comply with.
-          self.enforce_queue_dedup();
-        }
         self.set_message(if self.queue_dedup {
           "queue dedup on"
         } else {
@@ -179,8 +174,15 @@ impl App {
         true
       }
       "volume_mute" => {
-        let muted = self.status.as_ref().is_some_and(|status| status.volume == 0);
-        self.mpdc(if muted { MpdCommand::SetVolume(50) } else { MpdCommand::SetVolume(0) });
+        let muted = self
+          .status
+          .as_ref()
+          .is_some_and(|status| status.volume == 0);
+        self.mpdc(if muted {
+          MpdCommand::SetVolume(50)
+        } else {
+          MpdCommand::SetVolume(0)
+        });
         true
       }
       "seek_forward" => {
@@ -279,9 +281,7 @@ impl App {
         }
         // Enter: seek to the highlighted (cursor or active) lyric line and
         // resume auto-follow.
-        let index = self
-          .lyrics_cursor
-          .or_else(|| self.active_lyrics_index());
+        let index = self.lyrics_cursor.or_else(|| self.active_lyrics_index());
         let Some(index) = index else { return false };
         self.lyrics_seek_to(index)
       }
@@ -322,5 +322,4 @@ impl App {
       .as_ref()
       .and_then(|lyrics| lyrics.move_item_index(cursor, delta));
   }
-
 }

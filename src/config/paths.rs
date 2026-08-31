@@ -23,8 +23,7 @@ fn platform_state_dir() -> PathBuf {
 
 #[cfg(windows)]
 fn platform_state_dir() -> PathBuf {
-  dirs::data_dir()
-    .unwrap_or_else(|| PathBuf::from("."))
+  dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(unix)]
@@ -36,8 +35,7 @@ pub(super) fn platform_config_dir() -> PathBuf {
 
 #[cfg(windows)]
 pub(super) fn platform_config_dir() -> PathBuf {
-  dirs::config_dir()
-    .unwrap_or_else(|| PathBuf::from("."))
+  dirs::config_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(unix)]
@@ -49,8 +47,7 @@ pub(super) fn platform_cache_dir() -> PathBuf {
 
 #[cfg(windows)]
 pub(super) fn platform_cache_dir() -> PathBuf {
-  dirs::cache_dir()
-    .unwrap_or_else(|| PathBuf::from("."))
+  dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub(super) fn env_path(name: &str) -> Option<PathBuf> {
@@ -76,7 +73,9 @@ pub fn expand_home(path: &str) -> PathBuf {
 /// Try to read `music_directory` from the user's mpd.conf.
 pub fn detect_music_dir() -> Option<PathBuf> {
   for config_path in mpd_config_paths() {
-    let Ok(body) = std::fs::read_to_string(config_path) else { continue };
+    let Ok(body) = std::fs::read_to_string(config_path) else {
+      continue;
+    };
     for line in body.lines() {
       let trimmed = line.trim();
       if let Some(rest) = trimmed.strip_prefix("music_directory") {

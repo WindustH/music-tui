@@ -134,9 +134,11 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     .collect::<Vec<_>>();
 
   let constraints = std::iter::once(ratatui::layout::Constraint::Length(2))
-    .chain(widths.iter().map(|width| {
-      ratatui::layout::Constraint::Length(*width)
-    }))
+    .chain(
+      widths
+        .iter()
+        .map(|width| ratatui::layout::Constraint::Length(*width)),
+    )
     .collect::<Vec<_>>();
 
   let table = Table::new(rows, constraints)
@@ -195,9 +197,7 @@ fn column_widths(columns: &[DisplayColumn], available: u16) -> Vec<u16> {
   let budget = available.saturating_sub(2 + gaps).max(count);
   let mut widths: Vec<u16> = columns
     .iter()
-    .map(|column| {
-      ((u32::from(budget) * column.weight / total.max(1)) as u16).clamp(1, budget)
-    })
+    .map(|column| ((u32::from(budget) * column.weight / total.max(1)) as u16).clamp(1, budget))
     .collect();
   // Hand out the remainder left to right.
   let used: u16 = widths.iter().sum();
@@ -304,12 +304,9 @@ fn library_row(
           .iter()
           .flat_map(|term| stripped.find_all(term))
           .collect();
-        // Long fields scroll so the first match is visible.
-        let (window_start, _) = match ranges.first().copied() {
-          Some(range) => match_window(text, range, width),
-          None => (0, None),
-        };
-        let window: String = text.chars().skip(window_start).take(width).collect();
+        // Long fields scroll so matches stay visible; the window is
+        // measured in display columns and anchored on the leftmost match.
+        let (window, window_start) = filter_window(text, &ranges, width);
         let base = if is_selected {
           Style::default().fg(plain_fg)
         } else {

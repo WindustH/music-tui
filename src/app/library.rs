@@ -1,5 +1,6 @@
 //! Library pane state: filtering, selection, hover sync and playback.
 
+use super::viewport::PaneState;
 use super::*;
 
 /// Which list the `/` filter prompt targets.
@@ -48,23 +49,15 @@ impl App {
 
   pub(crate) fn clamp_library_selection(&mut self) {
     let len = self.library_visible_len();
-    if len == 0 {
-      self.library_state.select(None);
-      self.sync_library_hover();
-      return;
+    match viewport::clamp_selection(
+      self.library_state.selected(),
+      self.library_state.offset(),
+      len,
+      self.library_viewport_height(),
+    ) {
+      Some((selected, offset)) => self.library_state.install(offset, selected),
+      None => self.library_state.select(None),
     }
-    let selected = self.library_state.selected().unwrap_or(0).min(len - 1);
-    // Keep the viewport offset (clamped to the new length) instead of
-    // resetting it to the top.
-    let height = self.library_viewport_height().max(1);
-    let offset = self
-      .library_state
-      .offset()
-      .min(len.saturating_sub(height));
-    let selected = selected.clamp(offset, (offset + height - 1).min(len - 1));
-    let mut state = TableState::default();
-    state.select(Some(selected));
-    self.library_state = state.with_offset(offset);
     self.sync_library_hover();
   }
 
@@ -163,11 +156,7 @@ impl App {
     let title = title_of(&track);
     let artist = (!track.artist.is_empty()).then(|| track.artist.clone());
     let lyric_title = title.clone();
-    self.library_hover = Some(SongView::new(
-      url.clone(),
-      track.path.clone(),
-      title,
-    ));
+    self.library_hover = Some(SongView::new(url.clone(), track.path.clone(), title));
     self.spawn_song_view_loads(url, &track.path, artist, &lyric_title, true);
   }
 

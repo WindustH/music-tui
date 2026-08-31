@@ -11,7 +11,9 @@ use lofty::prelude::*;
 
 fn main() {
   let mut args = std::env::args().skip(1);
-  let path = args.next().expect("usage: dump_tags <file> [Key=Value ...]");
+  let path = args
+    .next()
+    .expect("usage: dump_tags <file> [Key=Value ...]");
   let fixes: Vec<(String, String)> = args
     .map(|arg| {
       let (key, value) = arg
@@ -61,5 +63,8 @@ fn main() {
       println!("  {:?} = {:?}", item.key(), item.value());
     }
   }
-  println!("\nprimary: {:?}", tagged.primary_tag().map(|tag| tag.tag_type()));
+  println!(
+    "\nprimary: {:?}",
+    tagged.primary_tag().map(|tag| tag.tag_type())
+  );
 }

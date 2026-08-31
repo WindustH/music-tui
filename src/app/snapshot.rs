@@ -22,8 +22,8 @@ impl App {
         true
       }
       MpdEvent::Snapshot { status, queue } => {
-        let song_changed = Self::snapshot_song_url(&status, &queue).as_deref()
-          != self.current_song_url().as_deref();
+        let song_changed =
+          Self::snapshot_song_url(&status, &queue).as_deref() != self.current_song_url().as_deref();
         self.status = Some(status);
         self.queue = queue;
         self.recompute_queue_filter();
@@ -32,7 +32,10 @@ impl App {
           .pending_restore_selection
           .take()
           .filter(|position| *position < self.queue.len())
-          && self.queue_state.selected().is_none_or(|current| current == 0)
+          && self
+            .queue_state
+            .selected()
+            .is_none_or(|current| current == 0)
         {
           self.queue_state.select(Some(position));
         }
@@ -40,42 +43,8 @@ impl App {
           self.on_song_changed();
         }
         self.sync_hover_view();
-        self.enforce_queue_dedup();
         true
       }
-    }
-  }
-
-  /// Remove duplicates from the live queue whenever it changes while
-  /// auto-dedup is on — any playlist modification (appends from the
-  /// library, other clients, interrupt restores …) converges to a
-  /// duplicate-free queue. Uses `DedupDelete`, which does not cancel an
-  /// armed interrupt preview.
-  pub(crate) fn enforce_queue_dedup(&mut self) {
-    if !self.queue_dedup {
-      return;
-    }
-    let playing = self
-      .status
-      .as_ref()
-      .and_then(|status| status.current_song)
-      .map(|(position, _)| position.0);
-    let urls: Vec<&str> = self.queue.iter().map(|song| song.song.url.as_str()).collect();
-    let redundant = redundant_positions(&urls, playing);
-    if !redundant.is_empty() {
-      // Delete by stable song id (not position): with several instances
-      // (or other MPD clients) mutating the queue concurrently, positions
-      // can shift between snapshot and command; ids keep pointing at the
-      // exact duplicate song.
-      let targets: Vec<(u64, String)> = redundant
-        .into_iter()
-        .filter_map(|position| {
-          self.queue.get(position).map(|song| {
-            (song.id.0, song.song.url.clone())
-          })
-        })
-        .collect();
-      self.mpdc(MpdCommand::DedupDelete(targets));
     }
   }
 
@@ -85,14 +54,14 @@ impl App {
   }
 
   pub(crate) fn clamp_queue_selection(&mut self) {
-    if self.queue_filter_matches.is_empty() {
-      self.queue_state.select(None);
-      self.sync_hover_view();
-      return;
-    }
+    // A filter shrinking the list lands the selection on the best row
+    // (row 0) instead of pinning it to the last row. The queue's
+    // ListState scrolls itself, so no viewport window is applied here.
     let len = self.queue_filter_matches.len();
-    let current = self.queue_state.selected().unwrap_or(0).min(len - 1);
-    self.queue_state.select(Some(current));
+    match viewport::clamp_selection(self.queue_state.selected(), 0, len, len) {
+      Some((selected, _)) => self.queue_state.select(Some(selected)),
+      None => self.queue_state.select(None),
+    }
     self.sync_hover_view();
   }
 
@@ -118,7 +87,17 @@ impl App {
   }
 
   pub(crate) fn recompute_queue_filter(&mut self) {
-    self.queue_filter_matches = match self.queue_filter.as_deref() {
+    let urls: Vec<&str> = self
+      .queue
+      .iter()
+      .map(|song| song.song.url.as_str())
+      .collect();
+    let playing = self
+      .status
+      .as_ref()
+      .and_then(|status| status.current_song)
+      .map(|(position, _)| position.0);
+    let positions: Vec<usize> = match self.queue_filter.as_deref() {
       None | Some("") => (0..self.queue.len()).collect(),
       Some(needle) => {
         let terms: Vec<String> = needle.split_whitespace().map(str::to_string).collect();
@@ -131,18 +110,14 @@ impl App {
           .collect()
       }
     };
-    if self.queue_dedup {
-      let urls: Vec<&str> = self.queue.iter().map(|song| song.song.url.as_str()).collect();
-      let playing = self
-        .status
-        .as_ref()
-        .and_then(|status| status.current_song)
-        .map(|(position, _)| position.0);
-      self.queue_filter_matches = {
-        let positions = std::mem::take(&mut self.queue_filter_matches);
-        dedup_positions(&urls, positions, playing)
-      };
-    }
+    let visible = visible_positions(
+      self.queue_dedup,
+      self.queue_filter.as_deref(),
+      &urls,
+      positions,
+      playing,
+    );
+    self.queue_filter_matches = visible;
   }
 
   pub(crate) fn clear_queue_filter(&mut self) {
@@ -159,7 +134,11 @@ impl App {
         .queue_filter_matches
         .iter()
         .position(|candidate| *candidate == position.0)
-        .or(if self.queue_filter.is_none() { Some(position.0) } else { None });
+        .or(if self.queue_filter.is_none() {
+          Some(position.0)
+        } else {
+          None
+        });
       if let Some(row) = row {
         self.queue_state.select(Some(row));
       }
@@ -167,27 +146,21 @@ impl App {
   }
 }
 
-/// Keep the first occurrence of each URL; a playing copy of a duplicate
-/// stays visible so the ▶ marker follows the actual playback position.
-/// Queue positions to delete for live dedup enforcement: the playing
-/// copy always survives — when the playing song is itself duplicated,
-/// every other copy (first occurrence included) is deleted, so the
-/// queue converges without waiting for the song to end. Without a
-/// playing copy, the first occurrence survives.
-fn redundant_positions(urls: &[&str], playing: Option<usize>) -> Vec<usize> {
-  let playing_url = playing.and_then(|position| urls.get(position));
-  let mut seen = std::collections::HashSet::new();
-  let mut out = Vec::new();
-  for (position, url) in urls.iter().enumerate() {
-    if Some(position) == playing {
-      seen.insert(*url);
-      continue;
-    }
-    if playing_url.is_some_and(|playing| *playing == *url) || !seen.insert(*url) {
-      out.push(position);
-    }
+/// Dedup hides extra copies of a song only in the unfiltered view;
+/// while a filter is active every matching copy stays visible so
+/// search results never lose rows mid-filter.
+fn visible_positions(
+  dedup: bool,
+  filter: Option<&str>,
+  urls: &[&str],
+  positions: Vec<usize>,
+  playing: Option<usize>,
+) -> Vec<usize> {
+  if dedup && filter.is_none_or(str::is_empty) {
+    dedup_positions(urls, positions, playing)
+  } else {
+    positions
   }
-  out
 }
 
 fn dedup_positions(urls: &[&str], positions: Vec<usize>, playing: Option<usize>) -> Vec<usize> {
@@ -206,24 +179,34 @@ mod tests {
   use super::*;
 
   #[test]
-  fn redundant_positions_keep_first_and_playing() {
-    let urls = ["a", "b", "a", "c", "b"];
-    assert_eq!(redundant_positions(&urls, None), vec![2, 4]);
-    // Playing a later duplicate: the earlier copies are deleted so the
-    // queue converges instead of waiting for the song to end.
-    assert_eq!(redundant_positions(&["a", "a"], Some(1)), vec![0]);
-    assert_eq!(redundant_positions(&["a", "b", "a"], Some(2)), vec![0]);
-    // Playing copy first: later duplicates still go.
-    assert_eq!(redundant_positions(&["a", "a"], Some(0)), vec![1]);
-    // No duplicates → nothing to delete.
-    assert_eq!(redundant_positions(&["a", "b"], None), Vec::<usize>::new());
-  }
-
-  #[test]
   fn dedup_keeps_first_occurrence_of_each_url() {
     let urls = ["a", "b", "a", "c", "b"];
     let positions = vec![0, 1, 2, 3, 4];
     assert_eq!(dedup_positions(&urls, positions, None), vec![0, 1, 3]);
+  }
+
+  #[test]
+  fn dedup_not_applied_while_filtering() {
+    let urls = ["a", "x", "a"];
+    // No filter: duplicate hidden.
+    assert_eq!(
+      visible_positions(true, None, &urls, vec![0, 1, 2], None),
+      vec![0, 1]
+    );
+    assert_eq!(
+      visible_positions(true, Some(""), &urls, vec![0, 1, 2], None),
+      vec![0, 1]
+    );
+    // Filter active: every matching copy stays visible.
+    assert_eq!(
+      visible_positions(true, Some("a"), &urls, vec![0, 2], None),
+      vec![0, 2]
+    );
+    // Dedup off: never hidden.
+    assert_eq!(
+      visible_positions(false, None, &urls, vec![0, 2], None),
+      vec![0, 2]
+    );
   }
 
   #[test]

@@ -30,7 +30,11 @@ pub struct CoverRenderStore {
 const MAX_ENTRIES: usize = 8;
 
 impl CoverRenderStore {
-  pub fn new(config: RenderConfig, native_config: NativeImageConfig, modes: Vec<RenderMode>) -> Self {
+  pub fn new(
+    config: RenderConfig,
+    native_config: NativeImageConfig,
+    modes: Vec<RenderMode>,
+  ) -> Self {
     Self {
       config,
       native_config,
@@ -47,7 +51,13 @@ impl CoverRenderStore {
     self.native_config.cell_pixels.unwrap_or((8, 16))
   }
 
-  pub fn request(&mut self, path: &Path, width: u16, height: u16, tx: &mpsc::UnboundedSender<AsyncEvent>) -> bool {
+  pub fn request(
+    &mut self,
+    path: &Path,
+    width: u16,
+    height: u16,
+    tx: &mpsc::UnboundedSender<AsyncEvent>,
+  ) -> bool {
     let cache_key = render_cache_key(path, width, height, &self.native_config);
     if self.entries.contains_key(&cache_key) || self.in_flight.contains(&cache_key) {
       return false;
@@ -199,9 +209,7 @@ async fn render_once(
       return Ok(RenderedImage::Protocol {
         mode,
         data,
-        refresh: Some(
-          String::from_utf8(refresh).map_err(|error| error.to_string())?,
-        ),
+        refresh: Some(String::from_utf8(refresh).map_err(|error| error.to_string())?),
         placement: Some(ProtocolPlacement::KittyPlacement {
           image_id,
           placement_id,
@@ -286,7 +294,10 @@ async fn run_chafa(
     }
     _ => {}
   }
-  command.args(args).arg("--size").arg(format!("{width}x{height}"));
+  command
+    .args(args)
+    .arg("--size")
+    .arg(format!("{width}x{height}"));
   command.arg(image_path);
 
   let chafa_bin = config.chafa_bin.clone();
@@ -304,7 +315,12 @@ async fn run_chafa(
   Ok(output.stdout)
 }
 
-fn render_cache_key(path: &Path, width: u16, height: u16, native_config: &NativeImageConfig) -> String {
+fn render_cache_key(
+  path: &Path,
+  width: u16,
+  height: u16,
+  native_config: &NativeImageConfig,
+) -> String {
   let mut hasher = Sha256::new();
   hasher.update(b"music-tui-cover-render-v1");
   hasher.update(path.to_string_lossy().as_bytes());

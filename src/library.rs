@@ -14,7 +14,9 @@ pub fn resolve_music_dir(config: &MpdConfig) -> Result<PathBuf> {
   if let Some(dir) = configured_music_dir(config) {
     return Ok(dir);
   }
-  detect_music_dir().context("music_dir is not configured and music_directory was not found in ~/.config/mpd/mpd.conf")
+  detect_music_dir().context(
+    "music_dir is not configured and music_directory was not found in ~/.config/mpd/mpd.conf",
+  )
 }
 
 fn configured_music_dir(config: &MpdConfig) -> Option<PathBuf> {
@@ -87,9 +89,13 @@ pub fn is_excluded_by_nomedia(root: &Path, rel: &Path) -> bool {
 
 /// Convert an absolute library path to an MPD uri relative to the music dir.
 pub fn path_to_uri(music_dir: &Path, path: &Path) -> Result<String> {
-  let relative = path
-    .strip_prefix(music_dir)
-    .with_context(|| format!("{} is outside the music directory {}", path.display(), music_dir.display()))?;
+  let relative = path.strip_prefix(music_dir).with_context(|| {
+    format!(
+      "{} is outside the music directory {}",
+      path.display(),
+      music_dir.display()
+    )
+  })?;
   if relative.as_os_str().is_empty() {
     bail!("cannot play the music directory itself");
   }
@@ -124,9 +130,13 @@ pub fn same_song_uri(left: &str, right: &str) -> bool {
 /// transport MPD accepts `file://` uris on.
 pub fn is_socket_host(_host: &str) -> bool {
   #[cfg(unix)]
-  { expand_home(_host).to_string_lossy().starts_with('/') }
+  {
+    expand_home(_host).to_string_lossy().starts_with('/')
+  }
   #[cfg(not(unix))]
-  { false }
+  {
+    false
+  }
 }
 
 /// Prefix an absolute path as a `file://` uri for MPD. MPD's local-file
@@ -159,8 +169,7 @@ pub fn links_dir(music_dir: &Path, configured: &str) -> PathBuf {
 /// Unix uses a symlink; Windows uses an atomically published cached copy.
 pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
   use sha2::{Digest, Sha256};
-  std::fs::create_dir_all(dir)
-    .with_context(|| format!("failed to create {}", dir.display()))?;
+  std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
   let mut hasher = Sha256::new();
   hasher.update(target.to_string_lossy().as_bytes());
   let hash = hex::encode(&hasher.finalize()[..4]);
@@ -175,7 +184,11 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
   // a racing writer produces the same target, so last rename wins cleanly.
   #[cfg(unix)]
   {
-    let temp = dir.join(format!(".{hash}-{}.{}.tmp", name.to_string_lossy(), std::process::id()));
+    let temp = dir.join(format!(
+      ".{hash}-{}.{}.tmp",
+      name.to_string_lossy(),
+      std::process::id()
+    ));
     let _ = std::fs::remove_file(&temp);
     std::os::unix::fs::symlink(target, &temp)
       .with_context(|| format!("failed to link {} -> {}", temp.display(), target.display()))?;
@@ -231,7 +244,10 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
       if attempt == 0 {
         continue;
       }
-      bail!("{} changed while its bridge copy was published", target.display());
+      bail!(
+        "{} changed while its bridge copy was published",
+        target.display()
+      );
     }
   }
   Ok(link)
@@ -260,7 +276,11 @@ fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
   };
 
   let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-  let destination: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+  let destination: Vec<u16> = destination
+    .as_os_str()
+    .encode_wide()
+    .chain(Some(0))
+    .collect();
   let moved = unsafe {
     MoveFileExW(
       source.as_ptr(),
@@ -294,7 +314,10 @@ mod tests {
     let path = Path::new("/tmp/音乐/100% a song.flac");
     assert_eq!(file_uri(path), "file:///tmp/音乐/100% a song.flac");
     assert_eq!(uri_to_path(None, &file_uri(path)), Some(path.to_path_buf()));
-    assert_eq!(uri_to_path(None, path.to_str().unwrap()), Some(path.to_path_buf()));
+    assert_eq!(
+      uri_to_path(None, path.to_str().unwrap()),
+      Some(path.to_path_buf())
+    );
     assert!(same_song_uri(&file_uri(path), path.to_str().unwrap()));
   }
 

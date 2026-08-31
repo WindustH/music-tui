@@ -65,7 +65,10 @@ impl App {
     let tx = self.events.clone();
     tokio::task::spawn_blocking(move || {
       let result = lyrics::load(&path, &extra_dirs, artist.as_deref(), title.as_deref());
-      let _ = tx.send(AsyncEvent::Lyrics(LyricsOutcome { song_url: url, result }));
+      let _ = tx.send(AsyncEvent::Lyrics(LyricsOutcome {
+        song_url: url,
+        result,
+      }));
     });
   }
 
@@ -90,7 +93,10 @@ impl App {
     let tx = self.events.clone();
     tokio::task::spawn_blocking(move || {
       let result = metadata::read_metadata(&path);
-      let _ = tx.send(AsyncEvent::Metadata(MetadataOutcome { song_url: url, result }));
+      let _ = tx.send(AsyncEvent::Metadata(MetadataOutcome {
+        song_url: url,
+        result,
+      }));
     });
   }
 
@@ -103,7 +109,11 @@ impl App {
         .as_ref()
         .ok()
         .and_then(|path| image::image_dimensions(path).ok());
-      let _ = tx.send(AsyncEvent::Cover(CoverOutcome { song_url: url, result, dims }));
+      let _ = tx.send(AsyncEvent::Cover(CoverOutcome {
+        song_url: url,
+        result,
+        dims,
+      }));
     });
   }
 
@@ -147,5 +157,4 @@ impl App {
     self.hover = Some(SongView::new(url.clone(), path.clone(), title));
     self.spawn_song_view_loads(url, &path, artist, &lyric_title, true);
   }
-
 }

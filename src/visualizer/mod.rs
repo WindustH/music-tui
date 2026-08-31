@@ -5,11 +5,9 @@
 
 mod render;
 
-use std::{
-  sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-  },
+use std::sync::{
+  Arc,
+  atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 #[cfg(unix)]
@@ -62,16 +60,24 @@ impl VisualizerHandle {
 #[cfg(unix)]
 fn band_edges(hint: usize, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec<f32> {
   let hint = hint.max(2);
-  let mut edges =
-    build_band_edges((max_freq / min_freq).powf(1.0 / hint as f32), hz_per_bin, min_freq, max_freq);
+  let mut edges = build_band_edges(
+    (max_freq / min_freq).powf(1.0 / hint as f32),
+    hz_per_bin,
+    min_freq,
+    max_freq,
+  );
   // Refine the ratio so the generated band count matches its own hint.
   for _ in 0..8 {
     let count = edges.len() - 1;
     if count < 2 {
       break;
     }
-    let next_edges =
-      build_band_edges((max_freq / min_freq).powf(1.0 / count as f32), hz_per_bin, min_freq, max_freq);
+    let next_edges = build_band_edges(
+      (max_freq / min_freq).powf(1.0 / count as f32),
+      hz_per_bin,
+      min_freq,
+      max_freq,
+    );
     if next_edges.len() == edges.len() {
       break;
     }
@@ -162,9 +168,7 @@ fn run(
   let mut planner: FftPlanner<f32> = FftPlanner::new();
   let fft: Arc<dyn Fft<f32>> = planner.plan_fft_forward(window);
   let hann: Vec<f32> = (0..window)
-    .map(|index| {
-      0.5 * (1.0 - (std::f32::consts::TAU * index as f32 / window as f32).cos())
-    })
+    .map(|index| 0.5 * (1.0 - (std::f32::consts::TAU * index as f32 / window as f32).cos()))
     .collect();
 
   let mut columns_now = config.bars.max(1);
@@ -368,7 +372,11 @@ mod tests {
     let sample_rate = 44_100u32;
     let hz_per_bin = sample_rate as f32 / window as f32;
     let edges = band_edges(8, hz_per_bin, 40.0, 16_000.0);
-    assert!((9..=11).contains(&edges.len()), "hint 8 -> {} edges", edges.len());
+    assert!(
+      (9..=11).contains(&edges.len()),
+      "hint 8 -> {} edges",
+      edges.len()
+    );
   }
 
   #[test]
@@ -386,7 +394,10 @@ mod tests {
 
     std::fs::remove_file(&path).unwrap();
     let _second = open_fifo(&path).unwrap();
-    assert!(std::path::Path::new(&path).exists(), "deleted fifo must be recreated");
+    assert!(
+      std::path::Path::new(&path).exists(),
+      "deleted fifo must be recreated"
+    );
 
     std::fs::remove_file(&path).unwrap();
     let _ = std::fs::remove_dir(&dir);

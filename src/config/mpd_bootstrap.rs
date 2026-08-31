@@ -9,9 +9,9 @@ use std::{
 use anyhow::{Context, Result};
 use tokio::{fs, io::AsyncWriteExt};
 
-use super::paths::{mpd_config_paths, platform_cache_dir, platform_config_dir};
 #[cfg(target_os = "macos")]
 use super::paths::env_path;
+use super::paths::{mpd_config_paths, platform_cache_dir, platform_config_dir};
 
 pub(super) struct MpdBootstrap {
   pub socket_path: PathBuf,
@@ -31,7 +31,9 @@ pub(super) async fn ensure_mpd_config() -> Result<Option<MpdBootstrap>> {
   if startup_config_paths().iter().any(|path| path.is_file()) {
     return Ok(None);
   }
-  let Some(paths) = bootstrap_paths() else { return Ok(None) };
+  let Some(paths) = bootstrap_paths() else {
+    return Ok(None);
+  };
   create_config(&paths).await
 }
 
@@ -92,7 +94,9 @@ async fn create_config(paths: &BootstrapPaths) -> Result<Option<MpdBootstrap>> {
     return Err(error)
       .with_context(|| format!("failed to write MPD config {}", paths.config.display()));
   }
-  Ok(Some(MpdBootstrap { socket_path: paths.socket.clone() }))
+  Ok(Some(MpdBootstrap {
+    socket_path: paths.socket.clone(),
+  }))
 }
 
 fn render_config(paths: &BootstrapPaths) -> String {
@@ -167,7 +171,10 @@ mod tests {
 
     fs::write(&paths.config, "custom config\n").await.unwrap();
     assert!(create_config(&paths).await.unwrap().is_none());
-    assert_eq!(fs::read_to_string(&paths.config).await.unwrap(), "custom config\n");
+    assert_eq!(
+      fs::read_to_string(&paths.config).await.unwrap(),
+      "custom config\n"
+    );
 
     let _ = fs::remove_dir_all(root).await;
   }

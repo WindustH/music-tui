@@ -166,9 +166,10 @@ pub fn load(
   title: Option<&str>,
 ) -> Result<Lyrics, String> {
   if let Some(path) = sibling_lrc_path(file)
-    && let Ok(body) = std::fs::read_to_string(&path) {
-      return parse(&body);
-    }
+    && let Ok(body) = std::fs::read_to_string(&path)
+  {
+    return parse(&body);
+  }
 
   let song_stem = file
     .file_stem()
@@ -195,9 +196,10 @@ pub fn load(
   if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
     for key in [ItemKey::Lyrics] {
       if let Some(body) = tag.get_string(&key)
-        && !body.trim().is_empty() {
-          return parse(body);
-        }
+        && !body.trim().is_empty()
+      {
+        return parse(body);
+      }
     }
   }
 
@@ -286,8 +288,14 @@ mod tests {
     };
     assert_eq!(lines.len(), 4);
     // Metadata tags are skipped; both pairs parse as same-time groups.
-    assert_eq!(lyrics.active_group(Duration::from_secs_f64(1.0)), Some((0, 2)));
-    assert_eq!(lyrics.active_group(Duration::from_secs_f64(4.0)), Some((2, 4)));
+    assert_eq!(
+      lyrics.active_group(Duration::from_secs_f64(1.0)),
+      Some((0, 2))
+    );
+    assert_eq!(
+      lyrics.active_group(Duration::from_secs_f64(4.0)),
+      Some((2, 4))
+    );
     // Group anchor is the first line of the pair.
     assert_eq!(lyrics.active_index(Duration::from_secs_f64(1.0)), Some(0));
 

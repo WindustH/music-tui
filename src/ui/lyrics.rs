@@ -3,7 +3,10 @@
 use super::*;
 
 pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
-  if matches!(source, PaneSource::QueueHovered | PaneSource::LibraryHovered) {
+  if matches!(
+    source,
+    PaneSource::QueueHovered | PaneSource::LibraryHovered
+  ) {
     draw_hover_lyrics_pane(frame, app, area, source);
     return;
   }
@@ -87,7 +90,11 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
     let text = lyrics.line(index).unwrap_or_default();
     // Each line of the group tracks its own karaoke progress: word-timed
     // originals follow their word tags, translations interpolate.
-    let sung = if is_active { lyrics.karaoke_at(index, elapsed) } else { 0 };
+    let sung = if is_active {
+      lyrics.karaoke_at(index, elapsed)
+    } else {
+      0
+    };
     if is_active && sung > 0 {
       // Karaoke: sung prefix highlighted, remainder in the base style.
       let chars: Vec<char> = text.chars().collect();

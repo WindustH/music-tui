@@ -4,8 +4,7 @@ use super::*;
 
 const COMMANDS: &[&str] = &[
   "quit", "q", "help", "play", "pause", "toggle", "stop", "next", "prev", "volume", "vol",
-  "repeat", "random", "single", "consume", "clear", "update", "tab", "add", "save",
-  "dedup",
+  "repeat", "random", "single", "consume", "clear", "update", "tab", "add", "save", "dedup",
 ];
 
 impl App {
@@ -67,7 +66,12 @@ impl App {
     match result {
       PromptInputResult::Unhandled | PromptInputResult::UnknownAction(_) => false,
       PromptInputResult::Changed => {
-        if let Some(input) = self.prompt.as_ref().map(Prompt::buffer).map(|buffer| buffer.input.clone()) {
+        if let Some(input) = self
+          .prompt
+          .as_ref()
+          .map(Prompt::buffer)
+          .map(|buffer| buffer.input.trim().to_string())
+        {
           match self.filter_target {
             FilterTarget::Queue => {
               self.queue_filter = (!input.is_empty()).then_some(input);
@@ -213,7 +217,11 @@ impl App {
         Some(value) => {
           if let Some(delta) = value.strip_prefix(['+', '-']) {
             let magnitude: i16 = delta.parse().unwrap_or(0);
-            let signed = if value.starts_with('-') { -magnitude } else { magnitude };
+            let signed = if value.starts_with('-') {
+              -magnitude
+            } else {
+              magnitude
+            };
             self.mpdc(MpdCommand::NudgeVolume(signed));
           } else if let Ok(volume) = value.parse::<u8>() {
             self.mpdc(MpdCommand::SetVolume(volume.min(100)));
@@ -298,11 +306,9 @@ impl App {
       };
       let mut count = 0;
       for file in files {
-        if let Some(uri) = crate::open::direct_open_uri(
-          &file,
-          &self.settings.config.mpd,
-          self.music_dir.as_deref(),
-        ) {
+        if let Some(uri) =
+          crate::open::direct_open_uri(&file, &self.settings.config.mpd, self.music_dir.as_deref())
+        {
           self.mpdc(MpdCommand::AddUri(uri));
           count += 1;
         }
@@ -345,7 +351,10 @@ impl App {
         (true, Some(title)) => title.to_string(),
         _ => song.url.clone(),
       };
-      let seconds = song.duration.map(|duration| duration.as_secs()).unwrap_or(0);
+      let seconds = song
+        .duration
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
       let path = crate::library::uri_to_path(self.music_dir.as_deref(), &song.url);
       if let Some(path) = path {
         body.push_str(&format!("#EXTINF:{seconds},{label}\n{}\n", path.display()));
@@ -359,12 +368,8 @@ impl App {
       return;
     }
     match std::fs::write(&target, body) {
-      Ok(()) => self.set_message(format!(
-        "saved {written} song(s) to {}",
-        target.display()
-      )),
+      Ok(()) => self.set_message(format!("saved {written} song(s) to {}", target.display())),
       Err(error) => self.set_message(format!("save failed: {error}")),
     }
   }
-
 }

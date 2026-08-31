@@ -155,16 +155,27 @@ impl Default for LibraryConfig {
     Self {
       paths: Vec::new(),
       columns: vec![
-        LibraryColumn { field: "title".to_string(), width: 4 },
-        LibraryColumn { field: "artist".to_string(), width: 3 },
-        LibraryColumn { field: "album".to_string(), width: 3 },
-        LibraryColumn { field: "duration".to_string(), width: 1 },
+        LibraryColumn {
+          field: "title".to_string(),
+          width: 4,
+        },
+        LibraryColumn {
+          field: "artist".to_string(),
+          width: 3,
+        },
+        LibraryColumn {
+          field: "album".to_string(),
+          width: 3,
+        },
+        LibraryColumn {
+          field: "duration".to_string(),
+          width: 1,
+        },
       ],
       recursive: true,
     }
   }
 }
-
 
 impl PlaylistConfig {
   /// Effective `:save` directory (`~` expanded; fallback: state home).
@@ -320,11 +331,7 @@ impl super::AppConfig {
     if self.visualizer.fps == 0 {
       self.visualizer.fps = 30;
     }
-    self.visualizer.window = self
-      .visualizer
-      .window
-      .clamp(256, 8192)
-      .next_power_of_two();
+    self.visualizer.window = self.visualizer.window.clamp(256, 8192).next_power_of_two();
     self.layout.normalize_defaults();
   }
 

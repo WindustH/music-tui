@@ -24,8 +24,6 @@ use crate::config::{LayoutConfig, TabConfig};
 
 mod parser;
 
-
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaneKind {
   Queue,
@@ -66,8 +64,7 @@ impl PaneKind {
 }
 
 /// Where a display pane gets its song data from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PaneSource {
   /// The song currently playing (the default).
   #[default]
@@ -89,9 +86,7 @@ impl PaneSource {
       _ => None,
     }
   }
-
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitDir {
@@ -188,10 +183,7 @@ pub fn parse_detail(spec: &str) -> Result<PaneLayout, String> {
   let layout = parse_layout(spec)?;
   let mut panes = Vec::new();
   collect_panes(&layout, &mut panes);
-  if panes.len() != 2
-    || !panes.contains(&PaneKind::Cover)
-    || !panes.contains(&PaneKind::Metadata)
-  {
+  if panes.len() != 2 || !panes.contains(&PaneKind::Cover) || !panes.contains(&PaneKind::Metadata) {
     return Err(format!(
       "detail layout must contain exactly one cover and one metadata pane, got {spec:?}"
     ));
@@ -212,8 +204,7 @@ fn collect_panes(layout: &PaneLayout, panes: &mut Vec<PaneKind>) {
 fn parse_tab(tab: &TabConfig) -> Result<TabLayout, String> {
   let layout = parse_layout(&tab.layout)?;
   let main = match tab.main.as_deref() {
-    Some(name) => PaneKind::parse(name)
-      .ok_or_else(|| format!("unknown main pane {name:?}"))?,
+    Some(name) => PaneKind::parse(name).ok_or_else(|| format!("unknown main pane {name:?}"))?,
     None => layout.first_pane(),
   };
   if !layout.contains(main) {
@@ -246,7 +237,10 @@ mod tests {
   #[test]
   fn parses_single_pane() {
     let layout = parse_layout(" visualizer ").expect("valid layout");
-    assert_eq!(layout, PaneLayout::Pane(PaneKind::Visualizer, PaneSource::Playing));
+    assert_eq!(
+      layout,
+      PaneLayout::Pane(PaneKind::Visualizer, PaneSource::Playing)
+    );
   }
 
   #[test]
@@ -277,8 +271,14 @@ mod tests {
   #[test]
   fn parses_hovered_sources() {
     let layout = parse_layout("V(2:1, cover:hovered, lyrics:hover)").expect("valid layout");
-    assert_eq!(layout.source_of(PaneKind::Cover), Some(PaneSource::QueueHovered));
-    assert_eq!(layout.source_of(PaneKind::Lyrics), Some(PaneSource::QueueHovered));
+    assert_eq!(
+      layout.source_of(PaneKind::Cover),
+      Some(PaneSource::QueueHovered)
+    );
+    assert_eq!(
+      layout.source_of(PaneKind::Lyrics),
+      Some(PaneSource::QueueHovered)
+    );
     assert!(layout.has_source(PaneSource::QueueHovered));
     let plain = parse_layout("cover").expect("valid layout");
     assert_eq!(plain.source_of(PaneKind::Cover), Some(PaneSource::Playing));

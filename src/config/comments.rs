@@ -2,15 +2,17 @@
 //! attach the user-facing comment table to each key.
 
 use anyhow::Result;
-use std::fmt::Write as FmtWrite;
 use std::collections::BTreeSet;
+use std::fmt::Write as FmtWrite;
 
 use super::AppConfig;
 
 pub fn config_comment(key: &str) -> Option<&'static str> {
   match key {
     "mpd" => Some("Connection settings for the MPD daemon."),
-    "mpd.host" => Some("MPD host. A path starting with / or ~ connects over a unix socket. First-run MPD setup uses ~/.config/mpd/socket so local file:// songs need no music directory."),
+    "mpd.host" => Some(
+      "MPD host. A path starting with / or ~ connects over a unix socket. First-run MPD setup uses ~/.config/mpd/socket so local file:// songs need no music directory.",
+    ),
     "mpd.port" => Some("MPD TCP port."),
     "mpd.password" => Some("Optional MPD password."),
     "mpd.music_dir" => Some(
@@ -19,9 +21,13 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "behavior" => Some("Interactive behavior settings."),
     "behavior.tick_ms" => Some("Status refresh interval while idle."),
     "behavior.playing_tick_ms" => Some("Status refresh interval while playing."),
-    "behavior.queue_dedup" => Some("Duplicate handling: adding a song that is already queued is skipped (playback jumps to the existing entry), and the live queue is pruned to one copy per song (the playing copy wins)."),
+    "behavior.queue_dedup" => Some(
+      "Duplicate handling: adding a song that is already queued is skipped, and the queue view hides extra copies of the same song (the first copy and the playing copy stay visible). The existing queue is never modified.",
+    ),
     "render" => Some("Cover art rendering settings."),
-    "render.chafa_bin" => Some("Command used to render cover art when no graphics protocol is available."),
+    "render.chafa_bin" => {
+      Some("Command used to render cover art when no graphics protocol is available.")
+    }
     "render.auto_detect" => Some("Detect terminal graphics capability automatically."),
     "render.chafa_args" => Some("Extra arguments passed to Chafa."),
     "render.chafa_threads" => Some("Threads requested per Chafa render job."),
@@ -31,16 +37,26 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "visualizer.fifo_path" => Some("MPD fifo output path feeding the visualizer."),
     "visualizer.sample_rate" => Some("Sample rate of the fifo audio_output format."),
     "visualizer.channels" => Some("Channel count of the fifo audio_output format."),
-    "visualizer.bars" => Some("Maximum band count; the analysis follows the pane width (one band per column) up to this cap. Wider panes render equal-width bars with evenly spread gaps."),
+    "visualizer.bars" => Some(
+      "Maximum band count; the analysis follows the pane width (one band per column) up to this cap. Wider panes render equal-width bars with evenly spread gaps.",
+    ),
     "visualizer.fps" => Some("Spectrum analysis updates per second."),
     "visualizer.window" => Some("FFT window size in samples."),
     "lyrics" => Some("Lyrics loading settings."),
-    "lyrics.extra_dirs" => Some("Extra directories searched for `<song>.lrc` and `<artist> - <title>.lrc` files."),
+    "lyrics.extra_dirs" => {
+      Some("Extra directories searched for `<song>.lrc` and `<artist> - <title>.lrc` files.")
+    }
     "lyrics.follow" => Some("Follow playback when synced lyrics are available."),
     "playlist" => Some("Playlist file handling (`:save`, `open` on .m3u/.pls/.txt files)."),
-    "playlist.save_dir" => Some("Directory for `:save` exports; empty uses ~/.local/state/music-tui/playlists. Bare `:save` names resolve here."),
-    "layout" => Some("Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover:hovered, metadata:hovered)) with a main pane that receives its keys. cover/lyrics/metadata panes take an optional :playing/:hovered source suffix."),
-    "layout.detail" => Some("Secondary detail view (i) layout over the cover and metadata panes, e.g. H(2:1, cover, metadata)."),
+    "playlist.save_dir" => Some(
+      "Directory for `:save` exports; empty uses ~/.local/state/music-tui/playlists. Bare `:save` names resolve here.",
+    ),
+    "layout" => Some(
+      "Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover:hovered, metadata:hovered)) with a main pane that receives its keys. cover/lyrics/metadata panes take an optional :playing/:hovered source suffix.",
+    ),
+    "layout.detail" => Some(
+      "Secondary detail view (i) layout over the cover and metadata panes, e.g. H(2:1, cover, metadata).",
+    ),
     "layout.tabs" => Some("Tabs shown in the tab bar, switched with left/right."),
     _ => None,
   }

@@ -24,7 +24,6 @@ pub struct PersistedState {
   pub queue_selected: Option<usize>,
 }
 
-
 impl PersistedState {
   pub fn load(state_dir: &Path) -> Self {
     let path = state_dir.join(STATE_FILE);
@@ -55,9 +54,8 @@ fn save_inner(state: &PersistedState, state_dir: &Path) -> std::io::Result<()> {
   // (a fixed name would let one instance's rename steal or unlink the
   // other's bytes). Rename atomically publishes; last writer wins.
   let temp = state_dir.join(format!("{STATE_FILE}.{}.tmp", std::process::id()));
-  let text = toml::to_string_pretty(state).map_err(|error| {
-    std::io::Error::other(format!("serialize state: {error}"))
-  })?;
+  let text = toml::to_string_pretty(state)
+    .map_err(|error| std::io::Error::other(format!("serialize state: {error}")))?;
   std::fs::write(&temp, text.as_bytes())?;
   std::fs::rename(&temp, &path)?;
   Ok(())
