@@ -262,6 +262,7 @@ impl App {
       return;
     };
     if let Ok(index) = target.parse::<usize>()
+      && index > 0
       && self.goto_tab(index - 1)
     {
       return;

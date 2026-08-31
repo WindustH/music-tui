@@ -326,7 +326,7 @@ fn toml_semantic_value(body: &str) -> Option<toml::Value> {
 }
 
 pub async fn write_bytes_atomic(path: &Path, body: &[u8]) -> Result<()> {
-  let temp = path.with_extension("tmp");
+  let temp = path.with_extension(format!("tmp.{}", std::process::id()));
   fs::write(&temp, body)
     .await
     .with_context(|| format!("failed to write {}", temp.display()))?;
