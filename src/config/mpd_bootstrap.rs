@@ -167,7 +167,10 @@ mod tests {
     let created = create_config(&paths).await.unwrap();
     assert!(created.is_some());
     let original = fs::read_to_string(&paths.config).await.unwrap();
-    assert!(original.contains("bind_to_address"));
+    assert!(
+      original.contains("bind_to_address"),
+      "generated config missing bind_to_address: {original:?}"
+    );
 
     fs::write(&paths.config, "custom config\n").await.unwrap();
     assert!(create_config(&paths).await.unwrap().is_none());

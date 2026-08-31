@@ -112,8 +112,21 @@ pub fn resolve_save_path(arg: Option<&str>, save_dir: &Path) -> Result<PathBuf, 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::sync::{Mutex, MutexGuard};
+
+  /// Serialize fixture writes and cleanups: cleanup_tmp removes the shared
+  /// scratch dir, which can slip between another test's create_dir_all and
+  /// its write (observed as NotFound on Windows CI) when tests run in
+  /// parallel.
+  fn tmp_guard() -> MutexGuard<'static, ()> {
+    static GUARD: Mutex<()> = Mutex::new(());
+    GUARD
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner())
+  }
 
   fn write_tmp(name: &str, body: &str) -> PathBuf {
+    let _guard = tmp_guard();
     let dir = std::env::temp_dir().join(format!("music-tui-playlist-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(name);
@@ -124,6 +137,7 @@ mod tests {
   /// Drop the shared scratch dir once the last fixture is gone; harmless
   /// (no-op) while other fixtures still exist.
   fn cleanup_tmp() {
+    let _guard = tmp_guard();
     let dir = std::env::temp_dir().join(format!("music-tui-playlist-{}", std::process::id()));
     let _ = std::fs::remove_dir(&dir);
   }

@@ -346,6 +346,38 @@ fn compute_spectrum(
 mod tests {
   use super::*;
 
+  /// Hosted macOS runners keep TMPDIR on NFS, where fifo io fails with
+  /// EOPNOTSUPP (mkfifo may still succeed, only the open refuses); the
+  /// tests only make sense on filesystems that support the full fifo
+  /// pipeline, so probe with open_fifo itself and skip otherwise.
+  fn fifo_supported(path: &str) -> bool {
+    let probe_dir = std::env::temp_dir().join(format!(
+      "music-tui-fifo-probe-{}-{:?}",
+      std::process::id(),
+      std::thread::current().id()
+    ));
+    let _ = std::fs::create_dir_all(&probe_dir);
+    let probe = probe_dir.join("probe.fifo");
+    let probe_str = probe.to_string_lossy().into_owned();
+    let supported = match open_fifo(&probe_str) {
+      Ok(file) => {
+        drop(file);
+        true
+      }
+      Err(error)
+        if error.raw_os_error() == Some(libc::EOPNOTSUPP)
+          || error.raw_os_error() == Some(libc::ENOTSUP) =>
+      {
+        eprintln!("skipping fifo test {path}: fifo io unsupported on this filesystem ({error})");
+        false
+      }
+      Err(error) => panic!("fifo probe failed unexpectedly: {error}"),
+    };
+    let _ = std::fs::remove_file(&probe);
+    let _ = std::fs::remove_dir(&probe_dir);
+    supported
+  }
+
   #[test]
   fn edges_keep_bands_on_distinct_bins() {
     // A 256-band log grid over 40..16k Hz at 2048/44.1k (≈21.5 Hz/bin)
@@ -387,6 +419,10 @@ mod tests {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("feed.fifo");
     let path = path.to_string_lossy().into_owned();
+    if !fifo_supported(&path) {
+      let _ = std::fs::remove_dir(&dir);
+      return;
+    }
 
     let first = open_fifo(&path).unwrap();
     assert!(std::path::Path::new(&path).exists());
@@ -412,6 +448,10 @@ mod tests {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("feed.fifo");
     let path = path.to_string_lossy().into_owned();
+    if !fifo_supported(&path) {
+      let _ = std::fs::remove_dir(&dir);
+      return;
+    }
 
     let first = open_fifo(&path).unwrap();
     let second = open_fifo(&path);
