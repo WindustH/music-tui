@@ -138,6 +138,9 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       let target = files.iter().position(|file| file == &path);
       let uris =
         resolve_open_uris(&client, &files, &settings.config.mpd, music_dir.as_deref()).await?;
+      if uris.is_empty() {
+        bail!("no playable audio files under {}", folder.display());
+      }
       client.command(ClearQueue).await?;
       for file_uri in &uris {
         client.command(Add::uri(file_uri)).await?;
