@@ -4,6 +4,10 @@
 use super::*;
 struct SessionState {
   interrupt: Option<InterruptSession>,
+  /// How many times a pending interrupt restore has failed; used to bound
+  /// automatic retries so a permanently missing saved playlist does not
+  /// spin forever (the playlist is preserved for manual recovery).
+  restore_attempts: u32,
   playing: bool,
   queue: Vec<SongInQueue>,
   /// Playlist version of the cached queue (`Status::playlist_version`);
@@ -22,6 +26,7 @@ pub(super) async fn run_session(
 ) -> anyhow::Result<()> {
   let mut state = SessionState {
     interrupt: None,
+    restore_attempts: 0,
     playing: false,
     queue: Vec::new(),
     playlist_version: 0,
@@ -136,6 +141,11 @@ async fn refresh_status(
 
 /// After an interrupt preview stops, rebuild the previous queue and state.
 /// Returns true when a restore was performed.
+///
+/// Restores are retried (a bounded number of times) instead of being
+/// abandoned on failure: the saved playlist is the only copy of the
+/// original queue, so it is only deleted once the restore has succeeded.
+/// On persistent failure the playlist is left intact for manual recovery.
 async fn maybe_restore_interrupt(
   client: &Client,
   state: &mut SessionState,
@@ -145,19 +155,53 @@ async fn maybe_restore_interrupt(
   if status.state != PlayState::Stopped {
     return Ok(false);
   }
-  let Some(session) = state.interrupt.take() else {
+  let Some(session) = state.interrupt.as_ref().cloned() else {
     return Ok(false);
   };
   info!("interrupt preview finished; restoring previous queue");
 
   client.command(ClearQueue).await?;
+
   if let Some(playlist) = &session.playlist {
     if let Err(error) = client.command(LoadPlaylist::name(playlist)).await {
-      warn!(%error, playlist = %playlist, "failed to restore saved playlist");
+      state.restore_attempts += 1;
+      warn!(
+        %error, playlist = %playlist, attempts = state.restore_attempts,
+        "failed to restore saved playlist"
+      );
+      if state.restore_attempts < 3 {
+        let _ = events.send(AsyncEvent::Mpd(MpdEvent::Notice(format!(
+          "restore failed ({error}); will retry"
+        ))));
+        // Keep the session armed so a later refresh retries; the saved
+        // playlist (the only copy of the original queue) is untouched.
+        return Ok(false);
+      }
+      let _ = events.send(AsyncEvent::Mpd(MpdEvent::Notice(format!(
+        "could not restore queue from saved playlist `{playlist}`; \
+         it has been left in place so you can load it manually"
+      ))));
+      state.interrupt = None;
+      state.restore_attempts = 0;
+      return Ok(true);
     }
+    // The original queue is now safely back in the live queue, so the
+    // restore is committed: disarm before any later (cosmetic) step so a
+    // failure there cannot re-clear the restored queue on a retry.
+    state.interrupt = None;
+    state.restore_attempts = 0;
     let _ = client.command(DeletePlaylist(playlist.as_str())).await;
+  } else {
+    state.interrupt = None;
+    state.restore_attempts = 0;
+    let _ = client.command(SetSingle(session.single)).await;
+    let _ = events.send(AsyncEvent::Mpd(MpdEvent::Notice(
+      "preview finished; restored previous queue".to_string(),
+    )));
+    return Ok(true);
   }
-  let _ = client.command(SetSingle(session.single)).await;
+
+  client.command(SetSingle(session.single)).await?;
   if let Some(position) = session.position {
     let queue_len = client.command(commands::Queue).await?.len();
     if (position as usize) < queue_len {
