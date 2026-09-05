@@ -249,7 +249,11 @@ async fn run_command(
     }
     MpdCommand::SeekCurrent(seconds) => client
       .command(Seek(SeekMode::Absolute(Duration::from_secs_f64(
-        seconds.max(0.0),
+        if seconds.is_finite() {
+          seconds.clamp(0.0, 24.0 * 60.0 * 60.0)
+        } else {
+          0.0
+        },
       ))))
       .await
       .map(|_| ())
