@@ -504,7 +504,11 @@ mod tests {
       .iter()
       .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
       .collect();
-    assert_eq!(names, ["song.mp3"], "junction loop must not recurse or duplicate");
+    assert_eq!(
+      names,
+      ["song.mp3"],
+      "junction loop must not recurse or duplicate"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
   }
