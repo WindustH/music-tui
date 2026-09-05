@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -37,12 +38,28 @@ pub fn is_audio_file(path: &Path) -> bool {
 /// Collect audio files under `root`, sorted by path.
 pub fn collect_audio_files(root: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
   let mut files = Vec::new();
-  visit_audio_files(root, recursive, &mut files)?;
+  let mut visited = HashSet::new();
+  visit_audio_files(root, recursive, &mut visited, &mut files)?;
   files.sort();
   Ok(files)
 }
 
-fn visit_audio_files(dir: &Path, recursive: bool, files: &mut Vec<PathBuf>) -> Result<()> {
+/// Recursively collect audio files under `dir`. Directory cycles are cut by
+/// tracking every resolved directory once: a junction or symlink that points
+/// back towards an ancestor resolves to a path already in the set, so the
+/// scan always terminates even when the tree contains a loop (a Windows
+/// junction into a parent directory otherwise recurses forever). The same
+/// bookkeeping skips directories reachable through two links, collecting
+/// each physical directory's files exactly once.
+fn visit_audio_files(
+  dir: &Path,
+  recursive: bool,
+  visited: &mut HashSet<PathBuf>,
+  files: &mut Vec<PathBuf>,
+) -> Result<()> {
+  if !visited.insert(canonical_or_self(dir)) {
+    return Ok(());
+  }
   let entries = std::fs::read_dir(dir)
     .with_context(|| format!("failed to read directory {}", dir.display()))?;
   for entry in entries {
@@ -56,13 +73,21 @@ fn visit_audio_files(dir: &Path, recursive: bool, files: &mut Vec<PathBuf>) -> R
     let file_type = entry.file_type().context("failed to read file type")?;
     if file_type.is_dir() {
       if recursive && !has_nomedia(&path) {
-        visit_audio_files(&path, recursive, files)?;
+        visit_audio_files(&path, recursive, visited, files)?;
       }
     } else if is_audio_file(&path) {
       files.push(path);
     }
   }
   Ok(())
+}
+
+/// Identity used to detect re-entering the same directory through a junction
+/// or symlink: the fully resolved path when available, otherwise the path as
+/// given. `canonicalize` follows link targets, so a link pointing at an
+/// ancestor produces the ancestor's (already recorded) path.
+fn canonical_or_self(path: &Path) -> PathBuf {
+  std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Android convention: a `.nomedia` marker file inside a directory makes
@@ -401,6 +426,85 @@ mod tests {
     assert!(is_excluded_by_nomedia(&dir, Path::new("a/b/song.mp3")));
     assert!(!is_excluded_by_nomedia(&dir, Path::new("top.mp3")));
     assert!(!is_excluded_by_nomedia(&dir, Path::new("c/other.mp3")));
+
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn recursive_scan_terminates_on_symlink_cycle() {
+    let dir = std::env::temp_dir().join(format!("music-tui-cycle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub/child")).unwrap();
+    std::fs::write(dir.join("sub/child/song.mp3"), b"").unwrap();
+    std::os::unix::fs::symlink(&dir, dir.join("sub/child/loop")).unwrap();
+
+    let files = collect_audio_files(&dir, true).unwrap();
+    let names: Vec<String> = files
+      .iter()
+      .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
+      .collect();
+    assert_eq!(names, ["song.mp3"]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn visit_skips_already_visited_directories() {
+    let dir = std::env::temp_dir().join(format!("music-tui-visited-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub/child")).unwrap();
+    std::fs::write(dir.join("sub/child/song.mp3"), b"").unwrap();
+
+    let mut files = Vec::new();
+    let mut visited = HashSet::new();
+    visited.insert(std::fs::canonicalize(dir.join("sub/child")).unwrap());
+    visit_audio_files(&dir, true, &mut visited, &mut files).unwrap();
+    assert!(files.is_empty(), "already-seen directory must be skipped");
+
+    let mut files = Vec::new();
+    let mut visited = HashSet::new();
+    visit_audio_files(&dir, true, &mut visited, &mut files).unwrap();
+    let names: Vec<String> = files
+      .iter()
+      .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
+      .collect();
+    assert_eq!(names, ["song.mp3"]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn recursive_scan_terminates_on_junction_cycle() {
+    let dir = std::env::temp_dir().join(format!("music-tui-junction-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub/child")).unwrap();
+    std::fs::write(dir.join("sub/child/song.mp3"), b"").unwrap();
+    let link = dir.join("sub").join("child").join("loop");
+    let output = std::process::Command::new("cmd")
+      .args([
+        "/C",
+        "mklink",
+        "/J",
+        &link.display().to_string(),
+        &dir.display().to_string(),
+      ])
+      .output()
+      .unwrap();
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      eprintln!("skipping junction test: filesystem does not support junctions ({stderr})");
+      let _ = std::fs::remove_dir_all(&dir);
+      return;
+    }
+
+    let files = collect_audio_files(&dir, true).unwrap();
+    let names: Vec<String> = files
+      .iter()
+      .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
+      .collect();
+    assert_eq!(names, ["song.mp3"], "junction loop must not recurse or duplicate");
 
     let _ = std::fs::remove_dir_all(&dir);
   }

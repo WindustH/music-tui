@@ -334,7 +334,16 @@ impl super::AppConfig {
     if self.visualizer.sample_rate == 0 {
       self.visualizer.sample_rate = 44100;
     }
+    if self.visualizer.channels == 0 {
+      self.visualizer.channels = 2;
+    }
+    self.visualizer.channels = self.visualizer.channels.clamp(1, 8);
     self.visualizer.window = self.visualizer.window.clamp(256, 8192).next_power_of_two();
+    for column in &mut self.library.columns {
+      if column.width == 0 {
+        column.width = 1;
+      }
+    }
     self.layout.normalize_defaults();
   }
 
@@ -342,5 +351,36 @@ impl super::AppConfig {
     layout::parse_detail(&self.layout.detail)?;
     layout::parse_tabs(&self.layout)?;
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  fn parse_and_normalize(body: &str) -> crate::config::AppConfig {
+    let mut parsed: crate::config::AppConfig = toml::from_str(body).unwrap();
+    crate::config::AppConfig::normalize_defaults(&mut parsed);
+    parsed
+  }
+
+  #[test]
+  fn visualizer_channels_are_kept_in_a_sane_range() {
+    let zero = parse_and_normalize("[visualizer]\nchannels = 0\n");
+    assert_eq!(zero.visualizer.channels, 2);
+
+    let huge = parse_and_normalize("[visualizer]\nchannels = 99\n");
+    assert_eq!(huge.visualizer.channels, 8);
+
+    let stereo = parse_and_normalize("[visualizer]\nchannels = 2\n");
+    assert_eq!(stereo.visualizer.channels, 2);
+  }
+
+  #[test]
+  fn library_column_width_zero_falls_back_to_one() {
+    let parsed = parse_and_normalize(
+      "[[library.columns]]\nfield = \"title\"\nwidth = 0\n\n\
+       [[library.columns]]\nfield = \"artist\"\nwidth = 4\n",
+    );
+    assert_eq!(parsed.library.columns[0].width, 1);
+    assert_eq!(parsed.library.columns[1].width, 4);
   }
 }
