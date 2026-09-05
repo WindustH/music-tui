@@ -12,6 +12,7 @@ use std::sync::{
 
 #[cfg(unix)]
 use std::{
+  collections::VecDeque,
   io::{Read, Result as IoResult},
   time::{Duration, Instant},
 };
@@ -171,19 +172,29 @@ fn run(
     .map(|index| 0.5 * (1.0 - (std::f32::consts::TAU * index as f32 / window as f32).cos()))
     .collect();
 
+  // A zero `sample_rate` (an explicit-but-invalid config: the schema
+  // default is 44100) would make nyquist/hz-per-bin drop to zero below and
+  // panic the thread, so clamp before any frequency math.
+  let sample_rate = config.sample_rate.max(1);
   let mut columns_now = config.bars.max(1);
-  let hz_per_bin = config.sample_rate as f32 / window as f32;
+  let hz_per_bin = sample_rate as f32 / window as f32;
   let min_freq = 40.0f32;
-  let max_freq = (config.sample_rate as f32 / 2.0).min(16_000.0);
+  let max_freq = (sample_rate as f32 / 2.0).min(16_000.0);
   let mut bin_ranges = band_bin_ranges(
     &band_edges(columns_now, hz_per_bin, min_freq, max_freq),
     window,
-    config.sample_rate,
+    sample_rate,
   );
-  let mut samples: Vec<f32> = Vec::with_capacity(window * channels * 2);
+  let mut mono: VecDeque<f32> = VecDeque::with_capacity(window);
+  let mut channel_buf: Vec<f32> = Vec::with_capacity(channels);
   let mut bars: Vec<u8> = vec![0; bin_ranges.len()];
   let mut leftover = Vec::new();
   let frame_period = Duration::from_secs_f64(1.0 / config.fps.max(1) as f64);
+  // Pace the analysis by time (stride = sample_rate / fps) with overlapping
+  // windows instead of draining a fixed window * channels per frame, which
+  // capped the effective frame rate at large windows and discarded audio at
+  // small ones. Keep `fps` from dividing to zero.
+  let stride = (sample_rate / config.fps.max(1)).max(1) as usize;
   let mut last_frame = Instant::now();
   let mut read_buf = vec![0u8; window * channels * 2 * 2];
 
@@ -222,7 +233,11 @@ fn run(
             let bytes: [u8; 2] = [leftover[0], leftover[1]];
             leftover.drain(..2);
             let sample = i16::from_le_bytes(bytes) as f32 / 32768.0;
-            samples.push(sample);
+            channel_buf.push(sample);
+            if channel_buf.len() == channels {
+              mono.push_back(channel_buf.iter().sum::<f32>() / channels as f32);
+              channel_buf.clear();
+            }
           }
         }
         Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -231,8 +246,7 @@ fn run(
         Err(_) => break,
       }
 
-      let mono_needed = window * channels;
-      if samples.len() >= mono_needed && last_frame.elapsed() >= frame_period {
+      if mono.len() >= window && last_frame.elapsed() >= frame_period {
         last_frame = Instant::now();
         // Follow the reported pane width: one band per column, capped,
         // then squeezed to the FFT's real frequency resolution.
@@ -242,16 +256,14 @@ fn run(
           bin_ranges = band_bin_ranges(
             &band_edges(target, hz_per_bin, min_freq, max_freq),
             window,
-            config.sample_rate,
+            sample_rate,
           );
           bars = vec![0; bin_ranges.len()];
         }
-        let frame: Vec<f32> = samples
-          .drain(..mono_needed)
-          .collect::<Vec<f32>>()
-          .chunks(channels)
-          .map(|chunk| chunk.iter().sum::<f32>() / chunk.len() as f32)
-          .collect();
+        // Take the most recent `window` samples so consecutive frames
+        // overlap, advancing by a stride each period, instead of the old
+        // fixed window * channels drain that stalled at large windows.
+        let frame: Vec<f32> = mono.iter().skip(mono.len() - window).copied().collect();
         let spectrum = compute_spectrum(&frame, &fft, &hann, &bin_ranges);
         for (index, value) in spectrum.iter().enumerate() {
           let previous = f32::from(bars[index]);
@@ -262,7 +274,13 @@ fn run(
           };
           bars[index] = smoothed.clamp(0.0, 100.0) as u8;
         }
-        samples.clear();
+        // Bound the rolling buffer: if analysis falls behind the fifo,
+        // keep only the window plus a couple of strides and drop the oldest
+        // samples so a stalled render loop can't grow memory without limit.
+        let max_keep = window + stride * 2;
+        while mono.len() > max_keep {
+          mono.pop_front();
+        }
         if events.send(AsyncEvent::Spectrum(bars.clone())).is_err() {
           return;
         }
@@ -328,16 +346,23 @@ fn compute_spectrum(
     .collect();
   fft.process(&mut buffer);
 
+  // The window's coherent gain (its sum, ~N/2 for Hann) leaves an
+  // exact-bin full-scale sine at N/4; normalizing by the window sum while
+  // keeping the analytic-signal factor of 2 maps that back to 0 dB so bar
+  // heights track the actual signal level.
+  let window_sum: f32 = hann.iter().sum();
   let mut values = Vec::with_capacity(bin_ranges.len());
   for &(start_bin, end_bin) in bin_ranges {
     let mut peak = 0.0f32;
     for sample in &buffer[start_bin..end_bin.min(buffer.len())] {
-      let magnitude = sample.norm() * 2.0 / window as f32;
+      let magnitude = sample.norm() * 2.0 / window_sum;
       peak = peak.max(magnitude);
     }
     let db = 20.0 * (peak + 1e-7).log10();
-    let normalized = (db + 55.0) / 50.0;
-    values.push(normalized.clamp(0.0, 1.0) * 100.0);
+    // Display map: floor at -60 dB, full scale left under the 100 cap so
+    // loud passages don't just pin at the clamp (more visible range).
+    let normalized = ((db + 60.0) / 60.0 * 0.9).clamp(0.0, 1.0);
+    values.push(normalized * 100.0);
   }
   values
 }
@@ -409,6 +434,34 @@ mod tests {
       "hint 8 -> {} edges",
       edges.len()
     );
+  }
+
+  #[test]
+  fn spectrum_scaling_tracks_signal_level() {
+    let window = 2048;
+    let sample_rate = 16_384u32;
+    let fft = FftPlanner::new().plan_fft_forward(window);
+    let hann: Vec<f32> = (0..window)
+      .map(|index| 0.5 * (1.0 - (std::f32::consts::TAU * index as f32 / window as f32).cos()))
+      .collect();
+    // Exact-bin sines (1000 Hz at N=2048 over 16.384 kHz -> bin 125): with
+    // the window-sum normalization, full scale reads ~90 (0 dB under the
+    // display cap) and -20 dB reads ~60, so the bars span the display
+    // instead of hugging the top.
+    let sine = |amplitude: f32| -> Vec<f32> {
+      (0..window)
+        .map(|index| {
+          amplitude
+            * (std::f32::consts::TAU * index as f32 * 1000.0 / sample_rate as f32).sin()
+        })
+        .collect()
+    };
+    let ranges = vec![(125usize, 126usize)];
+    let full = compute_spectrum(&sine(1.0), &fft, &hann, &ranges)[0];
+    let quiet = compute_spectrum(&sine(0.1), &fft, &hann, &ranges)[0];
+    assert!((86.0..=92.0).contains(&full), "full-scale sine reads {full}");
+    assert!((55.0..=65.0).contains(&quiet), "-20 dB sine reads {quiet}");
+    assert!(full - quiet > 20.0, "dynamic range compressed: {full} vs {quiet}");
   }
 
   #[test]

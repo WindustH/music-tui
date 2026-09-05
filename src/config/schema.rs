@@ -331,6 +331,9 @@ impl super::AppConfig {
     if self.visualizer.fps == 0 {
       self.visualizer.fps = 30;
     }
+    if self.visualizer.sample_rate == 0 {
+      self.visualizer.sample_rate = 44100;
+    }
     self.visualizer.window = self.visualizer.window.clamp(256, 8192).next_power_of_two();
     self.layout.normalize_defaults();
   }
