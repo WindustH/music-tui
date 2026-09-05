@@ -65,7 +65,18 @@ async fn main() -> Result<()> {
     None => (None, None),
   };
 
-  run_tui(settings, initial_notice, interrupt).await
+  let notice = if settings.warnings.is_empty() {
+    initial_notice
+  } else {
+    let mut joined = settings.warnings.join("\n");
+    if let Some(notice) = initial_notice {
+      joined.push('\n');
+      joined.push_str(&notice);
+    }
+    Some(joined)
+  };
+
+  run_tui(settings, notice, interrupt).await
 }
 
 async fn run_tui(
