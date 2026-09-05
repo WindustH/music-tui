@@ -57,6 +57,10 @@ pub fn draw(
   tx: &mpsc::UnboundedSender<AsyncEvent>,
 ) -> FrameOutput {
   let area = frame.area();
+  let base_bg = app.settings.theme.base_background();
+  if base_bg != ratatui::style::Color::Reset {
+    frame.render_widget(Block::default().style(Style::default().bg(base_bg)), area);
+  }
 
   // Footer height grows with the pending which-key hints (pdf-tui style).
   let hints: Vec<framework_tui::KeyHint> = if app.show_help {
