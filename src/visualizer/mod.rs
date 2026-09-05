@@ -450,17 +450,22 @@ mod tests {
     let sine = |amplitude: f32| -> Vec<f32> {
       (0..window)
         .map(|index| {
-          amplitude
-            * (std::f32::consts::TAU * index as f32 * 1000.0 / sample_rate as f32).sin()
+          amplitude * (std::f32::consts::TAU * index as f32 * 1000.0 / sample_rate as f32).sin()
         })
         .collect()
     };
     let ranges = vec![(125usize, 126usize)];
     let full = compute_spectrum(&sine(1.0), &fft, &hann, &ranges)[0];
     let quiet = compute_spectrum(&sine(0.1), &fft, &hann, &ranges)[0];
-    assert!((86.0..=92.0).contains(&full), "full-scale sine reads {full}");
+    assert!(
+      (86.0..=92.0).contains(&full),
+      "full-scale sine reads {full}"
+    );
     assert!((55.0..=65.0).contains(&quiet), "-20 dB sine reads {quiet}");
-    assert!(full - quiet > 20.0, "dynamic range compressed: {full} vs {quiet}");
+    assert!(
+      full - quiet > 20.0,
+      "dynamic range compressed: {full} vs {quiet}"
+    );
   }
 
   #[test]

@@ -241,7 +241,9 @@ where
   T: Serialize + for<'de> Deserialize<'de> + Clone + NormalizeConfigDefaults,
 {
   if !path.exists() {
-    return write_default_config(path, default).await.map(|value| (value, true));
+    return write_default_config(path, default)
+      .await
+      .map(|value| (value, true));
   }
   let body = fs::read_to_string(path)
     .await
