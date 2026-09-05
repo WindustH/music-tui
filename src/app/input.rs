@@ -4,8 +4,8 @@ use super::*;
 
 impl App {
   pub fn handle_input(&mut self, event: Event) -> bool {
-    if matches!(event, Event::Resize(_, _)) {
-        return true;
+    if matches!(event, Event::Resize(..)) {
+      return true;
     }
     if let Event::Paste(value) = event {
       if let Some(prompt) = self.prompt.as_mut() {

@@ -338,7 +338,6 @@ fn compute_spectrum(
   hann: &[f32],
   bin_ranges: &[(usize, usize)],
 ) -> Vec<f32> {
-  let window = frame.len();
   let mut buffer: Vec<Complex<f32>> = frame
     .iter()
     .zip(hann)
