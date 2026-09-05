@@ -20,18 +20,43 @@ pub struct Tui {
 }
 
 impl Tui {
+  /// Create the terminal wrapper, restoring the original terminal modes if
+  /// any initialization step fails. Side effects are applied in order and
+  /// unwound in reverse on error, so a failed `new` never leaves raw mode,
+  /// the alternate screen, or mouse/paste capture engaged.
   pub fn new(protocol_reset: Option<String>) -> Result<Self> {
+    fn reset_modes(stderr: &mut Stderr) {
+      let _ = disable_raw_mode();
+      let _ = execute!(
+        stderr,
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+        DisableBracketedPaste
+      );
+    }
     enable_raw_mode()?;
     let mut stderr = io::stderr();
-    execute!(
+    if let Err(error) = execute!(
       stderr,
       EnterAlternateScreen,
       EnableMouseCapture,
       EnableBracketedPaste
-    )?;
+    ) {
+      reset_modes(&mut stderr);
+      return Err(error.into());
+    }
     let backend = CrosstermBackend::new(stderr);
-    let mut terminal = Terminal::new(backend)?;
-    reset_protocol_images(terminal.backend_mut(), protocol_reset.as_deref())?;
+    let mut terminal = match Terminal::new(backend) {
+      Ok(terminal) => terminal,
+      Err(error) => {
+        reset_modes(&mut io::stderr());
+        return Err(error.into());
+      }
+    };
+    if let Err(error) = reset_protocol_images(terminal.backend_mut(), protocol_reset.as_deref()) {
+      reset_modes(&mut io::stderr());
+      return Err(error);
+    }
     Ok(Self {
       terminal,
       protocol_renderer: ProtocolFrameRenderer::default(),

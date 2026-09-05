@@ -106,13 +106,23 @@ pub fn all_tracks(connection: &Connection) -> Result<Vec<LibraryTrack>> {
   Ok(tracks)
 }
 
-pub fn sync_roots(connection: &Connection, config: &LibraryConfig) -> Result<()> {
+/// Canonical, expanded root paths from the config, in a stable form.
+/// `sync_roots` inserts exactly these into the `roots` table, so the same
+/// list is used to detect roots the user removed from the config.
+pub fn configured_root_paths(config: &LibraryConfig) -> Vec<String> {
+  let mut paths = Vec::new();
   for path in &config.paths {
     let expanded = crate::config::expand_home(path);
     let Ok(canonical) = expanded.canonicalize() else {
       continue;
     };
-    let text = canonical.to_string_lossy().to_string();
+    paths.push(canonical.to_string_lossy().to_string());
+  }
+  paths
+}
+
+pub fn sync_roots(connection: &Connection, config: &LibraryConfig) -> Result<()> {
+  for text in configured_root_paths(config) {
     connection.execute(
       "INSERT OR IGNORE INTO roots (path) VALUES (?1)",
       [text.as_str()],

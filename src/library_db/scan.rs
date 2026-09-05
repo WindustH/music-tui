@@ -25,6 +25,7 @@ pub fn scan_roots(
       .collect::<std::result::Result<Vec<_>, _>>()?
   };
 
+  let transaction = connection.transaction()?;
   let mut scanned = 0usize;
   let mut changed = 0usize;
   for (root_id, root_path) in &roots {
@@ -50,7 +51,7 @@ pub fn scan_roots(
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
       let known: Option<(i64, u64)> = {
-        let mut statement = connection
+        let mut statement = transaction
           .prepare("SELECT id, mtime FROM tracks WHERE root_id = ?1 AND rel_path = ?2")?;
         statement
           .query_row((root_id, rel.as_str()), |row| {
@@ -95,7 +96,7 @@ pub fn scan_roots(
         track.title
       };
       if let Some((id, _)) = known {
-        connection.execute(
+        transaction.execute(
           "UPDATE tracks SET title=?1, artist=?2, album=?3, genre=?4, filename=?5,
              duration_secs=?6, lyrics=?7, mtime=?8 WHERE id=?9",
           rusqlite::params![
@@ -111,7 +112,7 @@ pub fn scan_roots(
           ],
         )?;
       } else {
-        connection.execute(
+        transaction.execute(
           "INSERT INTO tracks (root_id, rel_path, title, artist, album, genre, filename,
              duration_secs, lyrics, mtime) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
           rusqlite::params![
@@ -131,13 +132,18 @@ pub fn scan_roots(
       changed += 1;
     }
   }
+  transaction.commit()?;
   // Drop tracks of roots no longer configured and vanished files.
-  drop_missing(connection, &roots)?;
+  drop_missing(connection, &roots, config)?;
   progress(scanned, changed);
   Ok(())
 }
 
-fn drop_missing(connection: &Connection, roots: &[(i64, String)]) -> Result<()> {
+fn drop_missing(
+  connection: &Connection,
+  roots: &[(i64, String)],
+  config: &LibraryConfig,
+) -> Result<()> {
   for (root_id, root_path) in roots {
     let root = PathBuf::from(root_path);
     let vanished: Vec<i64> = {
@@ -160,19 +166,12 @@ fn drop_missing(connection: &Connection, roots: &[(i64, String)]) -> Result<()> 
       connection.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
     }
   }
-  let configured: Vec<String> = roots.iter().map(|(_, path)| path.clone()).collect();
-  let stale: Vec<i64> = {
-    let mut statement = connection.prepare("SELECT id, path FROM roots")?;
-
-    statement
-      .query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-      })?
-      .filter_map(|row| row.ok())
-      .filter(|(_, path)| !configured.contains(path))
-      .map(|(id, _)| id)
-      .collect()
-  };
+  let configured = super::configured_root_paths(config);
+  let stale: Vec<i64> = roots
+    .iter()
+    .filter(|(_, path)| !configured.contains(path))
+    .map(|(id, _)| *id)
+    .collect();
   for id in stale {
     connection.execute("DELETE FROM tracks WHERE root_id = ?1", [id])?;
     connection.execute("DELETE FROM roots WHERE id = ?1", [id])?;

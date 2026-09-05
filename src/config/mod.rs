@@ -39,6 +39,9 @@ pub struct Settings {
   /// XDG state dir (library.db, state.toml); logs and cover caches stay
   /// in the cache dir.
   pub state_dir: PathBuf,
+  /// Non-fatal startup notes: config/keymap/theme files that were
+  /// incompatible and got backed up and replaced with defaults.
+  pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -57,6 +60,7 @@ pub async fn load_or_create() -> Result<Settings> {
   let config_dir = app_config_dir();
   let cache_dir = app_cache_dir();
   let state_dir = app_state_dir();
+  let mut warnings: Vec<String> = Vec::new();
 
   fs::create_dir_all(&config_dir)
     .await
@@ -71,27 +75,46 @@ pub async fn load_or_create() -> Result<Settings> {
   migrate_state_files_from_cache(&cache_dir, &state_dir);
 
   let config_path = config_dir.join("config.toml");
-  let mut config = read_or_write_default(&config_path, AppConfig::default()).await?;
+  #[cfg_attr(not(unix), allow(unused_variables))]
+  let (mut config, config_created) =
+    read_or_write_default(&config_path, AppConfig::default(), &mut warnings).await?;
+  // Adopt a freshly generated Unix-socket setup only when the config file
+  // was just created. An existing file — even one still holding the default
+  // `127.0.0.1` host — means the user set it up deliberately, so leave it.
   #[cfg(unix)]
-  let generated_socket = if config.mpd.host == MpdConfig::default().host {
-    mpd_bootstrap::ensure_mpd_config()
-      .await?
-      .map(|bootstrap| bootstrap.socket_path)
+  let (generated_socket, borrow_warnings) = if config_created {
+    match mpd_bootstrap::ensure_mpd_config().await {
+      Ok(Some(bootstrap)) => (Some(bootstrap.socket_path), Vec::new()),
+      Ok(None) => (None, Vec::new()),
+      Err(error) => (
+        None,
+        vec![format!("failed to prepare a default MPD config: {error:#}")],
+      ),
+    }
   } else {
-    None
+    (None, Vec::new())
   };
   #[cfg(not(unix))]
-  let generated_socket: Option<PathBuf> = None;
+  let (generated_socket, borrow_warnings): (Option<PathBuf>, Vec<String>) = (None, Vec::new());
+  warnings.extend(borrow_warnings);
   if let Some(socket) = generated_socket.as_deref()
     && adopt_generated_socket(&mut config, socket)
   {
     let body = app_config_toml(&config)?;
     write_bytes_atomic(&config_path, body.as_bytes()).await?;
   }
-  let keymap =
-    read_or_write_keymap_default(&config_dir.join("keymap.toml"), KeymapConfig::default()).await?;
-  let theme =
-    read_or_write_theme_default(&config_dir.join("theme.toml"), ThemeConfig::default()).await?;
+  let keymap = read_or_write_keymap_default(
+    &config_dir.join("keymap.toml"),
+    KeymapConfig::default(),
+    &mut warnings,
+  )
+  .await?;
+  let theme = read_or_write_theme_default(
+    &config_dir.join("theme.toml"),
+    ThemeConfig::default(),
+    &mut warnings,
+  )
+  .await?;
 
   Ok(Settings {
     config,
@@ -99,6 +122,7 @@ pub async fn load_or_create() -> Result<Settings> {
     theme,
     cache_dir,
     state_dir,
+    warnings,
   })
 }
 
@@ -149,7 +173,11 @@ async fn backup_and_write_theme_default(path: &Path, default: ThemeConfig) -> Re
   write_theme_default(path, default).await
 }
 
-async fn read_or_write_theme_default(path: &Path, default: ThemeConfig) -> Result<ThemeConfig> {
+async fn read_or_write_theme_default(
+  path: &Path,
+  default: ThemeConfig,
+  warnings: &mut Vec<String>,
+) -> Result<ThemeConfig> {
   if !path.exists() {
     return write_theme_default(path, default).await;
   }
@@ -158,7 +186,14 @@ async fn read_or_write_theme_default(path: &Path, default: ThemeConfig) -> Resul
     .with_context(|| format!("failed to read {}", path.display()))?;
   let mut parsed: ThemeConfig = match toml::from_str(&body) {
     Ok(parsed) => parsed,
-    Err(_) => return backup_and_write_theme_default(path, default).await,
+    Err(_) => {
+      let value = backup_and_write_theme_default(path, default).await?;
+      warnings.push(format!(
+        "incompatible theme {} replaced with defaults (backed up as a .bak file)",
+        path.display()
+      ));
+      return Ok(value);
+    }
   };
   parsed.normalize_defaults();
   let normalized = crate::theme::format_theme_toml(&parsed);
@@ -166,7 +201,11 @@ async fn read_or_write_theme_default(path: &Path, default: ThemeConfig) -> Resul
   Ok(parsed)
 }
 
-async fn read_or_write_keymap_default(path: &Path, default: KeymapConfig) -> Result<KeymapConfig> {
+async fn read_or_write_keymap_default(
+  path: &Path,
+  default: KeymapConfig,
+  warnings: &mut Vec<String>,
+) -> Result<KeymapConfig> {
   if !path.exists() {
     return write_keymap_default(path, default).await;
   }
@@ -175,7 +214,14 @@ async fn read_or_write_keymap_default(path: &Path, default: KeymapConfig) -> Res
     .with_context(|| format!("failed to read {}", path.display()))?;
   let mut parsed: KeymapConfig = match toml::from_str(&body) {
     Ok(parsed) => parsed,
-    Err(_) => return backup_and_write_keymap_default(path, default).await,
+    Err(_) => {
+      let value = backup_and_write_keymap_default(path, default).await?;
+      warnings.push(format!(
+        "incompatible keymap {} replaced with defaults (backed up as a .bak file)",
+        path.display()
+      ));
+      return Ok(value);
+    }
   };
   parsed.normalize_defaults();
   let normalized = format_keymap_toml(&parsed);
@@ -183,27 +229,46 @@ async fn read_or_write_keymap_default(path: &Path, default: KeymapConfig) -> Res
   Ok(parsed)
 }
 
-async fn read_or_write_default<T>(path: &Path, default: T) -> Result<T>
+/// Read a config file, filling in defaults. Returns `(value, created)`
+/// where `created` is true when the file did not exist and had to be
+/// written on this run.
+async fn read_or_write_default<T>(
+  path: &Path,
+  default: T,
+  warnings: &mut Vec<String>,
+) -> Result<(T, bool)>
 where
   T: Serialize + for<'de> Deserialize<'de> + Clone + NormalizeConfigDefaults,
 {
   if !path.exists() {
-    return write_default_config(path, default).await;
+    return write_default_config(path, default).await.map(|value| (value, true));
   }
   let body = fs::read_to_string(path)
     .await
     .with_context(|| format!("failed to read {}", path.display()))?;
   let mut parsed: T = match toml::from_str(&body) {
     Ok(parsed) => parsed,
-    Err(_) => return backup_and_write_default_config(path, default).await,
+    Err(_) => {
+      let value = backup_and_write_default_config(path, default).await?;
+      warnings.push(format!(
+        "incompatible config {} replaced with defaults (backed up as a .bak file)",
+        path.display()
+      ));
+      return Ok((value, false));
+    }
   };
   parsed.normalize_defaults();
-  if parsed.validate().is_err() {
-    return backup_and_write_default_config(path, default).await;
+  if let Err(reason) = parsed.validate() {
+    let value = backup_and_write_default_config(path, default).await?;
+    warnings.push(format!(
+      "invalid config {} ({reason}); replaced with defaults (backed up as a .bak file)",
+      path.display()
+    ));
+    return Ok((value, false));
   }
   let normalized = parsed.to_config_toml()?;
   write_back_if_toml_changed(path, &body, &normalized).await?;
-  Ok(parsed)
+  Ok((parsed, false))
 }
 
 fn next_backup_path(path: &Path) -> PathBuf {

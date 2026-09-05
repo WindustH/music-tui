@@ -163,9 +163,18 @@ fn parse_lrc_line(line: &str) -> ParsedLine {
   }
 }
 
+/// Upper bound for a sane LRC timestamp (hours). Anything beyond it is a
+/// corrupt/hostile file rather than a real position, so it is rejected
+/// instead of producing an infinite or overflowing duration downstream.
+const MAX_LRC_SECS: f64 = 24.0 * 60.0 * 60.0;
+
 fn parse_lrc_timestamp(stamp: &str) -> Option<f64> {
   let (minutes, seconds) = stamp.split_once(':')?;
   let minutes: f64 = minutes.trim().parse().ok()?;
   let seconds: f64 = seconds.trim().parse().ok()?;
-  Some(minutes * 60.0 + seconds)
+  let value = minutes * 60.0 + seconds;
+  if !value.is_finite() || !(0.0..=MAX_LRC_SECS).contains(&value) {
+    return None;
+  }
+  Some(value)
 }

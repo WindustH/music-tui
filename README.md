@@ -87,6 +87,13 @@ notes. In short: install MPD, create a `mpd.conf` with
 `bind_to_address "127.0.0.1"`, register it as a Windows service
 (`sc.exe create mpd ...`), then run `music-tui`.
 
+### macOS
+
+Apple's built-in Terminal.app implements no image protocol (Kitty, Sixel,
+or iTerm2), so cover art falls back to character art (symbols/ASCII).
+To see real images, use a protocol-capable terminal such as iTerm2,
+WezTerm, or kitty (protocols are auto-detected).
+
 ## Documentation
 
 [doc/index.md](doc/index.md).
