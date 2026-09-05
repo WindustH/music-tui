@@ -26,7 +26,7 @@ pub(super) fn draw_footer(
 
   // --- which-key hints (pending key sequences) ---
   if !hints.is_empty() {
-    let background = overlay_background();
+    let background = theme.overlay_background();
     draw_key_hints(
       frame,
       hints,

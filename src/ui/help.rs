@@ -18,16 +18,9 @@ pub(super) fn draw_completion_popup(frame: &mut Frame, app: &App, footer: Rect) 
     width: footer.width,
     height: rows,
   };
-  draw_completion_list(
-    frame,
-    completion,
-    popup,
-    &{
-let mut s = completion_list_style(theme.color(&theme.which_key.foreground));
-s.base = s.base.bg(theme.overlay_background());
-s
-},
-  );
+  let mut completion_style = completion_list_style(theme.color(&theme.which_key.foreground));
+  completion_style.base = completion_style.base.bg(theme.overlay_background());
+  draw_completion_list(frame, completion, popup, &completion_style);
   Some(popup)
 }
 
@@ -40,9 +33,9 @@ pub(super) fn draw_help_dialog(
 ) -> (Option<Rect>, Option<(u16, u16)>) {
   let theme = &app.settings.theme;
   // Give the dialog a stable opaque surface even when the theme inherits
-// the terminal's default background.
-let background = theme.overlay_background();
-let base = Style::default()
+  // the terminal's default background.
+  let background = theme.overlay_background();
+  let base = Style::default()
     .fg(theme.color(&theme.base.foreground))
     .bg(background);
   let help_style = KeyHelpDialogStyle {

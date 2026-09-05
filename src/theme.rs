@@ -184,9 +184,7 @@ impl ThemeConfig {
       framework_tui::overlay_background()
     }
   }
-}
 
-impl ThemeConfig {
   /// Parse a color name or `#rrggbb` hex string into a ratatui color.
   pub fn color(&self, name: &str) -> ratatui::style::Color {
     parse_color(name).unwrap_or(ratatui::style::Color::Reset)

@@ -5,7 +5,7 @@ use std::time::Duration;
 use framework_tui::{
   KeyHelpDialogStyle, KeyHintsStyle, PopupDialogStyle, PromptLineStyle, completion_list_style,
   draw_completion_list, draw_key_help_dialog_scrolled, draw_key_hints, draw_prompt_line,
-  key_hint_columns, key_hint_rows, overlay_background,
+  key_hint_columns, key_hint_rows,
 };
 use img_tui::ProtocolOverlay;
 use mpd_client::commands::SingleMode;
