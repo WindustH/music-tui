@@ -24,14 +24,31 @@ macro_rules! color_section {
   };
 }
 
-color_section!(BaseSection {
-  foreground => "default",
-  background => "default",
-  border => "bright black",
-  muted => "bright black",
-  accent => "cyan",
-  accent_alt => "magenta",
-});
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BaseSection {
+  pub foreground: String,
+  pub background: String,
+  pub border: String,
+  pub muted: String,
+  pub accent: String,
+  pub accent_alt: String,
+  pub render_background: bool,
+}
+
+impl Default for BaseSection {
+  fn default() -> Self {
+    Self {
+      foreground: "default".to_string(),
+      background: "default".to_string(),
+      border: "bright black".to_string(),
+      muted: "bright black".to_string(),
+      accent: "cyan".to_string(),
+      accent_alt: "magenta".to_string(),
+      render_background: false,
+    }
+  }
+}
 
 color_section!(TabBarSection {
   active => "cyan",
@@ -146,6 +163,25 @@ impl ThemeConfig {
       metadata: MetadataSection::default(),
       visualizer: VisualizerSection::default(),
       which_key: WhichKeySection::default(),
+    }
+  }
+}
+
+impl ThemeConfig {
+  pub fn base_background(&self) -> ratatui::style::Color {
+    if self.base.render_background {
+      self.color(&self.base.background)
+    } else {
+      ratatui::style::Color::Reset
+    }
+  }
+
+  pub fn overlay_background(&self) -> ratatui::style::Color {
+    let base_bg = self.base_background();
+    if base_bg != ratatui::style::Color::Reset {
+      base_bg
+    } else {
+      framework_tui::overlay_background()
     }
   }
 }

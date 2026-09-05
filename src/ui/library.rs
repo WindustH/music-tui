@@ -236,15 +236,18 @@ fn library_row(
   // Full-row hover bar: the Row/Cell styles paint the background across
   // the entire row (cells + gaps); spans only set foreground colors so
   // they cannot punch holes in the bar.
-  let row_style = if is_selected {
-    Style::default()
-      .fg(theme.color(&theme.library.selection_foreground))
-      .bg(theme.color(&theme.library.selection_background))
-  } else {
-    Style::default()
-      .fg(theme.color(&theme.base.foreground))
-      .bg(theme.color(&theme.base.background))
-  };
+  let base_bg = theme.base_background();
+let row_style = if is_selected {
+Style::default()
+.fg(theme.color(&theme.library.selection_foreground))
+.bg(theme.color(&theme.library.selection_background))
+} else if base_bg != ratatui::style::Color::Reset {
+Style::default()
+.fg(theme.color(&theme.base.foreground))
+.bg(base_bg)
+} else {
+Style::default().fg(theme.color(&theme.base.foreground))
+};
   let plain_fg = if is_selected {
     theme.color(&theme.library.selection_foreground)
   } else {
