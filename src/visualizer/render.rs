@@ -165,7 +165,10 @@ pub(crate) fn build_band_lines(
       let (ch, lit) = if from_bottom < full {
         ('█', true)
       } else if from_bottom == full && value > 0 {
-        let index = (remainder * fraction_chars.len() / 100).max(1);
+        // Ceil the tip fraction into a glyph bucket (1..=7) so the top
+        // glyph is reachable; a plain integer division capped the highest
+        // bucket (index 7 -> '▇') off and omitted every fractional tip.
+        let index = (remainder * fraction_chars.len()).div_ceil(100).max(1);
         (
           fraction_chars[(index - 1).min(fraction_chars.len() - 1)],
           true,
@@ -277,6 +280,20 @@ mod tests {
     assert_eq!(layout.strip_width, 1);
     assert_eq!(layout.left_margin, 0);
     assert_eq!(layout.right_margin, 1);
+  }
+
+  #[test]
+  fn top_fraction_glyph_is_reachable() {
+    // A 99% tip on a 101-row pane (remainder 99) must render the top glyph
+    // '▇'; the old integer-division bucket capped it at '▆'.
+    let colors = VisualizerColors {
+      low: Color::Green,
+      mid: Color::Yellow,
+      high: Color::Red,
+    };
+    let lines = build_band_lines(1, 101, &[99], &colors);
+    let tip = &lines[1];
+    assert!(tip.spans[0].content.contains('▇'), "tip row: {tip:?}");
   }
 
   #[test]
