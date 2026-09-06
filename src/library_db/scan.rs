@@ -235,7 +235,7 @@ fn read_track(path: &Path) -> Option<LibraryTrack> {
     genre: crate::sanitize::sanitize_text(tag.genre().unwrap_or_default().trim()),
     filename: path
       .file_stem()
-      .map(|stem| stem.to_string_lossy().to_string())
+      .map(|stem| crate::sanitize::sanitize_text(&stem.to_string_lossy()))
       .unwrap_or_default(),
     duration_secs: properties.duration().as_secs_f64(),
     lyrics: crate::sanitize::sanitize_text(
