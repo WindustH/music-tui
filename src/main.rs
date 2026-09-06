@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod cover;
 mod event;
+mod fsutil;
 mod keymap;
 mod layout;
 mod library;

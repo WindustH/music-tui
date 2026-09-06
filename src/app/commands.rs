@@ -362,7 +362,7 @@ impl App {
       self.set_message(format!("save failed: {error}"));
       return;
     }
-    match std::fs::write(&target, body) {
+    match crate::fsutil::atomic_write_bytes(&target, body.as_bytes()) {
       Ok(()) => self.set_message(format!("saved {written} song(s) to {}", target.display())),
       Err(error) => self.set_message(format!("save failed: {error}")),
     }

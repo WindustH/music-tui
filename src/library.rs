@@ -197,7 +197,7 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
   std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
   let mut hasher = Sha256::new();
   hasher.update(target.to_string_lossy().as_bytes());
-  let hash = hex::encode(&hasher.finalize()[..4]);
+  let hash = hex::encode(&hasher.finalize()[..8]);
   let name = target.file_name().unwrap_or_default();
   let link = dir.join(format!("{hash}-{}", name.to_string_lossy()));
   if std::fs::read_link(&link).is_ok_and(|current| current == target) {
@@ -217,7 +217,7 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
     let _ = std::fs::remove_file(&temp);
     std::os::unix::fs::symlink(target, &temp)
       .with_context(|| format!("failed to link {} -> {}", temp.display(), target.display()))?;
-    if let Err(error) = std::fs::rename(&temp, &link) {
+    if let Err(error) = crate::fsutil::replace_path(&temp, &link) {
       let _ = std::fs::remove_file(&temp);
       // Someone else may have renamed an identical link into place already.
       if std::fs::read_link(&link).is_ok_and(|current| current == target) {
@@ -255,7 +255,7 @@ pub fn ensure_link(dir: &Path, target: &Path) -> Result<PathBuf> {
         bail!("{} changed while it was being copied", target.display());
       }
 
-      if let Err(error) = replace_file(&temp, &link) {
+      if let Err(error) = crate::fsutil::replace_path(&temp, &link) {
         let _ = std::fs::remove_file(&temp);
         // A concurrent instance may have published the same version first.
         if same_file_version(&link, target) {
@@ -291,33 +291,6 @@ fn same_file_version(left: &Path, right: &Path) -> bool {
           .zip(right.modified().ok())
           .is_some_and(|(left, right)| left == right)
     })
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-  use std::os::windows::ffi::OsStrExt;
-  use windows_sys::Win32::Storage::FileSystem::{
-    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-  };
-
-  let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-  let destination: Vec<u16> = destination
-    .as_os_str()
-    .encode_wide()
-    .chain(Some(0))
-    .collect();
-  let moved = unsafe {
-    MoveFileExW(
-      source.as_ptr(),
-      destination.as_ptr(),
-      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-    )
-  };
-  if moved == 0 {
-    Err(std::io::Error::last_os_error())
-  } else {
-    Ok(())
-  }
 }
 
 #[cfg(test)]
@@ -373,6 +346,39 @@ mod tests {
     let refreshed = ensure_link(&bridge, &source).unwrap();
     assert_eq!(refreshed, linked);
     assert_eq!(std::fs::read(&refreshed).unwrap(), b"other");
+
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn same_named_sources_get_distinct_bridge_links() {
+    let root = std::env::temp_dir().join(format!("music-tui-bridge-hash-{}", std::process::id()));
+    let album_a = root.join("album-a");
+    let album_b = root.join("album-b");
+    let bridge = root.join("bridge");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&album_a).unwrap();
+    std::fs::create_dir_all(&album_b).unwrap();
+    std::fs::write(album_a.join("song.flac"), b"first album").unwrap();
+    std::fs::write(album_b.join("song.flac"), b"second album").unwrap();
+
+    let link_a = ensure_link(&bridge, &album_a.join("song.flac")).unwrap();
+    let link_b = ensure_link(&bridge, &album_b.join("song.flac")).unwrap();
+    assert_ne!(
+      link_a, link_b,
+      "distinct sources must not collide on one link"
+    );
+    assert_eq!(std::fs::read(&link_a).unwrap(), b"first album");
+    assert_eq!(std::fs::read(&link_b).unwrap(), b"second album");
+    assert_eq!(
+      std::fs::read_link(&link_a).unwrap(),
+      album_a.join("song.flac")
+    );
+    assert_eq!(
+      std::fs::read_link(&link_b).unwrap(),
+      album_b.join("song.flac")
+    );
 
     let _ = std::fs::remove_dir_all(&root);
   }

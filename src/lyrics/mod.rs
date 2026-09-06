@@ -213,7 +213,9 @@ fn sibling_lrc_path(file: &Path) -> Option<PathBuf> {
 }
 
 fn sanitize_filename(name: &str) -> String {
-  name.replace(['/', '\0'], "_")
+  // Backslashes are directory separators on Windows (a stray one would
+  // point the cache path outside the lyrics dir); NUL is invalid anywhere.
+  name.replace(['/', '\\', '\0'], "_")
 }
 
 /// Parse LRC content; falls back to plain lines when no timestamps exist.
@@ -236,6 +238,16 @@ mod tests {
 
     let plain = parse("just\nsome lines\n").unwrap();
     assert!(matches!(plain, Lyrics::Plain(lines) if lines.len() == 2));
+  }
+
+  #[test]
+  fn sanitize_filename_strips_path_and_control_chars() {
+    assert_eq!(sanitize_filename("a\\b/c\0d"), "a_b_c_d");
+    assert_eq!(
+      sanitize_filename("Artist - Title"),
+      "Artist - Title",
+      "ordinary names survive untouched"
+    );
   }
 
   #[test]

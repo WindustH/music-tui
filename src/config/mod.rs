@@ -393,14 +393,15 @@ fn toml_semantic_value(body: &str) -> Option<toml::Value> {
 }
 
 pub async fn write_bytes_atomic(path: &Path, body: &[u8]) -> Result<()> {
-  let temp = path.with_extension(format!("tmp.{}", std::process::id()));
-  fs::write(&temp, body)
+  let path = path.to_path_buf();
+  let body = body.to_vec();
+  let display = path.display().to_string();
+  // Config writes are rare and tiny: move the filesystem work off the async
+  // runtime and share the sync crash-safe path (create_new temp + replace).
+  tokio::task::spawn_blocking(move || crate::fsutil::atomic_write_bytes(&path, &body))
     .await
-    .with_context(|| format!("failed to write {}", temp.display()))?;
-  fs::rename(&temp, path)
-    .await
-    .with_context(|| format!("failed to rename {} to {}", temp.display(), path.display()))?;
-  Ok(())
+    .map_err(|error| anyhow::Error::msg(format!("config write worker failed: {error}")))?
+    .with_context(|| format!("failed to write {display}"))
 }
 #[cfg(test)]
 mod tests {
