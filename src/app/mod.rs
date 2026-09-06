@@ -307,7 +307,8 @@ impl App {
   }
 
   pub fn set_message(&mut self, message: impl Into<String>) {
-    self.message = Some((message.into(), Instant::now()));
+    let message = crate::sanitize::sanitize_text(&message.into());
+    self.message = Some((message, Instant::now()));
   }
 
   pub fn message_text(&self) -> Option<&str> {

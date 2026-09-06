@@ -75,12 +75,8 @@ impl App {
   pub(crate) fn current_song_tags(&self) -> (Option<String>, Option<String>) {
     let song = self.current_song();
     (
-      song.and_then(|song| song_artist(&song.song).map(str::to_string)),
-      song.map(|song| {
-        song_title(&song.song)
-          .map(str::to_string)
-          .unwrap_or_else(|| song.song.url.clone())
-      }),
+      song.and_then(|song| song_artist(&song.song)),
+      song.map(|song| song_title(&song.song).unwrap_or_else(|| song.song.url.clone())),
     )
   }
 
@@ -149,10 +145,8 @@ impl App {
       self.hover = None;
       return;
     };
-    let title = song_title(&song.song)
-      .map(str::to_string)
-      .unwrap_or_else(|| url.clone());
-    let artist = song_artist(&song.song).map(str::to_string);
+    let title = song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&url));
+    let artist = song_artist(&song.song);
     let lyric_title = title.clone();
     self.hover = Some(SongView::new(url.clone(), path.clone(), title));
     self.spawn_song_view_loads(url, &path, artist, &lyric_title, true);

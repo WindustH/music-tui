@@ -226,22 +226,24 @@ fn read_track(path: &Path) -> Option<LibraryTrack> {
   let track = LibraryTrack {
     id: 0,
     path: path.to_path_buf(),
-    title: tag.title().unwrap_or_default().trim().to_string(),
+    title: crate::sanitize::sanitize_text(tag.title().unwrap_or_default().trim()),
     artist: tag
       .artist()
-      .map(|artist| artist.to_string())
+      .map(|artist| crate::sanitize::sanitize_text(&artist))
       .unwrap_or_default(),
-    album: tag.album().unwrap_or_default().trim().to_string(),
-    genre: tag.genre().unwrap_or_default().trim().to_string(),
+    album: crate::sanitize::sanitize_text(tag.album().unwrap_or_default().trim()),
+    genre: crate::sanitize::sanitize_text(tag.genre().unwrap_or_default().trim()),
     filename: path
       .file_stem()
       .map(|stem| stem.to_string_lossy().to_string())
       .unwrap_or_default(),
     duration_secs: properties.duration().as_secs_f64(),
-    lyrics: tag
-      .get_string(&lofty::tag::ItemKey::Lyrics)
-      .unwrap_or_default()
-      .to_lowercase(),
+    lyrics: crate::sanitize::sanitize_text(
+      &tag
+        .get_string(&lofty::tag::ItemKey::Lyrics)
+        .unwrap_or_default()
+        .to_lowercase(),
+    ),
     mtime: 0,
   };
   Some(track)
@@ -250,9 +252,10 @@ fn read_track(path: &Path) -> Option<LibraryTrack> {
 /// Sidecar lyrics as a lowercase blob for filtering; embedded lyrics are
 /// already read by `read_track` (one lofty probe per file).
 fn read_sidecar_lyrics(path: &Path) -> String {
-  std::fs::read_to_string(path.with_extension("lrc"))
+  let lyrics = std::fs::read_to_string(path.with_extension("lrc"))
     .unwrap_or_default()
-    .to_lowercase()
+    .to_lowercase();
+  crate::sanitize::sanitize_text(&lyrics)
 }
 
 #[cfg(test)]

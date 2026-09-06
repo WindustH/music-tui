@@ -16,6 +16,7 @@ mod mpd;
 mod open;
 mod playlist;
 mod render;
+mod sanitize;
 mod state;
 mod strip;
 mod terminal;

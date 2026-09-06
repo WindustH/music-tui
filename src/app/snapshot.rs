@@ -13,7 +13,7 @@ impl App {
       }
       MpdEvent::ConnectionLost(reason) => {
         self.connected = None;
-        self.connection_error = Some(reason);
+        self.connection_error = Some(crate::sanitize::sanitize_text(&reason));
         self.status = None;
         true
       }
@@ -79,9 +79,9 @@ impl App {
     // Every space-separated term must match somewhere (AND); field text
     // matches with spaces ignored ("Love Story" ~ "lovestory").
     terms.iter().all(|term| {
-      song_title(song).is_some_and(|value| StrippedText::new(value).matches(term))
-        || song_artist(song).is_some_and(|value| StrippedText::new(value).matches(term))
-        || song_album(song).is_some_and(|value| StrippedText::new(value).matches(term))
+      song_title(song).is_some_and(|value| StrippedText::new(&value).matches(term))
+        || song_artist(song).is_some_and(|value| StrippedText::new(&value).matches(term))
+        || song_album(song).is_some_and(|value| StrippedText::new(&value).matches(term))
         || StrippedText::new(&song.url).matches(term)
     })
   }

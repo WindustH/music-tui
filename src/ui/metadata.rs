@@ -42,6 +42,7 @@ pub(super) fn draw_metadata_pane(frame: &mut Frame, app: &mut App, area: Rect, s
 
 pub(super) fn metadata_line(app: &App, name: &str, value: &str) -> Line<'static> {
   let theme = &app.settings.theme;
+  let value = crate::sanitize::sanitize_text(value);
   let mut label = format!("{name}:");
   let pad = 16usize.saturating_sub(label.chars().count());
   label.push_str(&" ".repeat(pad));
@@ -53,7 +54,7 @@ pub(super) fn metadata_line(app: &App, name: &str, value: &str) -> Line<'static>
         .add_modifier(Modifier::BOLD),
     ),
     Span::styled(
-      value.to_string(),
+      value,
       Style::default().fg(theme.color(&theme.base.foreground)),
     ),
   ])

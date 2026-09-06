@@ -1,7 +1,12 @@
 //! Queue pane rendering.
 
 use super::*;
+use crate::sanitize::sanitize_text;
 use crate::strip::StrippedText;
+
+fn sanitize_url(url: &str) -> String {
+  sanitize_text(url)
+}
 
 pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
@@ -104,12 +109,8 @@ fn queue_line(
   playing: Option<usize>,
 ) -> Line<'static> {
   let theme = &app.settings.theme;
-  let title = song_title(&song.song)
-    .map(str::to_string)
-    .unwrap_or_else(|| song.song.url.clone());
-  let artist = song_artist(&song.song)
-    .map(str::to_string)
-    .unwrap_or_default();
+  let title = song_title(&song.song).unwrap_or_else(|| sanitize_url(&song.song.url));
+  let artist = song_artist(&song.song).unwrap_or_default();
   let marker = if playing == Some(index) {
     match app.status.as_ref().map(|status| status.state) {
       Some(PlayState::Playing) => {
@@ -176,7 +177,7 @@ fn queue_line(
     // Terms that only match the album or the URL still need a visible
     // highlight, so append those fields when they contain a match.
     if let Some(album) = song_album(&song.song) {
-      let album_text = StrippedText::new(album);
+      let album_text = StrippedText::new(&album);
       let ranges: Vec<(usize, usize)> = terms
         .iter()
         .flat_map(|term| album_text.find_all(term))
@@ -184,11 +185,12 @@ fn queue_line(
       if !ranges.is_empty() {
         spans.push(Span::styled(" · ", muted));
         spans.extend(highlighted_ranges_spans(
-          album, album, 0, ranges, muted, highlight,
+          &album, &album, 0, ranges, muted, highlight,
         ));
       }
     }
-    let url_text = StrippedText::new(&song.song.url);
+    let url = sanitize_url(&song.song.url);
+    let url_text = StrippedText::new(&url);
     let url_ranges: Vec<(usize, usize)> = terms
       .iter()
       .flat_map(|term| url_text.find_all(term))
@@ -196,12 +198,7 @@ fn queue_line(
     if !url_ranges.is_empty() {
       spans.push(Span::styled(" ⟨", muted));
       spans.extend(highlighted_ranges_spans(
-        &song.song.url,
-        &song.song.url,
-        0,
-        url_ranges,
-        muted,
-        highlight,
+        &url, &url, 0, url_ranges, muted, highlight,
       ));
       spans.push(Span::styled("⟩", muted));
     }

@@ -62,12 +62,9 @@ pub(super) fn draw_footer(
     }
   }
   if let Some(song) = app.current_song() {
-    let title = song_title(&song.song)
-      .map(str::to_string)
-      .unwrap_or_else(|| song.song.url.clone());
-    let artist = song_artist(&song.song)
-      .map(str::to_string)
-      .unwrap_or_default();
+    let title =
+      song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&song.song.url));
+    let artist = song_artist(&song.song).unwrap_or_default();
     let label = if artist.is_empty() {
       title
     } else {

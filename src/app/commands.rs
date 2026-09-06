@@ -346,10 +346,10 @@ impl App {
     let mut written = 0;
     for song in &self.queue {
       let song = &song.song;
-      let artist = song_artist(song).map(str::to_string).unwrap_or_default();
+      let artist = song_artist(song).unwrap_or_default();
       let label = match (artist.is_empty(), song_title(song)) {
         (false, Some(title)) => format!("{artist} - {title}"),
-        (true, Some(title)) => title.to_string(),
+        (true, Some(title)) => title,
         _ => song.url.clone(),
       };
       let seconds = song

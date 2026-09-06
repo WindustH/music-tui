@@ -70,9 +70,7 @@ impl App {
       self.set_message("local song path is unavailable");
       return true;
     };
-    let title = song_title(&song.song)
-      .map(str::to_string)
-      .unwrap_or_else(|| url.clone());
+    let title = song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&url));
     self.open_detail_view(url, path, title);
     true
   }

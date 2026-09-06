@@ -171,15 +171,17 @@ async fn maybe_restore_interrupt(
       );
       if state.restore_attempts < 3 {
         let _ = events.send(AsyncEvent::Mpd(MpdEvent::Notice(format!(
-          "restore failed ({error}); will retry"
+          "restore failed ({}); will retry",
+          crate::sanitize::sanitize_text(&error.to_string())
         ))));
         // Keep the session armed so a later refresh retries; the saved
         // playlist (the only copy of the original queue) is untouched.
         return Ok(false);
       }
       let _ = events.send(AsyncEvent::Mpd(MpdEvent::Notice(format!(
-        "could not restore queue from saved playlist `{playlist}`; \
-         it has been left in place so you can load it manually"
+        "could not restore queue from saved playlist `{}`; \
+         it has been left in place so you can load it manually",
+        crate::sanitize::sanitize_text(playlist)
       ))));
       state.interrupt = None;
       state.restore_attempts = 0;

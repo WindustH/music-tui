@@ -136,8 +136,7 @@ impl App {
           && position < self.queue.len()
         {
           let title = song_title(&self.queue[position].song)
-            .map(str::to_string)
-            .unwrap_or_else(|| self.queue[position].song.url.clone());
+            .unwrap_or_else(|| crate::sanitize::sanitize_text(&self.queue[position].song.url));
           self.mpdc(MpdCommand::DeleteAt(position));
           self.set_message(format!("deleted: {title}"));
         }

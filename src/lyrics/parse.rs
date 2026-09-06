@@ -6,9 +6,9 @@ pub fn parse(body: &str) -> Result<Lyrics, String> {
   let mut timed: Vec<SyncedLine> = Vec::new();
   let mut plain: Vec<String> = Vec::new();
 
-  for line in body.lines() {
-    let line = line.trim_end_matches('\r');
-    match parse_lrc_line(line) {
+  for raw_line in body.lines() {
+    let line = crate::sanitize::sanitize_text(raw_line.trim_end_matches('\r'));
+    match parse_lrc_line(&line) {
       ParsedLine::Timed { times, text, words } => {
         if times.is_empty() {
           plain.push(line.to_string());
