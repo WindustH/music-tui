@@ -164,7 +164,7 @@ pub(crate) fn build_band_lines(
       let remainder = value * height % 100; // fraction of the tip row
       let (ch, lit) = if from_bottom < full {
         ('█', true)
-      } else if from_bottom == full && value > 0 {
+      } else if from_bottom == full && value > 0 && remainder > 0 {
         // Ceil the tip fraction into a glyph bucket (1..=7) so the top
         // glyph is reachable; a plain integer division capped the highest
         // bucket (index 7 -> '▇') off and omitted every fractional tip.
@@ -294,6 +294,22 @@ mod tests {
     let lines = build_band_lines(1, 101, &[99], &colors);
     let tip = &lines[1];
     assert!(tip.spans[0].content.contains('▇'), "tip row: {tip:?}");
+  }
+
+  #[test]
+  fn exact_division_draws_no_spurious_tip() {
+    // 50% of a 2-row pane is exactly one full row (remainder zero): the
+    // leftover '▁' tip used to add a stray cell that pushed the bar past
+    // its exact height.
+    let colors = VisualizerColors {
+      low: Color::Green,
+      mid: Color::Yellow,
+      high: Color::Red,
+    };
+    let lines = build_band_lines(1, 2, &[50], &colors);
+    assert_eq!(lines.len(), 2);
+    assert!(lines[1].spans[0].content.contains('█'));
+    assert_eq!(lines[0].spans[0].content, " ");
   }
 
   #[test]

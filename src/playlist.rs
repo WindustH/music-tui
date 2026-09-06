@@ -43,14 +43,19 @@ pub fn parse_playlist(path: &Path) -> Result<Vec<PathBuf>, String> {
   Ok(entries)
 }
 
-/// `FileN=value` entries of a PLS file, in file order.
+/// `FileN=value` entries of a PLS file, in file order. Byte slicing is done
+/// via `get(..4)`/`get(4..)` so a multi-byte UTF-8 key prefix can never hit
+/// a mid-character boundary and panic the reader.
 fn pls_entry(line: &str) -> Option<&str> {
   let (key, value) = line.split_once('=')?;
   let key = key.trim();
-  if key.len() >= 5
-    && key[..4].eq_ignore_ascii_case("file")
-    && key[4..].chars().all(|c| c.is_ascii_digit())
-  {
+  let is_file_entry = match (key.get(..4), key.get(4..)) {
+    (Some(prefix), Some(track)) => {
+      prefix.eq_ignore_ascii_case("file") && track.chars().all(|c| c.is_ascii_digit())
+    }
+    _ => false,
+  };
+  if is_file_entry {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
   } else {
@@ -176,6 +181,14 @@ mod tests {
     assert_eq!(entries[1], absolute);
     let _ = std::fs::remove_file(&path);
     cleanup_tmp();
+  }
+
+  #[test]
+  fn pls_entry_ignores_multibyte_key_prefixes() {
+    // 'File' cut at a non-char boundary used to panic the byte slicing.
+    assert!(pls_entry("ñññx=1.mp3").is_none());
+    assert_eq!(pls_entry("File12=one.ogg"), Some("one.ogg"));
+    assert!(pls_entry("filex=one.ogg").is_none());
   }
 
   #[test]

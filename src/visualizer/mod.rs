@@ -110,9 +110,15 @@ fn band_bin_ranges(edges: &[f32], window: usize, sample_rate: u32) -> Vec<(usize
   edges
     .windows(2)
     .map(|pair| {
-      let start_bin = ((pair[0] / nyquist) * bins as f32).floor().max(1.0) as usize;
-      let end_bin =
-        (((pair[1] / nyquist) * bins as f32).ceil() as usize).clamp(start_bin + 1, bins);
+      let start_bin = ((pair[0] / nyquist) * bins as f32)
+        .floor()
+        .max(1.0)
+        .min(bins as f32) as usize;
+      // Total even when the Nyquist limit collapses to min_freq: a plain
+      // `.clamp(start_bin + 1, bins)` panics once start_bin hits `bins`.
+      let end_bin = (((pair[1] / nyquist) * bins as f32).ceil() as usize)
+        .max(start_bin + 1)
+        .min(bins);
       (start_bin, end_bin)
     })
     .fold(Vec::new(), |mut ranges, range| {
@@ -174,8 +180,10 @@ fn run(
 
   // A zero `sample_rate` (an explicit-but-invalid config: the schema
   // default is 44100) would make nyquist/hz-per-bin drop to zero below and
-  // panic the thread, so clamp before any frequency math.
-  let sample_rate = config.sample_rate.max(1);
+  // panic the thread. Clamp to 80 (= 2 * min_freq) so the Nyquist limit
+  // never falls below the lowest band edge and band-to-bin mapping stays
+  // valid; the schema re-clamps as well (see normalize_defaults).
+  let sample_rate = config.sample_rate.max(80);
   let mut columns_now = config.bars.max(1);
   let hz_per_bin = sample_rate as f32 / window as f32;
   let min_freq = 40.0f32;
@@ -433,6 +441,32 @@ mod tests {
       "hint 8 -> {} edges",
       edges.len()
     );
+  }
+
+  #[test]
+  fn band_ranges_stay_valid_when_nyquist_below_min_freq() {
+    // A sample_rate below 2 * min_freq (40 Hz) puts the Nyquist limit under
+    // the lowest band edge; the mapping must keep every range start <= end
+    // (it used to invert and panic the spectrum slice).
+    let window = 512;
+    let ranges = band_bin_ranges(&[40.0, 20.0], window, 40);
+    assert!(!ranges.is_empty());
+    for &(start, end) in &ranges {
+      assert!(start <= end, "band range must not invert: ({start}, {end})");
+    }
+  }
+
+  #[test]
+  fn band_ranges_stay_valid_at_minimum_sample_rate() {
+    // run() clamps sample_rate to 80 (= 2 * min_freq), where the final
+    // edge equals Nyquist: the degenerate [min_freq, max_freq] pair must
+    // not panic the range clamp.
+    let window = 256;
+    let ranges = band_bin_ranges(&[40.0, 40.0], window, 80);
+    assert!(!ranges.is_empty());
+    for &(start, end) in &ranges {
+      assert!(start <= end, "band range must not invert: ({start}, {end})");
+    }
   }
 
   #[test]

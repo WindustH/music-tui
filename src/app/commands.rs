@@ -215,14 +215,8 @@ impl App {
       "prev" => self.mpdc(MpdCommand::Previous),
       "volume" | "vol" => match args.first() {
         Some(value) => {
-          if let Some(delta) = value.strip_prefix(['+', '-']) {
-            let magnitude: i16 = delta.parse().unwrap_or(0);
-            let signed = if value.starts_with('-') {
-              -magnitude
-            } else {
-              magnitude
-            };
-            self.mpdc(MpdCommand::NudgeVolume(signed));
+          if let Some(nudge) = parse_volume_delta(value) {
+            self.mpdc(MpdCommand::NudgeVolume(nudge));
           } else if let Ok(volume) = value.parse::<u8>() {
             self.mpdc(MpdCommand::SetVolume(volume.min(100)));
           } else {
@@ -372,5 +366,45 @@ impl App {
       Ok(()) => self.set_message(format!("saved {written} song(s) to {}", target.display())),
       Err(error) => self.set_message(format!("save failed: {error}")),
     }
+  }
+}
+
+/// Parse a `+N`/`-N` relative volume for the `:volume` command. The raw
+/// magnitude is parsed as i32 so a `--32768`-style value can no longer
+/// overflow when negated; deltas beyond the MPD 0..100 range are clamped
+/// (the worker also clamps the resulting level, so the effect is identical).
+fn parse_volume_delta(arg: &str) -> Option<i16> {
+  let delta = arg.strip_prefix(['+', '-'])?;
+  let magnitude: i32 = delta.parse().ok()?;
+  let signed = if arg.starts_with('-') {
+    magnitude.saturating_neg()
+  } else {
+    magnitude
+  };
+  Some(signed.clamp(-100, 100) as i16)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn volume_delta_parses_signed_values() {
+    assert_eq!(parse_volume_delta("50"), None);
+    assert_eq!(parse_volume_delta("+50"), Some(50));
+    assert_eq!(parse_volume_delta("-50"), Some(-50));
+  }
+
+  #[test]
+  fn volume_delta_clamps_and_never_overflows() {
+    assert_eq!(parse_volume_delta("--32768"), Some(100));
+    assert_eq!(parse_volume_delta("-200"), Some(-100));
+    assert_eq!(parse_volume_delta("+200"), Some(100));
+  }
+
+  #[test]
+  fn volume_delta_rejects_garbage() {
+    assert_eq!(parse_volume_delta("+abc"), None);
+    assert_eq!(parse_volume_delta("--99999999999999999999"), None);
   }
 }

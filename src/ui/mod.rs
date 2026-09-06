@@ -230,8 +230,8 @@ fn draw_layout(
       second,
     } => {
       let constraints = [
-        Constraint::Ratio(ratio.0, ratio.0 + ratio.1),
-        Constraint::Ratio(ratio.1, ratio.0 + ratio.1),
+        Constraint::Ratio(ratio.0, ratio.0.saturating_add(ratio.1)),
+        Constraint::Ratio(ratio.1, ratio.0.saturating_add(ratio.1)),
       ];
       let areas: [Rect; 2] = match dir {
         SplitDir::Horizontal => Layout::horizontal(constraints).areas(area),

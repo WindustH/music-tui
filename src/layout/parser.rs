@@ -2,17 +2,22 @@
 
 use super::{PaneKind, PaneLayout, PaneSource, SplitDir};
 
+/// Deepest allowed nested split. Recursion is bounded so a pathological
+/// config fails cleanly instead of exhausting the stack; real layouts are
+/// a handful of levels.
+const MAX_LAYOUT_DEPTH: usize = 64;
+
 pub(super) fn parse(spec: &str) -> Result<PaneLayout, String> {
   let mut tokens = Tokenizer::new(spec);
-  let node = parse_node(&mut tokens)?;
+  let node = parse_node(&mut tokens, 0)?;
   tokens.expect_end()?;
   Ok(node)
 }
 
-fn parse_node(tokens: &mut Tokenizer) -> Result<PaneLayout, String> {
+fn parse_node(tokens: &mut Tokenizer, depth: usize) -> Result<PaneLayout, String> {
   tokens.skip_whitespace();
   match tokens.peek() {
-    Some('H') | Some('V') => parse_split(tokens),
+    Some('H') | Some('V') => parse_split(tokens, depth),
     Some(_) => {
       let word = tokens.read_word();
       let kind = PaneKind::parse(&word).ok_or_else(|| {
@@ -44,7 +49,10 @@ fn parse_node(tokens: &mut Tokenizer) -> Result<PaneLayout, String> {
   }
 }
 
-fn parse_split(tokens: &mut Tokenizer) -> Result<PaneLayout, String> {
+fn parse_split(tokens: &mut Tokenizer, depth: usize) -> Result<PaneLayout, String> {
+  if depth >= MAX_LAYOUT_DEPTH {
+    return Err("layout nested too deeply".to_string());
+  }
   let dir = match tokens.next() {
     Some('H') => SplitDir::Horizontal,
     Some('V') => SplitDir::Vertical,
@@ -54,9 +62,9 @@ fn parse_split(tokens: &mut Tokenizer) -> Result<PaneLayout, String> {
   tokens.expect_char('(')?;
   let ratio = parse_ratio(tokens)?;
   tokens.expect_char(',')?;
-  let first = parse_node(tokens)?;
+  let first = parse_node(tokens, depth + 1)?;
   tokens.expect_char(',')?;
-  let second = parse_node(tokens)?;
+  let second = parse_node(tokens, depth + 1)?;
   tokens.expect_char(')')?;
   Ok(PaneLayout::Split {
     dir,
@@ -74,6 +82,11 @@ fn parse_ratio(tokens: &mut Tokenizer) -> Result<(u32, u32), String> {
   if first == 0 || second == 0 {
     return Err(format!("ratio {first}:{second} must be positive"));
   }
+  // Rendering sums the two weights into a ratio constraint; reject sums
+  // that overflow u32 up front instead of panicking later.
+  first
+    .checked_add(second)
+    .ok_or_else(|| format!("ratio {first}:{second} is too large"))?;
   Ok((first, second))
 }
 
@@ -139,5 +152,28 @@ impl Tokenizer {
     digits
       .parse()
       .map_err(|_| format!("expected a number, found {digits:?}"))
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn ratio_addition_cannot_overflow() {
+    assert!(parse("4294967295:1, queue, lyrics").is_err());
+    assert!(parse("1:4294967295, queue, lyrics").is_err());
+  }
+
+  #[test]
+  fn excessive_nesting_is_rejected() {
+    let spec = format!("{}queue{})", "H(1:1,".repeat(80), ")".repeat(80));
+    assert!(parse(&spec).is_err());
+  }
+
+  #[test]
+  fn split_trees_still_parse() {
+    assert!(parse("H(2:1, queue, cover)").is_ok());
+    assert!(parse("V(1:1, H(2:1, cover, metadata), lyrics)").is_ok());
   }
 }
