@@ -23,7 +23,7 @@ use tokio::{net::TcpStream, sync::mpsc, time::sleep};
 use tracing::{debug, info, warn};
 
 use crate::{
-  config::MpdConfig,
+  config::{BehaviorConfig, MpdConfig},
   event::{AsyncEvent, MpdEvent},
 };
 
@@ -89,7 +89,11 @@ impl MpdHandle {
   }
 }
 
-pub fn spawn_mpd_worker(config: MpdConfig, events: mpsc::UnboundedSender<AsyncEvent>) -> MpdHandle {
+pub fn spawn_mpd_worker(
+  config: MpdConfig,
+  behavior: BehaviorConfig,
+  events: mpsc::UnboundedSender<AsyncEvent>,
+) -> MpdHandle {
   let (tx, mut rx) = mpsc::unbounded_channel();
   let queue_dedup = Arc::new(AtomicBool::new(false));
   let worker_dedup = queue_dedup.clone();
@@ -108,6 +112,7 @@ pub fn spawn_mpd_worker(config: MpdConfig, events: mpsc::UnboundedSender<AsyncEv
             &mut rx,
             &events,
             &config,
+            &behavior,
             &worker_dedup,
           )
           .await

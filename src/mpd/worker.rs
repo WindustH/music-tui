@@ -22,6 +22,7 @@ pub(super) async fn run_session(
   command_rx: &mut mpsc::UnboundedReceiver<MpdCommand>,
   events: &mpsc::UnboundedSender<AsyncEvent>,
   config: &MpdConfig,
+  behavior: &BehaviorConfig,
   dedup: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
   let mut state = SessionState {
@@ -36,8 +37,7 @@ pub(super) async fn run_session(
   state.playing = status.state == PlayState::Playing;
   refresh(client, &mut state, events).await?;
 
-  let tick_idle = Duration::from_millis(1000);
-  let tick_playing = Duration::from_millis(250);
+  let (tick_idle, tick_playing) = behavior.refresh_durations();
 
   loop {
     let period = if state.playing {

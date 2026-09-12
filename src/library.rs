@@ -134,7 +134,32 @@ pub fn uri_to_path(music_dir: Option<&Path>, uri: &str) -> Option<PathBuf> {
     return Some(path);
   }
   let relative = uri.trim_start_matches('/');
-  music_dir.map(|dir| dir.join(relative))
+  let dir = music_dir?;
+  if !relative_stays_within(relative) {
+    return None;
+  }
+  Some(dir.join(relative))
+}
+
+/// True when a uri (`Album/song.flac`) stays inside its root: `a/../b`
+/// stays and is permitted, but a `..` that would climb above the root (or
+/// the whole music dir) is rejected so a hostile uri cannot read arbitrary
+/// files outside the library.
+fn relative_stays_within(relative: &str) -> bool {
+  let mut depth = 0usize;
+  for component in relative.split(['/', '\\']) {
+    match component {
+      "" | "." => {}
+      ".." => {
+        if depth == 0 {
+          return false;
+        }
+        depth -= 1;
+      }
+      _ => depth += 1,
+    }
+  }
+  true
 }
 
 /// Decode a local URI as returned by MPD. MPD accepts `file://` over a
@@ -326,6 +351,33 @@ mod tests {
       uri_to_path(Some(Path::new("/music")), "Artist/song.flac"),
       Some(PathBuf::from("/music/Artist/song.flac")),
     );
+  }
+
+  #[test]
+  fn uri_to_path_rejects_parent_escapes() {
+    let dir = Path::new("/music");
+    assert_eq!(uri_to_path(Some(dir), "../secret"), None);
+    assert_eq!(uri_to_path(Some(dir), "Artist/../../secret"), None);
+    assert_eq!(uri_to_path(Some(dir), "/../secret"), None);
+    assert_eq!(uri_to_path(Some(dir), "Artist/..\\..\\secret"), None);
+    assert!(uri_to_path(Some(dir), "Album/../song.flac").is_some());
+    assert!(uri_to_path(Some(dir), "Album/./song.flac").is_some());
+  }
+
+  #[test]
+  fn relative_path_stays_within() {
+    for uri in [
+      "Artist/song.flac",
+      "Album/../song.flac",
+      ".",
+      "a/b/c",
+      "a/./b",
+    ] {
+      assert!(relative_stays_within(uri), "{uri} should stay inside");
+    }
+    for uri in ["..", "../x", "a/../../x", "a/../../../x", "..\\..\\x"] {
+      assert!(!relative_stays_within(uri), "{uri} should escape");
+    }
   }
 
   #[cfg(windows)]

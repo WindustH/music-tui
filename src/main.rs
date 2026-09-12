@@ -123,7 +123,11 @@ async fn run_tui(
     .flatten();
 
   let (tx, mut rx) = mpsc::unbounded_channel::<AsyncEvent>();
-  let mpd = mpd::spawn_mpd_worker(settings.config.mpd.clone(), tx.clone());
+  let mpd = mpd::spawn_mpd_worker(
+    settings.config.mpd.clone(),
+    settings.config.behavior.clone(),
+    tx.clone(),
+  );
   mpd.set_queue_dedup(settings.config.behavior.queue_dedup);
   let visualizer = visualizer::spawn_visualizer(settings.config.visualizer.clone(), tx.clone());
   let band_renderer = visualizer
@@ -318,7 +322,7 @@ fn spawn_input_thread(
 /// when mpd is idle. Playback position updates arrive via mpd snapshots.
 fn spawn_tick_task(tx: mpsc::UnboundedSender<AsyncEvent>, behavior: config::BehaviorConfig) {
   tokio::spawn(async move {
-    let period = Duration::from_millis(behavior.tick_ms.clamp(100, 10_000));
+    let period = behavior.refresh_durations().0;
     loop {
       sleep(period).await;
       if tx.send(AsyncEvent::Tick).is_err() {

@@ -1,6 +1,7 @@
 //! Configuration schema: every tunable the user can set in config.toml.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,7 @@ use super::paths::expand_home;
 use crate::layout;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct MpdConfig {
   /// MPD host. A path starting with `/` (or `~`) connects over a unix
   /// socket — required for playing `file://` songs outside the library.
@@ -38,7 +39,7 @@ impl Default for MpdConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BehaviorConfig {
   /// Interval between MPD status refreshes while idle.
   pub tick_ms: u64,
@@ -59,8 +60,20 @@ impl Default for BehaviorConfig {
   }
 }
 
+impl BehaviorConfig {
+  /// MPD status-refresh periods for the idle and playing states
+  /// (idle, playing), clamped so degenerate config values cannot spin the
+  /// worker or stall the UI. Shared by the MPD worker and the UI tick task.
+  pub fn refresh_durations(&self) -> (Duration, Duration) {
+    (
+      Duration::from_millis(self.tick_ms.clamp(100, 10_000)),
+      Duration::from_millis(self.playing_tick_ms.clamp(100, 10_000)),
+    )
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RenderConfig {
   pub chafa_bin: String,
   pub auto_detect: bool,
@@ -84,7 +97,7 @@ impl Default for RenderConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct VisualizerConfig {
   /// MPD fifo output path, e.g. the `path` of an `audio_output { type "fifo" }` block.
   pub fifo_path: String,
@@ -120,7 +133,7 @@ impl Default for VisualizerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 #[derive(Default)]
 pub struct PlaylistConfig {
   /// Directory for `:save` exports. Empty means the XDG state home
@@ -130,6 +143,7 @@ pub struct PlaylistConfig {
 
 /// Column shown in the library pane: a track field plus a width weight.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LibraryColumn {
   /// Track field: `title` / `artist` / `album` / `genre` / `filename` /
   /// `duration`.
@@ -139,7 +153,7 @@ pub struct LibraryColumn {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LibraryConfig {
   /// Music source directories for the library database (music-tui scans
   /// and indexes these itself; they may differ from MPD's music dir).
@@ -190,7 +204,7 @@ impl PlaylistConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LyricsConfig {
   /// Extra directories searched for `<artist> - <title>.lrc` files.
   pub extra_dirs: Vec<String>,
@@ -210,7 +224,7 @@ impl Default for LyricsConfig {
 /// Top-level tab configuration. Each `[[layout.tabs]]` entry describes one
 /// tab shown in the tab bar; `detail` describes the secondary detail view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct LayoutConfig {
   pub detail: String,
   pub tabs: Vec<TabConfig>,
@@ -255,6 +269,7 @@ impl LayoutConfig {
 
 /// One tab: a layout tree plus the pane whose keymap is active.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TabConfig {
   /// Name shown in the tab bar.
   pub name: String,
@@ -372,6 +387,58 @@ mod tests {
 
     let stereo = parse_and_normalize("[visualizer]\nchannels = 2\n");
     assert_eq!(stereo.visualizer.channels, 2);
+  }
+
+  #[test]
+  fn unknown_config_keys_are_rejected() {
+    let top_level = toml::from_str::<crate::config::AppConfig>("[behavior]\nwat = 1\n");
+    assert!(
+      top_level.is_err(),
+      "unknown top-level key must fail: {top_level:?}"
+    );
+
+    let nested = toml::from_str::<crate::config::AppConfig>(
+      "[[library.columns]]\nfield = \"title\"\nwidth = 2\nwat = 1\n",
+    );
+    assert!(nested.is_err(), "unknown nested key must fail: {nested:?}");
+  }
+
+  #[test]
+  fn behavior_zero_ticks_fall_back_to_defaults() {
+    let parsed = parse_and_normalize("[behavior]\ntick_ms = 0\nplaying_tick_ms = 0\n");
+    assert_eq!(parsed.behavior.tick_ms, 1000);
+    assert_eq!(parsed.behavior.playing_tick_ms, 200);
+  }
+
+  #[test]
+  fn behavior_refresh_durations_are_clamped() {
+    use std::time::Duration;
+
+    let default = crate::config::BehaviorConfig::default();
+    assert_eq!(
+      default.refresh_durations(),
+      (Duration::from_millis(1000), Duration::from_millis(200))
+    );
+
+    let degenerate = crate::config::BehaviorConfig {
+      tick_ms: 0,
+      playing_tick_ms: 50,
+      queue_dedup: false,
+    };
+    assert_eq!(
+      degenerate.refresh_durations(),
+      (Duration::from_millis(100), Duration::from_millis(100))
+    );
+
+    let huge = crate::config::BehaviorConfig {
+      tick_ms: 1_000_000,
+      playing_tick_ms: 999_999,
+      queue_dedup: true,
+    };
+    assert_eq!(
+      huge.refresh_durations(),
+      (Duration::from_millis(10_000), Duration::from_millis(10_000))
+    );
   }
 
   #[test]

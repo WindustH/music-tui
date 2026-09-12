@@ -4,7 +4,7 @@ use framework_tui::{KeyBindingConfig, KeyBindings};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct KeymapConfig {
   pub queue: KeymapSection,
   pub library: KeymapSection,
@@ -18,12 +18,13 @@ pub struct KeymapConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct KeymapSection {
   pub keymap: Vec<KeymapEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeymapEntry {
   pub on: KeymapOn,
   pub run: String,
