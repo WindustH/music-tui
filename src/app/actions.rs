@@ -107,8 +107,11 @@ impl App {
           .queue_state
           .selected()
           .and_then(|row| self.filtered_position(row))
+          && position < self.queue.len()
         {
           self.mpdc(MpdCommand::PlayPosition(position as u32));
+        } else if self.queue_state.selected().is_some() {
+          self.set_message("selection is no longer in the queue");
         }
         true
       }
@@ -139,6 +142,8 @@ impl App {
             .unwrap_or_else(|| crate::sanitize::sanitize_text(&self.queue[position].song.url));
           self.mpdc(MpdCommand::DeleteAt(position));
           self.set_message(format!("deleted: {title}"));
+        } else if self.queue_state.selected().is_some() {
+          self.set_message("selection is no longer in the queue");
         }
         true
       }

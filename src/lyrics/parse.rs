@@ -1,12 +1,31 @@
 //! LRC parsing: synced line/word timestamps and plain-text fallback.
 
+use tracing::warn;
+
 use super::{Lyrics, SyncedLine, Word};
 
+/// Upper bound for a single LRC body, in bytes. Oversized bodies are
+/// truncated at the byte cap (on a char boundary) before parsing so a
+/// corrupt/hostile file cannot balloon memory or the render path.
+pub const MAX_LRC_BYTES: usize = 512 * 1024;
+/// Upper bound for the number of LRC lines parsed from a body.
+pub const MAX_LRC_LINES: usize = 2000;
+
 pub fn parse(body: &str) -> Result<Lyrics, String> {
+  let mut body = body;
+  if body.len() > MAX_LRC_BYTES {
+    let mut end = MAX_LRC_BYTES;
+    while !body.is_char_boundary(end) {
+      end -= 1;
+    }
+    body = &body[..end];
+    warn!(bytes = MAX_LRC_BYTES, "lyrics body truncated (byte cap)");
+  }
   let mut timed: Vec<SyncedLine> = Vec::new();
   let mut plain: Vec<String> = Vec::new();
 
-  for raw_line in body.lines() {
+  let mut lines = body.lines();
+  for raw_line in lines.by_ref().take(MAX_LRC_LINES) {
     let line = crate::sanitize::sanitize_text(raw_line.trim_end_matches('\r'));
     match parse_lrc_line(&line) {
       ParsedLine::Timed { times, text, words } => {
@@ -27,6 +46,10 @@ pub fn parse(body: &str) -> Result<Lyrics, String> {
       }
       ParsedLine::Untimed => plain.push(line.to_string()),
     }
+  }
+
+  if lines.next().is_some() {
+    warn!(lines = MAX_LRC_LINES, "lyrics body truncated (line cap)");
   }
 
   if timed.is_empty() {
@@ -177,4 +200,43 @@ fn parse_lrc_timestamp(stamp: &str) -> Option<f64> {
     return None;
   }
   Some(value)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn oversized_body_is_truncated_on_a_char_boundary() {
+    // The byte cap lands inside a 3-byte char; parsing must not panic and
+    // the surviving prefix must be usable.
+    let body = format!("{}あ", "x".repeat(MAX_LRC_BYTES - 2));
+    let lyrics = parse(&body).expect("truncated body still parses");
+    assert_eq!(lyrics.line_count(), 1);
+    let line = lyrics.line(0).expect("has one line");
+    assert!(line.len() < MAX_LRC_BYTES);
+    assert!(line.chars().all(|ch| ch == 'x'));
+  }
+
+  #[test]
+  fn line_count_is_capped() {
+    let body = (0..MAX_LRC_LINES * 2)
+      .map(|index| index.to_string())
+      .collect::<Vec<_>>()
+      .join("\n");
+    let lyrics = parse(&body).expect("plain body parses");
+    assert_eq!(lyrics.line_count(), MAX_LRC_LINES);
+  }
+
+  #[test]
+  fn normal_body_is_untouched() {
+    let body = "[00:01.00]one\n[00:02.00]two\n";
+    let lyrics = parse(body).unwrap();
+    assert_eq!(lyrics.line_count(), 2);
+  }
+
+  #[test]
+  fn empty_body_is_still_rejected() {
+    assert!(parse("\n\n").is_err());
+  }
 }

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 macro_rules! color_section {
   ($name:ident { $($field:ident => $default:literal),* $(,)? }) => {
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(default)]
+    #[serde(default, deny_unknown_fields)]
     pub struct $name {
       $(pub $field: String,)*
     }
@@ -25,7 +25,7 @@ macro_rules! color_section {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BaseSection {
   pub foreground: String,
   pub background: String,
@@ -103,7 +103,7 @@ color_section!(VisualizerSection {
 /// and its description (`" -> "` by default); `columns` wraps the hints
 /// into that many columns when the bar gets crowded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct WhichKeySection {
   pub background: String,
   pub foreground: String,

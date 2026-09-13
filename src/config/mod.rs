@@ -45,7 +45,7 @@ pub struct Settings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
   pub mpd: MpdConfig,
   pub behavior: BehaviorConfig,
