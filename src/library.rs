@@ -358,6 +358,11 @@ mod tests {
     let dir = Path::new("/music");
     assert_eq!(uri_to_path(Some(dir), "../secret"), None);
     assert_eq!(uri_to_path(Some(dir), "Artist/../../secret"), None);
+    // On Unix a leading '/' makes this a bare absolute path, which
+    // local_uri_to_path deliberately honors (MPD normalizes outside-library
+    // songs to plain absolute paths); on Windows it has no drive letter, so
+    // it falls into the guarded relative branch and must be rejected.
+    #[cfg(windows)]
     assert_eq!(uri_to_path(Some(dir), "/../secret"), None);
     assert_eq!(uri_to_path(Some(dir), "Artist/..\\..\\secret"), None);
     assert!(uri_to_path(Some(dir), "Album/../song.flac").is_some());
