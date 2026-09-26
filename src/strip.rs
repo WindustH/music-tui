@@ -32,12 +32,9 @@ impl StrippedText {
     Self { lowered, origins }
   }
 
+  #[cfg(test)]
   pub fn matches(&self, term: &str) -> bool {
-    self.first_range(term).is_some()
-  }
-
-  fn first_range(&self, term: &str) -> Option<(usize, usize)> {
-    self.find_all(term).into_iter().next()
+    contains_needle(&self.lowered, &needle(term))
   }
 
   /// All occurrence ranges of `term`, in byte coordinates of the
@@ -61,9 +58,57 @@ impl StrippedText {
   }
 }
 
+/// Case-folded text with whitespace removed: the form both sides of a
+/// space-insensitive match are compared in.
+pub(crate) fn fold(text: &str) -> String {
+  text
+    .chars()
+    .filter(|ch| !ch.is_whitespace())
+    .flat_map(char::to_lowercase)
+    .collect()
+}
+
+/// A filter term prepared for [`matches_needle`]. Prepare terms once per
+/// filter pass, not once per field.
+pub(crate) fn needle(term: &str) -> String {
+  fold(term)
+}
+
+/// Whether `text` contains the prepared `needle` with spaces ignored and
+/// case folded — same semantics as [`StrippedText::find_all`] finding a
+/// match, without building byte-origin tables (filtering only needs a
+/// yes/no; ranges are computed for the few rows actually drawn).
+pub(crate) fn matches_needle(text: &str, needle: &str) -> bool {
+  contains_needle(&fold(text), needle)
+}
+
+/// Whether already-[`fold`]ed text contains the prepared `needle`.
+pub(crate) fn contains_needle(folded: &str, needle: &str) -> bool {
+  !needle.is_empty() && folded.contains(needle)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn needle_matching_agrees_with_ranges() {
+    for (text, term) in [
+      ("Love  Story", "lovestory"),
+      ("Love Story", "Love Story"),
+      ("夜的 第七章 夜曲", "夜曲"),
+      ("x a by", "a b"),
+      ("İstanbul", "i̇stan"),
+      ("abc", "zzz"),
+      ("abc", "   "),
+    ] {
+      assert_eq!(
+        matches_needle(text, &needle(term)),
+        !StrippedText::new(text).find_all(term).is_empty(),
+        "{text:?} vs {term:?}"
+      );
+    }
+  }
 
   #[test]
   fn ignores_spaces_and_case() {

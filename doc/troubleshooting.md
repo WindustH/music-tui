@@ -1,81 +1,68 @@
 # Troubleshooting
 
-## Cannot connect / "connection lost"
+## Cannot connect / "mpd offline"
 
 - Check that MPD is running (`systemctl --user status mpd`) and that
-  `mpd.host`/`mpd.port` in `~/.config/music-tui/config.toml` match
-  `bind_to_address`/`port` in `mpd.conf`.
-- A host starting with `/` is treated as a UNIX socket path.
-- On first run without an MPD config, music-tui generates a local socket
-  config (`~/.mpd/mpd.conf` on macOS). A missing socket file means the MPD
-  daemon has not started yet; start/restart its system service.
-- music-tui reconnects automatically with backoff; the footer shows the
-  connection state.
+  `mpd.host`/`mpd.port` in `config.toml` match `bind_to_address`/`port` in
+  `mpd.conf`. A host starting with `/` or `~` is a Unix socket path.
+- After the first-run setup, a missing `~/.config/mpd/socket` means MPD has
+  not been started yet; start or restart its service.
+- music-tui reconnects on its own (with growing delays up to 30 s). Keys
+  pressed while it is offline are dropped with a "mpd is not connected"
+  notice rather than replayed later.
 
 ## Covers or lyrics missing
 
-- Songs queued as local `file://` URIs resolve without a music directory.
-  Relative MPD song URIs require `mpd.music_dir` or a readable
-  `music_directory` in one of MPD's normal config locations.
-- Covers accept embedded pictures and sibling files (`cover.*`, `folder.*`,
-  `front.*`, `<basename>.*`). Minimum pane size applies.
-- Lyrics lookup order is documented in [Lyrics](lyrics.md).
+- Songs queued as `file://` over a Unix socket resolve without a music
+  directory; relative MPD paths need `mpd.music_dir` or a readable
+  `music_directory` in mpd.conf. The panes say "no local file for this
+  song" when a path cannot be resolved (for example for streams).
+- See [Cover Rendering](cover-rendering.md) and [Lyrics](lyrics.md) for the
+  lookup order. `.lrc` files must be UTF-8.
 
-## Visualizer stays flat
+## Cover shows as character art on a capable terminal
 
-- MPD must have the fifo output enabled and playing (see
-  [Visualizer](visualizer.md)); `fifo_path`, `sample_rate`, and `channels`
-  must match the `format` line.
-- Some output chains (e.g. certain PipeWire setups with exclusive access) do
-  not feed secondary outputs; check that the fifo output is not disabled
-  (`mpc outputs`).
-- If the fifo file was deleted while mpd kept running (e.g. a `/tmp`
-  cleaner), mpd keeps writing to the unlinked inode and no reader can
-  reconnect. music-tui recreates a missing fifo itself, but a wedged mpd
-  writer needs a restart: `systemctl --user restart mpd` (state file
-  restores the queue).
+- Check `GALLERY_TUI_RENDER_MODES` and `render.auto_detect`. Inside Zellij,
+  Kitty images need Zellij 0.45+; `render.zellij_sixel = true` additionally
+  allows Sixel.
 
-## Cover renders as symbols/ASCII on a capable terminal
+## Visualizer stays empty
 
-- Check `MUSIC_TUI_RENDER_MODES` and `render.auto_detect`. Zellij 0.45+ KGP is
-  auto-detected; set `render.zellij_sixel = true` only to additionally allow
-  Sixel.
+- MPD needs a fifo output with 16-bit samples that is enabled and playing
+  (see [Visualizer](visualizer.md)); `fifo_path`, `sample_rate`, and
+  `channels` must match it. `mpc outputs` lists the enabled outputs.
+- Some output setups (for example exclusive-access PipeWire chains) do not
+  feed secondary outputs.
+- If the fifo was deleted while MPD kept running, MPD keeps writing to the
+  deleted file. music-tui recreates the fifo, but MPD only reconnects after
+  a restart: `systemctl --user restart mpd`.
 
-## Metadata edit does not stick
+## Tag edit does not stick
 
-- The file must be writable and the format must support the tag
-  (e.g. `.wav` has no standard tag layer for some fields).
-- Check `~/.cache/music-tui/music-tui.log` for the write error.
+- The file must be writable and its format must support the tag.
+- The log (below) has the write error.
 
 ## Logs, cache and state
 
-- Logs: `~/.cache/music-tui/music-tui.log` (`RUST_LOG` to raise verbosity).
-- Cover cache: `~/.cache/music-tui/covers/` (safe to delete).
-- State (library database, session state): `~/.local/state/music-tui/`
-  (`library.db`, `state.toml`; migrated from the cache dir automatically).
+- Log: `music-tui.log` in the cache directory (`~/.cache/music-tui/`);
+  set `RUST_LOG=debug` for more detail.
+- Cover cache: `covers/` in the cache directory (safe to delete).
+- State: `library.db`, `state.toml`, and `:save` playlists in the state
+  directory (`~/.local/state/music-tui/`).
+- Errors inside background workers are logged there instead of being
+  printed over the interface.
 
-## Running several instances at once
+## Running several instances
 
-Multiple `music-tui` processes against the same MPD and config are safe:
+Several music-tui processes can share one MPD and one config:
 
-- `state.toml` saves go through per-PID temp files and atomic renames —
-  the last instance to exit wins, no corruption possible.
-- The cover cache publishes files with rename (no half-written images).
-- `library.db` uses WAL with a 5 s busy timeout, so concurrent rescans
-  queue up instead of failing with `SQLITE_BUSY`.
-- Queue auto-dedup deletes duplicates by stable song id, so two
-  instances cleaning the same queue never remove the wrong song; the
-  loser of a race just logs "no such song".
-- The log file is opened in append mode by every instance; lines may
-  interleave but stay readable.
+- state, cover-cache and config writes go through temp files and atomic
+  renames, so nothing is left half-written;
+- `library.db` is shared: scans commit in small batches and wait for each
+  other instead of failing;
+- every instance follows the same queue through MPD's change
+  notifications, but keeps its own tab, selection, and filters.
 
-Two caveats:
-
-- **Visualizer fifo is single-reader.** The first instance locks the
-  fifo (`flock`); later instances show the waiting hint instead of a
-  garbled spectrum, and take over when the first one exits. Point extra
-  instances at another fifo (mpd can feed several fifo outputs) via
-  `[visualizer] fifo_path` if you need visuals everywhere.
-- Both instances watch the same queue via `idle`, so actions from one
-  show up in the other within a tick — but each keeps its own tab,
-  selection and filters.
+The visualizer fifo has a single reader: the first instance locks it and
+later ones show the waiting hint until it exits. Configure another fifo
+output (`[visualizer] fifo_path`) for a second instance.

@@ -2,9 +2,10 @@
 //! a bold header row, weighted columns, per-field colors, an inverted
 //! hover bar, keyword highlighting, and a draggable viewport scrollbar.
 
+use super::highlight::{filter_window, highlighted_ranges_spans};
 use super::*;
 use crate::library_db::TrackField;
-use ratatui::widgets::{Cell, Row, Table};
+use ratatui::widgets::{Cell, Row, Table, TableState};
 
 /// Header row height (label + blank separator line below it).
 const HEADER_ROWS: u16 = 2;
@@ -66,7 +67,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   if viewport.height == 0 {
     return;
   }
-  app.library_pane_areas.push(viewport);
+  app.hit.library_panes.push(viewport);
 
   if app.library.is_empty() {
     let hint = if app.library_scanning.is_some() {
@@ -96,7 +97,6 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
 
   let columns = display_columns(app);
   let widths = column_widths(&columns, viewport.width);
-  let selected = app.library_state.selected();
 
   // Currently playing song path (to mark the row like the queue does).
   let playing_path = app
@@ -117,19 +117,27 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   .height(1)
   .bottom_margin(1);
 
-  let rows = app
-    .library_rows
-    .iter()
-    .enumerate()
-    .map(|(row, matched)| {
-      library_row(
+  // Build only the rows on screen (a library can hold tens of thousands).
+  let len = app.library_rows.len();
+  let selected = app.library_state.selected().map(|row| row.min(len - 1));
+  let (start, end) = visible_window(
+    len,
+    usize::from(viewport.height),
+    app.library_state.offset(),
+    selected,
+  );
+  // Map (not filter) so row positions stay aligned with the selection.
+  let rows = (start..end)
+    .map(|row| match app.library_row_track(row) {
+      Some(track) => library_row(
         app,
-        matched,
+        track,
         &columns,
         &widths,
         selected == Some(row),
         playing_path.as_deref(),
-      )
+      ),
+      None => Row::default(),
     })
     .collect::<Vec<_>>();
 
@@ -144,7 +152,11 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let table = Table::new(rows, constraints)
     .header(header)
     .column_spacing(1);
-  frame.render_stateful_widget(table, inner, &mut app.library_state);
+  let mut window_state = TableState::default();
+  window_state.select(selected.map(|row| row - start));
+  frame.render_stateful_widget(table, inner, &mut window_state);
+  app.library_state.select(selected);
+  *app.library_state.offset_mut() = start;
 
   // Viewport scrollbar (offset + size), draggable via the mouse.
   let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -153,7 +165,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     .position(app.library_state.offset())
     .viewport_content_length(viewport.height as usize);
   frame.render_stateful_widget(scrollbar, area, &mut state);
-  app.library_bar_areas.push(Rect {
+  app.hit.library_bars.push(Rect {
     x: area.x + area.width.saturating_sub(1),
     y: area.y,
     width: 1,
@@ -222,22 +234,21 @@ fn column_widths(columns: &[DisplayColumn], available: u16) -> Vec<u16> {
 /// tones so columns read apart at a glance.
 fn field_color(field: TrackField, theme: &crate::theme::ThemeConfig) -> ratatui::style::Color {
   let name = match field {
-    TrackField::Title | TrackField::Album | TrackField::Filename => &theme.base.foreground,
-    TrackField::Artist | TrackField::Genre | TrackField::Lyrics => &theme.base.accent_alt,
+    TrackField::Title | TrackField::Album | TrackField::Filename => &theme.library.field_primary,
+    TrackField::Artist | TrackField::Genre | TrackField::Lyrics => &theme.library.field_secondary,
   };
   theme.color(name)
 }
 
 fn library_row(
   app: &App,
-  matched: &crate::library_db::TrackMatch,
+  track: &crate::library_db::LibraryTrack,
   columns: &[DisplayColumn],
   widths: &[u16],
   is_selected: bool,
   playing_path: Option<&std::path::Path>,
 ) -> Row<'static> {
   let theme = &app.settings.theme;
-  let track = &matched.track;
 
   // Full-row hover bar: the Row/Cell styles paint the background across
   // the entire row (cells + gaps); spans only set foreground colors so
@@ -259,8 +270,8 @@ fn library_row(
     plain_fg
   } else if playing_path == Some(track.path.as_path()) {
     match app.status.as_ref().map(|status| status.state) {
-      Some(PlayState::Playing) => theme.color(&theme.footer.playing),
-      Some(PlayState::Paused) => theme.color(&theme.footer.paused),
+      Some(PlayState::Playing) => theme.color(&theme.library.playing),
+      Some(PlayState::Paused) => theme.color(&theme.library.paused),
       _ => plain_fg,
     }
   } else {
@@ -281,7 +292,9 @@ fn library_row(
     let width = usize::from(*width).max(1);
     let cell = match column.kind {
       ColumnKind::Duration => {
-        let label = format_duration_line(Duration::from_secs_f64(track.duration_secs.max(0.0)));
+        // The database value is untrusted: NaN/inf must not panic.
+        let duration = Duration::try_from_secs_f64(track.duration_secs).unwrap_or_default();
+        let label = format_duration_line(duration);
         let pad = width.saturating_sub(label.chars().count());
         let fg = if is_selected {
           plain_fg

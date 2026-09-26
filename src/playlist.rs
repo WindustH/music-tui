@@ -72,13 +72,10 @@ fn resolve_entry(base: &Path, line: &str) -> PathBuf {
   }
 }
 
-/// Default `:save` directory: the XDG state home (`~/.local/state`).
+/// Default `:save` directory: `playlists` under the app state directory
+/// (`~/.local/state/music-tui` on Unix, `%APPDATA%\music-tui` on Windows).
 pub fn default_save_dir() -> PathBuf {
-  let state = std::env::var_os("XDG_STATE_HOME")
-    .map(PathBuf::from)
-    .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-    .unwrap_or_else(|| PathBuf::from(".local/state"));
-  state.join("music-tui").join("playlists")
+  crate::config::app_state_dir().join("playlists")
 }
 
 /// Decide where `:save` writes.

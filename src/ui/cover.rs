@@ -1,53 +1,40 @@
 //! Cover pane rendering (protocol images and Chafa symbols).
 
-use std::path::Path;
-
 use super::*;
 
-/// Mark `area` as pixel-preserved: while a protocol image is being
-/// prepared (or its file located), the previous frame's pixels stay on
-/// screen instead of flashing placeholder text — pdf-tui/gallery-tui's
-/// anti-flicker mechanism, executed by img-tui's overlay renderer.
-pub(super) fn preserve_frame_area(
-  area: Rect,
-  preserve_overlays: &mut bool,
-  preserve_areas: &mut Vec<Rect>,
-) {
-  *preserve_overlays = true;
-  preserve_areas.push(area);
-}
-
-/// Draw cover art into `image_area` (aspect-fitted by the caller).
+/// Draw cover art into `image_area` (aspect-fitted by the caller); hints
+/// go to `text_area`.
 ///
 /// Protocol modes preserve the previous artwork's pixels while the next
-/// one is in flight; a definitive error ("no cover") replaces them.
-#[allow(clippy::too_many_arguments)]
+/// one is in flight (pdf-tui/gallery-tui's anti-flicker mechanism,
+/// executed by img-tui's overlay renderer); a definitive error ("no
+/// cover") replaces them.
 pub(super) fn draw_cover_art(
   frame: &mut Frame,
-  renderer: &mut CoverRenderStore,
-  tx: &mpsc::UnboundedSender<AsyncEvent>,
+  images: &mut ImageSink<'_>,
   muted: Style,
-  cover: Option<&Path>,
-  cover_error: Option<&str>,
+  view: &crate::app::SongView,
   image_area: Rect,
   text_area: Rect,
-  overlays: &mut Vec<ProtocolOverlay>,
-  preserve_overlays: &mut bool,
-  preserve_areas: &mut Vec<Rect>,
 ) {
-  let Some(path) = cover else {
+  let Some(path) = view.cover.as_deref() else {
     // No path yet: still locating the artwork → keep old pixels; a set
     // error means the song really has no cover → replace them.
-    if cover_error.is_none() && renderer.draws_with_protocol() {
-      preserve_frame_area(image_area, preserve_overlays, preserve_areas);
+    if view.cover_error.is_none() && images.renderer.draws_with_protocol() {
+      images.preserve(image_area);
       return;
     }
-    let hint = cover_error.unwrap_or("no cover");
+    let hint = view.cover_error.as_deref().unwrap_or("no cover");
     frame.render_widget(Paragraph::new(hint).style(muted), text_area);
     return;
   };
-  renderer.request(path, image_area.width, image_area.height, tx);
-  match renderer.get(path, image_area.width, image_area.height) {
+  images
+    .renderer
+    .request(path, image_area.width, image_area.height, images.tx);
+  match images
+    .renderer
+    .get(path, image_area.width, image_area.height)
+  {
     Some(RenderedImage::Symbols { text, .. }) => {
       frame.render_widget(
         Paragraph::new(text.clone()).wrap(Wrap { trim: false }),
@@ -64,7 +51,7 @@ pub(super) fn draw_cover_art(
     }) => {
       // Keep the TUI from touching cells under the protocol image.
       reserve_protocol_area(frame, image_area);
-      overlays.push(ProtocolOverlay {
+      images.overlays.push(ProtocolOverlay {
         area: image_area,
         mode: *mode,
         data: data.clone(),
@@ -75,9 +62,21 @@ pub(super) fn draw_cover_art(
       });
     }
     None => {
+      if let Some(error) = images
+        .renderer
+        .error(path, image_area.width, image_area.height)
+      {
+        frame.render_widget(
+          Paragraph::new(format!("cover could not be drawn: {error}"))
+            .style(muted)
+            .wrap(Wrap { trim: true }),
+          text_area,
+        );
+        return;
+      }
       // Render in flight: hold the old pixels instead of flashing text.
-      if renderer.draws_with_protocol() {
-        preserve_frame_area(image_area, preserve_overlays, preserve_areas);
+      if images.renderer.draws_with_protocol() {
+        images.preserve(image_area);
         return;
       }
       frame.render_widget(Paragraph::new("rendering cover…").style(muted), text_area);
@@ -85,86 +84,21 @@ pub(super) fn draw_cover_art(
   }
 }
 
-/// Cover of the current song (`:playing` source).
-#[allow(clippy::too_many_arguments)]
+/// Cover pane for any data source (playing song or a hovered row).
 pub(super) fn draw_cover_pane(
   frame: &mut Frame,
   app: &mut App,
-  renderer: &mut CoverRenderStore,
-  tx: &mpsc::UnboundedSender<AsyncEvent>,
+  images: &mut ImageSink<'_>,
   area: Rect,
   source: PaneSource,
-  overlays: &mut Vec<ProtocolOverlay>,
-  preserve_overlays: &mut bool,
-  preserve_areas: &mut Vec<Rect>,
-) {
-  if matches!(
-    source,
-    PaneSource::QueueHovered | PaneSource::LibraryHovered
-  ) {
-    draw_hover_cover_pane(
-      frame,
-      app,
-      renderer,
-      tx,
-      area,
-      overlays,
-      source,
-      preserve_overlays,
-      preserve_areas,
-    );
-    return;
-  }
-  let theme = &app.settings.theme;
-  let is_main = app.main_pane() == PaneKind::Cover;
-  let block = pane_block(app, "cover", is_main);
-  let inner = block.inner(area);
-  frame.render_widget(block, area);
-  if inner.width < 2 || inner.height < 2 {
-    return;
-  }
-
-  let image_area = fitted_cover_area(app.cover_dims, inner, renderer.cell_pixels());
-  let current_url = app.current_song_url().unwrap_or_default();
-  let cover = app
-    .cover_path
-    .as_ref()
-    .filter(|(url, _)| url == &current_url)
-    .map(|(_, path)| path.as_path());
-  let muted = Style::default().fg(theme.color(&theme.base.muted));
-  draw_cover_art(
-    frame,
-    renderer,
-    tx,
-    muted,
-    cover,
-    app.cover_error.as_deref(),
-    image_area,
-    inner,
-    overlays,
-    preserve_overlays,
-    preserve_areas,
-  );
-}
-
-/// Cover of the hovered row (queue or library, per the pane source).
-#[allow(clippy::too_many_arguments)]
-fn draw_hover_cover_pane(
-  frame: &mut Frame,
-  app: &mut App,
-  renderer: &mut CoverRenderStore,
-  tx: &mpsc::UnboundedSender<AsyncEvent>,
-  area: Rect,
-  overlays: &mut Vec<ProtocolOverlay>,
-  source: PaneSource,
-  preserve_overlays: &mut bool,
-  preserve_areas: &mut Vec<Rect>,
 ) {
   let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Cover;
-  let title = match app.hover_view(source) {
-    Some(hover) => format!("cover · {}", hover.title),
-    None => "cover (hovered)".to_string(),
+  let view = app.song_view(source);
+  let title = match (source, view) {
+    (PaneSource::Playing, _) => "cover".to_string(),
+    (_, Some(view)) => format!("cover · {}", view.title),
+    (_, None) => "cover (hovered)".to_string(),
   };
   let block = pane_block(app, &title, is_main);
   let inner = block.inner(area);
@@ -172,31 +106,18 @@ fn draw_hover_cover_pane(
   if inner.width < 2 || inner.height < 2 {
     return;
   }
-
-  let Some(hover) = app.hover_view(source) else {
-    frame.render_widget(
-      Paragraph::new("hover a queue or library entry")
-        .style(Style::default().fg(theme.color(&theme.base.muted))),
-      inner,
-    );
+  let muted = Style::default().fg(theme.color(&theme.base.muted));
+  let Some(view) = view else {
+    let hint = match source {
+      PaneSource::Playing if app.current_song().is_some() => "no local file for this song",
+      PaneSource::Playing => "nothing playing",
+      _ => "hover a queue or library entry",
+    };
+    frame.render_widget(Paragraph::new(hint).style(muted), inner);
     return;
   };
-
-  let image_area = fitted_cover_area(hover.cover_dims, inner, renderer.cell_pixels());
-  let muted = Style::default().fg(theme.color(&theme.base.muted));
-  draw_cover_art(
-    frame,
-    renderer,
-    tx,
-    muted,
-    hover.cover.as_deref(),
-    hover.cover_error.as_deref(),
-    image_area,
-    inner,
-    overlays,
-    preserve_overlays,
-    preserve_areas,
-  );
+  let image_area = fitted_cover_area(view.cover_dims, inner, images.renderer.cell_pixels());
+  draw_cover_art(frame, images, muted, view, image_area, inner);
 }
 
 /// Aspect-correct artwork rectangle: fit the intrinsic pixel size inside

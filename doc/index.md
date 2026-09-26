@@ -1,30 +1,29 @@
 # music-tui Documentation
 
-This directory contains the full user and configuration documentation for
-`music-tui`.
+User and configuration documentation for `music-tui`.
 
-## Start Here
+## Start here
 
-- [Quick Start](quick-start.md): MPD requirements and the default workflow.
-- [Controls](controls.md): per-view keys and mouse behavior.
-- [Commands](commands.md): command prompt commands such as `:volume` and `:add`.
+- [Quick Start](quick-start.md): what MPD needs, where files live, the basic workflow.
+- [Controls](controls.md): default keys per pane and mouse behavior.
+- [Commands](commands.md): the `:` command prompt (`:volume`, `:add`, `:save`, …).
 
 ## Configuration
 
-- [Configuration](configuration.md): `config.toml` fields and the layout DSL.
-- [Keymap](keymap.md): context-aware keymap format and actions.
-- [Theme](theme.md): colors for status, lyrics, visualizer, and which-key hints.
+- [Configuration](configuration.md): `config.toml`, the layout language, the library.
+- [Keymap](keymap.md): `keymap.toml` format, conflict rules, and every action.
+- [Theme](theme.md): `theme.toml` colors.
 
 ## Features
 
-- [Views](views.md): tabs, panes, the detail view, and the progress band.
-- [Lyrics](lyrics.md): lookup order, synced lyrics, and karaoke highlighting.
-- [Metadata](metadata.md): the metadata view and the `$EDITOR` workflow.
-- [Visualizer](visualizer.md): MPD fifo setup and spectrum options.
-- [Cover Rendering](cover-rendering.md): graphics protocols and Chafa fallback.
-- [Open Subcommand](open.md): `music-tui open` modes for file-manager integration.
+- [Views](views.md): tabs, panes, hovered data sources, the detail view.
+- [Lyrics](lyrics.md): lookup order and the supported LRC features.
+- [Metadata](metadata.md): the tag view and the `$EDITOR` workflow.
+- [Visualizer](visualizer.md): MPD fifo setup.
+- [Cover Rendering](cover-rendering.md): image protocols and fallbacks.
+- [Open Subcommand](open.md): `music-tui open` for file managers.
 
-## Operational Notes
+## Operational notes
 
-- [Windows](windows.md): MPD setup and platform differences on Windows.
-- [Troubleshooting](troubleshooting.md): connection, rendering, and fifo issues.
+- [Windows](windows.md): MPD setup and platform differences.
+- [Troubleshooting](troubleshooting.md): connection, rendering, visualizer, logs.

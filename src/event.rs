@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crossterm::event::Event;
 use img_tui::{ProtocolPlacement, RenderMode};
@@ -12,7 +12,6 @@ pub enum AsyncEvent {
     generation: u64,
   },
   Mpd(MpdEvent),
-  Tick,
   Lyrics(LyricsOutcome),
   Metadata(MetadataOutcome),
   MetadataWrite(MetadataWriteOutcome),
@@ -29,21 +28,24 @@ pub enum AsyncEvent {
 #[derive(Debug)]
 pub enum LibraryEvent {
   /// Periodic progress while scanning (scanned files, changed files).
-  Scanning {
-    scanned: usize,
-    changed: usize,
-  },
+  Scanning { scanned: usize, changed: usize },
   /// Scan finished; carries the full track list.
   Loaded(Vec<crate::library_db::LibraryTrack>),
-  Error(String),
+  /// Scan failed; `tracks` holds what the database still had, if readable.
+  Failed {
+    error: String,
+    tracks: Option<Vec<crate::library_db::LibraryTrack>>,
+  },
 }
 
 #[derive(Debug)]
 pub enum MpdEvent {
   Connected(String),
+  /// Fresh status; `queue` is only set when the queue itself changed (MPD's
+  /// playlist version moved) — otherwise the UI keeps its current copy.
   Snapshot {
     status: Status,
-    queue: Vec<SongInQueue>,
+    queue: Option<Arc<[SongInQueue]>>,
   },
   ConnectionLost(String),
   Notice(String),

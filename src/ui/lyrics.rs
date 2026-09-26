@@ -3,10 +3,7 @@
 use super::*;
 
 pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
-  if matches!(
-    source,
-    PaneSource::QueueHovered | PaneSource::LibraryHovered
-  ) {
+  if source != PaneSource::Playing {
     draw_hover_lyrics_pane(frame, app, area, source);
     return;
   }
@@ -24,11 +21,20 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
     return;
   }
 
-  let Some(lyrics) = app.lyrics.as_ref() else {
-    let hint = app
-      .lyrics_error
-      .clone()
-      .unwrap_or_else(|| "no lyrics".to_string());
+  let Some(playing) = app.playing.as_ref() else {
+    let hint = if app.current_song().is_some() {
+      "no local file for this song"
+    } else {
+      "nothing playing"
+    };
+    frame.render_widget(
+      Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
+      inner,
+    );
+    return;
+  };
+  let Some(lyrics) = playing.lyrics.as_ref() else {
+    let hint = playing.lyrics_error.as_deref().unwrap_or("loading lyrics…");
     frame.render_widget(
       Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,
@@ -48,9 +54,9 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
   let scroll = if app.lyrics_follow {
     group
       .map(|(start, _)| start.saturating_sub(inner.height as usize / 2))
-      .unwrap_or(app.lyrics_scroll)
+      .unwrap_or(playing.lyrics_scroll)
   } else {
-    let mut scroll = app.lyrics_scroll;
+    let mut scroll = playing.lyrics_scroll;
     if let Some(cursor) = cursor
       && cursor < scroll
     {
@@ -62,9 +68,6 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
     }
     scroll
   };
-  app.lyrics_scroll = scroll;
-  app.lyrics_pane_areas.push(inner);
-  app.lyrics_pane_sources.push(source);
 
   let line_count = lyrics.line_count();
   let mut lines: Vec<Line> = Vec::new();
@@ -80,7 +83,7 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
       spans.push(Span::styled(
         "❯ ",
         Style::default()
-          .fg(theme.color(&theme.base.accent))
+          .fg(theme.color(&theme.lyrics.cursor))
           .add_modifier(Modifier::BOLD),
       ));
     } else {
@@ -122,14 +125,17 @@ pub(super) fn draw_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, sou
     lines.push(Line::from(spans));
   }
   frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+  if let Some(playing) = app.playing.as_mut() {
+    playing.lyrics_scroll = scroll;
+  }
+  app.hit.lyrics_panes.push((inner, source));
 }
 
 /// Lyrics for the hovered song: no playback state, so no sync highlight,
 /// no follow, no cursor — a plain scrollable list (wheel / j-k style keys).
 fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: PaneSource) {
-  let theme = &app.settings.theme;
   let is_main = app.main_pane() == PaneKind::Lyrics;
-  let title = match app.hover_view(source) {
+  let title = match app.song_view(source) {
     Some(hover) => format!("lyrics · {}", hover.title),
     None => "lyrics (hovered)".to_string(),
   };
@@ -139,7 +145,9 @@ fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: 
   if inner.height == 0 || inner.width == 0 {
     return;
   }
-  let Some(hover) = app.hover_view(source) else {
+  app.hit.lyrics_panes.push((inner, source));
+  let theme = &app.settings.theme;
+  let Some(hover) = app.song_view(source) else {
     let hint = "hover a queue or library entry";
     frame.render_widget(
       Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
@@ -151,7 +159,7 @@ fn draw_hover_lyrics_pane(frame: &mut Frame, app: &mut App, area: Rect, source: 
     let hint = hover
       .lyrics_error
       .clone()
-      .unwrap_or_else(|| "no lyrics".to_string());
+      .unwrap_or_else(|| "loading lyrics…".to_string());
     frame.render_widget(
       Paragraph::new(hint).style(Style::default().fg(theme.color(&theme.base.muted))),
       inner,

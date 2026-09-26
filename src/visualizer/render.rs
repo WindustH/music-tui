@@ -148,13 +148,15 @@ pub(crate) fn build_band_lines(
     })
     .collect();
 
-  let fraction_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+  // Static glyphs: spans borrow them, so building a frame allocates no
+  // per-cell strings.
+  const FRACTIONS: [&str; 7] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇"];
   let left = " ".repeat(layout.left_margin);
   let right = " ".repeat(layout.right_margin);
   let mut lines: Vec<Line> = Vec::with_capacity(height);
   for row in 0..height {
     let from_bottom = height - 1 - row;
-    let mut spans: Vec<Span> = Vec::with_capacity(width);
+    let mut spans: Vec<Span> = Vec::with_capacity(layout.strips * layout.strip_width + 2);
     if !left.is_empty() {
       spans.push(Span::raw(left.clone()));
     }
@@ -162,34 +164,32 @@ pub(crate) fn build_band_lines(
       let value = (*value).min(100) as usize;
       let full = value * height / 100; // fully filled rows below the tip
       let remainder = value * height % 100; // fraction of the tip row
-      let (ch, lit) = if from_bottom < full {
-        ('█', true)
+      let glyph = if from_bottom < full {
+        Some("█")
       } else if from_bottom == full && value > 0 && remainder > 0 {
         // Ceil the tip fraction into a glyph bucket (1..=7) so the top
         // glyph is reachable; a plain integer division capped the highest
         // bucket (index 7 -> '▇') off and omitted every fractional tip.
-        let index = (remainder * fraction_chars.len()).div_ceil(100).max(1);
-        (
-          fraction_chars[(index - 1).min(fraction_chars.len() - 1)],
-          true,
-        )
+        let index = (remainder * FRACTIONS.len()).div_ceil(100).max(1);
+        Some(FRACTIONS[(index - 1).min(FRACTIONS.len() - 1)])
       } else {
-        (' ', false)
+        None
       };
-      let color = if value < 34 {
-        colors.low
-      } else if value < 67 {
-        colors.mid
-      } else {
-        colors.high
-      };
-      let style = if lit {
-        Style::default().fg(color)
-      } else {
-        Style::default()
+      let span = match glyph {
+        Some(glyph) => {
+          let color = if value < 34 {
+            colors.low
+          } else if value < 67 {
+            colors.mid
+          } else {
+            colors.high
+          };
+          Span::styled(glyph, Style::default().fg(color))
+        }
+        None => Span::raw(" "),
       };
       for _ in 0..layout.strip_width {
-        spans.push(Span::styled(ch.to_string(), style));
+        spans.push(span.clone());
       }
     }
     if !right.is_empty() {

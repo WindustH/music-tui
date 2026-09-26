@@ -1,4 +1,15 @@
-use std::io::{self, Stderr};
+//! Terminal ownership: raw mode / alternate screen setup and teardown,
+//! suspend/resume around external editors, and the input reader thread.
+
+use std::{
+  io::{self, Stderr},
+  sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+  },
+  thread,
+  time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use crossterm::{
@@ -8,6 +19,9 @@ use crossterm::{
 };
 use img_tui::{ProtocolFrameOutput, ProtocolFrameRenderer, reset_protocol_images};
 use ratatui::{Frame, Terminal, prelude::CrosstermBackend};
+use tokio::sync::mpsc;
+
+use crate::event::AsyncEvent;
 
 pub type FrameOutput = ProtocolFrameOutput;
 
@@ -137,5 +151,117 @@ impl Tui {
 impl Drop for Tui {
   fn drop(&mut self) {
     let _ = self.restore();
+  }
+}
+
+/// Best-effort terminal reset for the panic hook: the `Tui` may be
+/// mid-draw and cannot be reached, so undo the modes directly. `Tui`'s own
+/// restore still runs while the panic unwinds; repeating it is harmless.
+pub fn emergency_restore() {
+  let _ = disable_raw_mode();
+  let _ = execute!(
+    io::stderr(),
+    LeaveAlternateScreen,
+    DisableMouseCapture,
+    DisableBracketedPaste,
+    crossterm::cursor::Show
+  );
+}
+
+/// How long one `poll` may block before the reader re-checks its gate.
+const INPUT_POLL: Duration = Duration::from_millis(50);
+
+/// Terminal input reader thread. It forwards events tagged with a
+/// generation number; `pause`/`resume` hand the terminal to a child
+/// process (the metadata editor) and back without the reader competing
+/// for — and stealing — the child's keystrokes.
+pub struct InputReader {
+  shared: Arc<InputShared>,
+}
+
+struct InputShared {
+  enabled: AtomicBool,
+  /// Set by the reader once it has observed `enabled == false` and will
+  /// not touch the terminal until re-enabled.
+  parked: AtomicBool,
+  generation: AtomicU64,
+}
+
+impl InputReader {
+  pub fn spawn(tx: mpsc::UnboundedSender<AsyncEvent>) -> Self {
+    let shared = Arc::new(InputShared {
+      enabled: AtomicBool::new(true),
+      parked: AtomicBool::new(false),
+      generation: AtomicU64::new(0),
+    });
+    let reader = shared.clone();
+    thread::Builder::new()
+      .name("music-tui-input".to_string())
+      .spawn(move || read_loop(&reader, &tx))
+      .expect("failed to spawn the input thread");
+    Self { shared }
+  }
+
+  /// Generation of events that are still current (see `pause`).
+  pub fn generation(&self) -> u64 {
+    self.shared.generation.load(Ordering::SeqCst)
+  }
+
+  /// Stop reading input and wait (briefly) until the reader is parked, so
+  /// it no longer polls the terminal. Events already queued become stale.
+  pub fn pause(&self) {
+    self.shared.enabled.store(false, Ordering::SeqCst);
+    self.shared.generation.fetch_add(1, Ordering::SeqCst);
+    let deadline = Instant::now() + INPUT_POLL * 4;
+    while !self.shared.parked.load(Ordering::SeqCst) && Instant::now() < deadline {
+      thread::sleep(Duration::from_millis(1));
+    }
+  }
+
+  /// Drop input that arrived while paused and start reading again.
+  pub fn resume(&self) {
+    while crossterm::event::poll(Duration::ZERO).unwrap_or(false) {
+      if crossterm::event::read().is_err() {
+        break;
+      }
+    }
+    self.shared.generation.fetch_add(1, Ordering::SeqCst);
+    self.shared.enabled.store(true, Ordering::SeqCst);
+  }
+}
+
+fn read_loop(shared: &InputShared, tx: &mpsc::UnboundedSender<AsyncEvent>) {
+  let mut error_backoff = Duration::from_millis(10);
+  loop {
+    // Clear `parked` before checking the gate: `pause` treats a set flag
+    // as proof that the gate check below has seen `enabled == false`.
+    shared.parked.store(false, Ordering::SeqCst);
+    if !shared.enabled.load(Ordering::SeqCst) {
+      shared.parked.store(true, Ordering::SeqCst);
+      thread::sleep(Duration::from_millis(10));
+      continue;
+    }
+    // Tag with the generation current *before* waiting: an event read
+    // after a concurrent `pause` then counts as stale.
+    let generation = shared.generation.load(Ordering::SeqCst);
+    let event = match crossterm::event::poll(INPUT_POLL) {
+      Ok(false) => continue,
+      Ok(true) => crossterm::event::read(),
+      Err(error) => Err(error),
+    };
+    match event {
+      Ok(event) => {
+        error_backoff = Duration::from_millis(10);
+        if tx.send(AsyncEvent::Input { event, generation }).is_err() {
+          return;
+        }
+      }
+      Err(_) => {
+        // A vanished terminal fails every read; back off instead of
+        // spinning.
+        thread::sleep(error_backoff);
+        error_backoff = (error_backoff * 2).min(Duration::from_secs(1));
+      }
+    }
   }
 }

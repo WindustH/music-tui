@@ -1,11 +1,14 @@
 # Visualizer
 
-The spectrum visualizer reads raw PCM from an MPD `fifo` output and renders
-log-spaced frequency bars (colored low/mid/high, full pane height).
+The visualizer shows a spectrum of what MPD is playing: log-spaced
+frequency bands, colored low / mid / high, one band per pane column (up to
+`bars`). It reads raw audio from an MPD `fifo` output, so it works on Linux
+and macOS but not on Windows.
 
 ## MPD setup
 
-Add a fifo output to `mpd.conf` if you do not have one:
+Add a fifo output to `mpd.conf` (the config music-tui generates on first
+run has none):
 
 ```conf
 audio_output {
@@ -16,33 +19,28 @@ audio_output {
 }
 ```
 
-Then match it in `~/.config/music-tui/config.toml`:
+The samples must be 16-bit. Match the path, rate, and channel count in
+`config.toml`:
 
 ```toml
 [visualizer]
 fifo_path = "/tmp/mpd.fifo"
-sample_rate = 44100   # must match the fifo format
-channels = 2
-bars = 256            # band cap; analysis follows pane width
-fps = 30
-window = 2048         # FFT window, 256..=8192 (rounded to a power of two)
+sample_rate = 44100   # first field of `format`
+channels = 2          # last field of `format`
+bars = 256            # band cap
+fps = 30              # updates per second
+window = 2048         # FFT size, 256–8192; larger resolves more bass bands
 ```
+
+Restart MPD after editing its config.
 
 ## Notes
 
-- The band count follows the pane width: one band per column, capped at
-  `bars` (default 256). The pane then picks a strip count that minimizes
-  `(leftover + width/8) / strips` (every band gets an equal-width strip;
-  the proportional slack keeps a zero-leftover split from shrinking the
-  band count) and centers the leftover columns as margins.
-- Band layout and styled-line construction run on a worker thread
-  (`spawn_band_renderer`); the UI thread only blits the finished lines.
-- Bands are log-spaced with a minimum step of one FFT bin: where a pure
-  log grid would be narrower than the FFT resolution (the low end at
-  small windows), bands merge onto distinct bins instead of sampling the
-  same bin twice and rendering as duplicated identical bars. A larger
-  `window` resolves more low-frequency bands.
-- The fifo is read non-blocking; nothing is written to it. If the fifo is
-  missing or MPD is not playing, the pane simply stays flat.
-- Higher `window` gives finer frequency resolution, lower latency the
-  opposite; 2048 at 44.1 kHz is a good default.
+- The analysis only runs while the visualizer pane is on screen, and only
+  on new audio: paused playback freezes the bars at no cost.
+- music-tui reads the fifo without blocking MPD and recreates it if
+  something (such as a `/tmp` cleaner) deletes it.
+- One reader at a time: a second music-tui instance shows the waiting hint
+  until the first exits. Give extra instances their own fifo output if
+  you want visuals everywhere.
+- `fifo_path` must be a fifo; any other file is ignored.

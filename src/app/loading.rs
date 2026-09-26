@@ -1,33 +1,30 @@
-//! song-change loading pipeline.
+//! Song-view loading pipeline: the playing song, the hovered queue row and
+//! the hovered library row each get a [`SongView`] whose lyrics, metadata
+//! and cover are read off the UI thread.
 
 use super::*;
 
 impl App {
+  /// The playing song changed: rebuild its view and start the reads.
   pub(crate) fn on_song_changed(&mut self) {
-    self.lyrics = None;
-    self.lyrics_error = None;
-    self.lyrics_scroll = 0;
     self.lyrics_cursor = None;
-    self.metadata_entries = None;
-    self.metadata_error = None;
-    self.metadata_scroll = 0;
-    self.cover_path = None;
-    self.cover_dims = None;
-    self.cover_error = None;
     if self.follow_current {
       self.follow_playing_position();
     }
-    if let (Some(url), Some(path)) = (self.current_song_url(), self.current_song_path()) {
-      self.request_lyrics(url.clone(), path.clone());
-      self.request_metadata(url.clone(), path.clone());
-      self.request_cover(url, path);
-    }
-  }
-
-  pub(crate) fn request_lyrics(&mut self, url: String, path: PathBuf) {
-    self.lyrics_url = url.clone();
-    let (artist, title) = self.current_song_tags();
-    self.spawn_lyrics_load(url, path, artist, title);
+    let Some(song) = self.current_song() else {
+      self.playing = None;
+      return;
+    };
+    let url = song.song.url.clone();
+    let title = song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&url));
+    let artist = song_artist(&song.song);
+    let Some(path) = self.song_path(&url) else {
+      // Remote stream, or a relative URI without a music directory.
+      self.playing = None;
+      return;
+    };
+    self.playing = Some(SongView::new(url.clone(), path.clone(), title.clone()));
+    self.spawn_song_view_loads(url, &path, artist, &title, true);
   }
 
   /// Kick off the async reads for a freshly created song view
@@ -47,7 +44,7 @@ impl App {
     }
   }
 
-  pub(crate) fn spawn_lyrics_load(
+  fn spawn_lyrics_load(
     &self,
     url: String,
     path: PathBuf,
@@ -70,19 +67,6 @@ impl App {
         result,
       }));
     });
-  }
-
-  pub(crate) fn current_song_tags(&self) -> (Option<String>, Option<String>) {
-    let song = self.current_song();
-    (
-      song.and_then(|song| song_artist(&song.song)),
-      song.map(|song| song_title(&song.song).unwrap_or_else(|| song.song.url.clone())),
-    )
-  }
-
-  pub(crate) fn request_metadata(&mut self, url: String, path: PathBuf) {
-    self.metadata_url = url.clone();
-    self.spawn_metadata_read(url, path);
   }
 
   pub(crate) fn spawn_metadata_read(&self, url: String, path: PathBuf) {
@@ -113,10 +97,6 @@ impl App {
     });
   }
 
-  pub(crate) fn request_cover(&mut self, url: String, path: PathBuf) {
-    self.spawn_cover_read(url, path);
-  }
-
   pub(crate) fn song_path(&self, url: &str) -> Option<PathBuf> {
     uri_to_path(self.music_dir.as_deref(), url)
   }
@@ -128,27 +108,25 @@ impl App {
     if !self.has_hover_panes {
       return;
     }
-    let hovered = self
-      .queue_state
-      .selected()
-      .and_then(|row| self.filtered_position(row))
-      .and_then(|index| self.queue.get(index));
-    let Some(song) = hovered else {
+    let Some(song) = self.selected_queue_song() else {
       self.hover = None;
       return;
     };
-    let url = song.song.url.to_string();
-    if self.hover.as_ref().is_some_and(|hover| hover.url == url) {
+    if self
+      .hover
+      .as_ref()
+      .is_some_and(|hover| hover.url == song.song.url)
+    {
       return;
     }
+    let url = song.song.url.clone();
+    let title = song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&url));
+    let artist = song_artist(&song.song);
     let Some(path) = self.song_path(&url) else {
       self.hover = None;
       return;
     };
-    let title = song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&url));
-    let artist = song_artist(&song.song);
-    let lyric_title = title.clone();
-    self.hover = Some(SongView::new(url.clone(), path.clone(), title));
-    self.spawn_song_view_loads(url, &path, artist, &lyric_title, true);
+    self.hover = Some(SongView::new(url.clone(), path.clone(), title.clone()));
+    self.spawn_song_view_loads(url, &path, artist, &title, true);
   }
 }

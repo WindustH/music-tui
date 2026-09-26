@@ -2,6 +2,7 @@
 
 use super::viewport::PaneState;
 use super::*;
+use crate::library_db::{LibraryTrack, all_rows, filter_tracks};
 
 /// Which list the `/` filter prompt targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -25,20 +26,23 @@ impl App {
   }
 
   pub(crate) fn recompute_library_filter(&mut self) {
-    let query = self.library_filter.clone().unwrap_or_default();
-    if query.trim().is_empty() {
-      self.library_rows = self
-        .library
-        .iter()
-        .map(|track| crate::library_db::TrackMatch {
-          track: track.clone(),
-          field: crate::library_db::TrackField::Title,
-        })
-        .collect();
+    let query = self
+      .library_filter
+      .as_deref()
+      .map(str::trim)
+      .unwrap_or_default()
+      .to_string();
+    self.library_rows = if query.is_empty() {
+      all_rows(&self.library)
+    } else if !self.library_rows_query.is_empty() && query.starts_with(&self.library_rows_query) {
+      // Typing more of the query only narrows the result: every track that
+      // matches the longer query also matched the shorter one.
+      let previous: Vec<usize> = self.library_rows.iter().map(|row| row.index).collect();
+      filter_tracks(&self.library, previous, &query)
     } else {
-      // `library` keeps the FULL list; rows are just the filtered view.
-      self.library_rows = crate::library_db::filter_tracks(&self.library, &query);
-    }
+      filter_tracks(&self.library, 0..self.library.len(), &query)
+    };
+    self.library_rows_query = query;
   }
 
   pub(crate) fn clear_library_filter(&mut self) {
@@ -85,7 +89,7 @@ impl App {
   }
 
   pub(crate) fn library_viewport_height(&self) -> usize {
-    viewport::viewport_height(&self.library_pane_areas)
+    viewport::viewport_height(&self.hit.library_panes)
   }
 
   pub(crate) fn scroll_library_viewport(&mut self, delta: i32) -> bool {
@@ -96,11 +100,6 @@ impl App {
       self.sync_library_hover();
     }
     changed
-  }
-
-  /// Scrollbar hit test for the library pane.
-  pub(crate) fn mouse_on_library_bar(&self, mouse: MouseEvent) -> Option<Rect> {
-    viewport::hit_pane(&self.library_bar_areas, mouse)
   }
 
   /// Map a library scrollbar click/drag to a viewport offset.
@@ -114,13 +113,9 @@ impl App {
     changed
   }
 
-  pub(crate) fn mouse_on_library(&self, mouse: MouseEvent) -> Option<Rect> {
-    viewport::hit_pane(&self.library_pane_areas, mouse)
-  }
-
   /// Map a screen position to the visible library row under it.
   pub(crate) fn library_row_index(&self, mouse: MouseEvent) -> Option<usize> {
-    let area = self.mouse_on_library(mouse)?;
+    let area = viewport::hit_pane(&self.hit.library_panes, mouse)?;
     viewport::row_at(
       area,
       mouse,
@@ -129,10 +124,14 @@ impl App {
     )
   }
 
+  /// The track behind a visible library row.
+  pub(crate) fn library_row_track(&self, row: usize) -> Option<&LibraryTrack> {
+    self.library.get(self.library_rows.get(row)?.index)
+  }
+
   /// The track hovered (selected) in the library pane.
-  pub(crate) fn library_hovered_track(&self) -> Option<&crate::library_db::LibraryTrack> {
-    let row = self.library_state.selected()?;
-    self.library_rows.get(row).map(|matched| &matched.track)
+  pub(crate) fn library_hovered_track(&self) -> Option<&LibraryTrack> {
+    self.library_row_track(self.library_state.selected()?)
   }
 
   /// Feed `:library-hovered` panes from the library selection. Mirrors
@@ -141,85 +140,105 @@ impl App {
     if !self.has_library_hover_panes {
       return;
     }
-    let Some(track) = self.library_hovered_track().cloned() else {
+    let Some(track) = self.library_hovered_track() else {
       self.library_hover = None;
       return;
     };
+    let url = track.path.to_string_lossy().into_owned();
     if self
       .library_hover
       .as_ref()
-      .is_some_and(|hover| hover.url == track.path.to_string_lossy())
+      .is_some_and(|hover| hover.url == url)
     {
       return;
     }
-    let url = track.path.to_string_lossy().to_string();
-    let title = title_of(&track);
+    let path = track.path.clone();
+    let title = title_of(track);
     let artist = (!track.artist.is_empty()).then(|| track.artist.clone());
-    let lyric_title = title.clone();
-    self.library_hover = Some(SongView::new(url.clone(), track.path.clone(), title));
-    self.spawn_song_view_loads(url, &track.path, artist, &lyric_title, true);
+    self.library_hover = Some(SongView::new(url.clone(), path.clone(), title.clone()));
+    self.spawn_song_view_loads(url, &path, artist, &title, true);
+  }
+
+  /// Scanner events: progress, the finished track list, or a failure.
+  pub fn handle_library_event(&mut self, event: crate::event::LibraryEvent) -> bool {
+    use crate::event::LibraryEvent;
+    match event {
+      LibraryEvent::Scanning { scanned, changed } => {
+        self.library_scanning = Some((scanned, changed));
+      }
+      LibraryEvent::Loaded(tracks) => {
+        self.library_loaded(tracks);
+        // The startup scan stays quiet: its message would replace startup
+        // notices (config warnings, `open` results) almost immediately.
+        if std::mem::take(&mut self.library_rescan_requested) {
+          self.set_message("library ready");
+        }
+      }
+      LibraryEvent::Failed { error, tracks } => {
+        // The database still holds the previous scan: keep showing it.
+        if let Some(tracks) = tracks {
+          self.library_loaded(tracks);
+        } else {
+          self.library_scanning = None;
+        }
+        self.set_message(format!("library scan failed: {error}"));
+      }
+    }
+    self.pane_visible(PaneKind::Library) || self.message.is_some()
   }
 
   /// Scan finished: swap in the new track list.
-  pub(crate) fn library_loaded(&mut self, tracks: Vec<crate::library_db::LibraryTrack>) {
+  fn library_loaded(&mut self, tracks: Vec<LibraryTrack>) {
     self.library_scanning = None;
     self.library = tracks;
+    self.library_rows_query.clear();
     self.recompute_library_filter();
     self.clamp_library_selection();
-    self.sync_library_hover();
   }
 
   /// `enter` in the library: play the selected track now (inserted right
   /// after the current song; appended and started when idle).
   pub(crate) fn library_play_selected(&mut self) -> bool {
-    let Some(track) = self.library_hovered_track().cloned() else {
-      return false;
-    };
-    let title = if track.title.is_empty() {
-      track.filename.clone()
-    } else {
-      track.title.clone()
-    };
-    self.mpdc(MpdCommand::PlayLibrary {
-      path: track.path.clone(),
-      append: false,
-    });
-    self.set_message(format!("playing {title}"));
-    true
+    self.library_queue_selected(false)
   }
 
   /// `a` in the library: append the selected track to the queue (starts
   /// playing when idle).
   pub(crate) fn library_append_selected(&mut self) -> bool {
-    let Some(track) = self.library_hovered_track().cloned() else {
+    self.library_queue_selected(true)
+  }
+
+  fn library_queue_selected(&mut self, append: bool) -> bool {
+    let Some(track) = self.library_hovered_track() else {
       return false;
     };
-    self.mpdc(MpdCommand::PlayLibrary {
-      path: track.path.clone(),
-      append: true,
+    let path = track.path.clone();
+    let title = title_of(track);
+    self.mpdc(MpdCommand::PlayLibrary { path, append });
+    self.set_message(if append {
+      format!("queued {title}")
+    } else {
+      format!("playing {title}")
     });
-    self.set_message(format!("queued {}", title_of(&track)));
     true
   }
 
   /// `i` in the library: open the detail view for the selected track.
   pub(crate) fn open_library_detail(&mut self) -> bool {
-    let Some(track) = self.library_hovered_track().cloned() else {
+    let Some(track) = self.library_hovered_track() else {
       return false;
     };
-    let url = track.path.to_string_lossy().to_string();
-    if self.detail.as_ref().is_some_and(|detail| detail.url == url) {
-      self.close_detail();
-      return true;
-    }
-    let title = title_of(&track);
-    self.open_detail_for(url, track.path.clone(), title)
+    let url = track.path.to_string_lossy().into_owned();
+    let path = track.path.clone();
+    let title = title_of(track);
+    self.open_detail_for(url, path, title)
   }
 
   /// `u` in the library: ask the scanner thread to rescan.
   pub(crate) fn library_rescan(&mut self) -> bool {
     if let Some(tx) = &self.library_scan_tx {
       let _ = tx.send(());
+      self.library_rescan_requested = true;
       self.set_message("rescanning library…");
     } else {
       self.set_message("library is not configured ([library] paths)");
@@ -228,7 +247,7 @@ impl App {
   }
 }
 
-fn title_of(track: &crate::library_db::LibraryTrack) -> String {
+fn title_of(track: &LibraryTrack) -> String {
   if track.title.is_empty() {
     track.filename.clone()
   } else {

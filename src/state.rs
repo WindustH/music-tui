@@ -1,14 +1,15 @@
-//! Persistent UI state: restored when music-tui starts with no subcommand,
-//! saved whenever it changes (atomic writes, crash-safe).
+//! Persistent UI state: restored at startup, saved shortly after it
+//! changes and on exit (atomic writes, crash-safe).
 //!
 //! Deliberately minimal — song-dependent values (scroll offsets, previews)
 //! are transient; MPD itself restores the queue via its own state file.
 
-use std::path::Path;
+use std::{
+  path::{Path, PathBuf},
+  time::{Duration, Instant},
+};
 
 use serde::{Deserialize, Serialize};
-
-use crate::app::App;
 
 pub const STATE_FILE: &str = "state.toml";
 
@@ -47,6 +48,55 @@ impl PersistedState {
   }
 }
 
+/// Coalesces state saves: a change is written once it has been pending
+/// for [`StateSaver::DELAY`], so holding `j` in the queue costs one fsync'd
+/// write per second instead of one per keypress.
+pub struct StateSaver {
+  dir: PathBuf,
+  saved: PersistedState,
+  pending: Option<(PersistedState, Instant)>,
+}
+
+impl StateSaver {
+  const DELAY: Duration = Duration::from_secs(1);
+
+  pub fn new(dir: &Path, saved: PersistedState) -> Self {
+    Self {
+      dir: dir.to_path_buf(),
+      saved,
+      pending: None,
+    }
+  }
+
+  /// Record the current state; schedules a save when it differs from the
+  /// last saved one.
+  pub fn update(&mut self, current: PersistedState, now: Instant) {
+    if current == self.saved {
+      self.pending = None;
+      return;
+    }
+    let due = self
+      .pending
+      .as_ref()
+      .map_or(now + Self::DELAY, |(_, due)| *due);
+    self.pending = Some((current, due));
+  }
+
+  /// When the pending save is due.
+  pub fn deadline(&self) -> Option<Instant> {
+    self.pending.as_ref().map(|(_, due)| *due)
+  }
+
+  /// Write the pending state if it is due (or unconditionally on `force`).
+  pub fn flush(&mut self, now: Instant, force: bool) {
+    let due = self.deadline().is_some_and(|due| force || due <= now);
+    if due && let Some((state, _)) = self.pending.take() {
+      state.save(&self.dir);
+      self.saved = state;
+    }
+  }
+}
+
 fn save_inner(state: &PersistedState, state_dir: &Path) -> std::io::Result<()> {
   std::fs::create_dir_all(state_dir)?;
   let path = state_dir.join(STATE_FILE);
@@ -55,24 +105,40 @@ fn save_inner(state: &PersistedState, state_dir: &Path) -> std::io::Result<()> {
   crate::fsutil::atomic_write_bytes(&path, text.as_bytes())
 }
 
-impl App {
-  /// Capture the current UI state for persistence.
-  pub fn snapshot_state(&self) -> PersistedState {
-    PersistedState {
-      tab: self.tab,
-      lyrics_follow: Some(self.lyrics_follow),
-      queue_selected: self.queue_state.selected(),
-    }
-  }
+#[cfg(test)]
+mod tests {
+  use super::*;
 
-  /// Apply a previously persisted state (called once at startup).
-  pub fn restore_state(&mut self, state: PersistedState) {
-    if !self.tabs.is_empty() {
-      self.tab = state.tab.min(self.tabs.len() - 1);
-    }
-    if let Some(follow) = state.lyrics_follow {
-      self.lyrics_follow = follow;
-    }
-    self.pending_restore_selection = state.queue_selected;
+  #[test]
+  fn saver_coalesces_changes_until_due() {
+    let dir = std::env::temp_dir().join(format!("music-tui-state-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let start = Instant::now();
+    let mut saver = StateSaver::new(&dir, PersistedState::default());
+    let changed = |tab| PersistedState {
+      tab,
+      ..PersistedState::default()
+    };
+
+    saver.update(changed(1), start);
+    let due = saver.deadline().expect("pending save");
+    saver.update(changed(2), start + Duration::from_millis(500));
+    assert_eq!(
+      saver.deadline(),
+      Some(due),
+      "first change sets the deadline"
+    );
+    saver.flush(start + Duration::from_millis(600), false);
+    assert!(!dir.join(STATE_FILE).exists(), "not due yet");
+
+    saver.flush(due, false);
+    assert_eq!(PersistedState::load(&dir), changed(2));
+    assert_eq!(saver.deadline(), None);
+
+    // Reverting to the saved state cancels a pending write.
+    saver.update(changed(3), due);
+    saver.update(changed(2), due);
+    assert_eq!(saver.deadline(), None);
+    let _ = std::fs::remove_dir_all(&dir);
   }
 }

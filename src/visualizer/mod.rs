@@ -1,24 +1,27 @@
-//! Spectrum analysis: reads s16le PCM from the MPD fifo output, runs an
-//! FFT per frame, and forwards log-spaced band values (0..=100) to the UI.
-//! The band count follows the pane width (one band per column, capped by
-//! `bars`). Rendering lives in [`render`].
+//! Spectrum visualizer: a reader thread takes s16le PCM from the MPD fifo
+//! output ([`fifo`]), runs an FFT per frame ([`analysis`]) and forwards
+//! log-spaced band values (0..=100) to the UI; a second thread turns them
+//! into styled lines ([`render`]). The band count follows the pane width
+//! (one band per column, capped by `bars`).
+//!
+//! The reader blocks in `poll(2)` (no busy waiting), only analyzes fresh
+//! samples (a paused player costs nothing), and leaves the fifo alone
+//! while the visualizer pane is not on screen — MPD drains a full fifo
+//! itself.
 
+#[cfg(unix)]
+mod analysis;
+#[cfg(unix)]
+mod fifo;
 mod render;
 
 use std::sync::{
   Arc,
   atomic::{AtomicBool, AtomicUsize, Ordering},
 };
-
 #[cfg(unix)]
-use std::{
-  collections::VecDeque,
-  io::{Read, Result as IoResult},
-  time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-#[cfg(unix)]
-use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use tokio::sync::mpsc;
 
 use crate::{config::VisualizerConfig, event::AsyncEvent};
@@ -27,25 +30,24 @@ pub use render::{BandRendererHandle, spawn_band_renderer};
 
 pub(crate) use render::VisualizerColors;
 
+#[derive(Clone)]
 pub struct VisualizerHandle {
   stop: Arc<AtomicBool>,
+  /// Whether the visualizer pane is on screen; analysis pauses otherwise.
+  active: Arc<AtomicBool>,
   /// Desired band count, driven by the pane width reported by the UI
   /// (one band per column, capped by `visualizer.bars`).
   columns: Arc<AtomicUsize>,
 }
 
-impl Clone for VisualizerHandle {
-  fn clone(&self) -> Self {
-    Self {
-      stop: self.stop.clone(),
-      columns: self.columns.clone(),
-    }
-  }
-}
-
 impl VisualizerHandle {
   pub fn stop(&self) {
     self.stop.store(true, Ordering::SeqCst);
+  }
+
+  /// Report whether the visualizer pane is currently displayed.
+  pub fn set_active(&self, active: bool) {
+    self.active.store(active, Ordering::Relaxed);
   }
 
   /// Report the current pane width so the analysis matches the columns.
@@ -54,105 +56,28 @@ impl VisualizerHandle {
   }
 }
 
-/// Band edges in Hz, log-spaced with a minimum linear step of one FFT bin:
-/// every band owns at least one distinct bin, so neighboring low-frequency
-/// bands (where a pure log grid is narrower than the FFT resolution) never
-/// sample the same bin and render as duplicated identical bars.
-#[cfg(unix)]
-fn band_edges(hint: usize, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec<f32> {
-  let hint = hint.max(2);
-  let mut edges = build_band_edges(
-    (max_freq / min_freq).powf(1.0 / hint as f32),
-    hz_per_bin,
-    min_freq,
-    max_freq,
-  );
-  // Refine the ratio so the generated band count matches its own hint.
-  for _ in 0..8 {
-    let count = edges.len() - 1;
-    if count < 2 {
-      break;
-    }
-    let next_edges = build_band_edges(
-      (max_freq / min_freq).powf(1.0 / count as f32),
-      hz_per_bin,
-      min_freq,
-      max_freq,
-    );
-    if next_edges.len() == edges.len() {
-      break;
-    }
-    edges = next_edges;
-  }
-  edges
-}
-
-#[cfg(unix)]
-fn build_band_edges(ratio: f32, hz_per_bin: f32, min_freq: f32, max_freq: f32) -> Vec<f32> {
-  let mut edges = vec![min_freq];
-  loop {
-    let prev = *edges.last().expect("non-empty");
-    let next = (prev * ratio).max(prev + hz_per_bin);
-    if next >= max_freq {
-      edges.push(max_freq);
-      return edges;
-    }
-    edges.push(next);
-  }
-}
-
-/// Map band edges to FFT bin ranges `[start, end)`; every range contains
-/// at least one bin and consecutive ranges are disjoint.
-#[cfg(unix)]
-fn band_bin_ranges(edges: &[f32], window: usize, sample_rate: u32) -> Vec<(usize, usize)> {
-  let bins = window / 2;
-  let nyquist = sample_rate as f32 / 2.0;
-  edges
-    .windows(2)
-    .map(|pair| {
-      let start_bin = ((pair[0] / nyquist) * bins as f32)
-        .floor()
-        .max(1.0)
-        .min(bins as f32) as usize;
-      // Total even when the Nyquist limit collapses to min_freq: a plain
-      // `.clamp(start_bin + 1, bins)` panics once start_bin hits `bins`.
-      let end_bin = (((pair[1] / nyquist) * bins as f32).ceil() as usize)
-        .max(start_bin + 1)
-        .min(bins);
-      (start_bin, end_bin)
-    })
-    .fold(Vec::new(), |mut ranges, range| {
-      // Never overlap the previous band: keep every range disjoint so no
-      // two bands read identical bins.
-      let start = match ranges.last() {
-        Some(&(_, prev_end)) => range.0.max(prev_end),
-        None => range.0,
-      };
-      let end = range.1.max(start + 1).min(bins.max(1));
-      ranges.push((start, end));
-      ranges
-    })
-}
-
 #[cfg(unix)]
 pub fn spawn_visualizer(
   config: VisualizerConfig,
   events: mpsc::UnboundedSender<AsyncEvent>,
 ) -> Option<VisualizerHandle> {
-  let stop = Arc::new(AtomicBool::new(false));
-  // Until the UI reports a pane width, analyze at the configured cap.
-  let columns = Arc::new(AtomicUsize::new(config.bars.max(1)));
   let handle = VisualizerHandle {
-    stop: stop.clone(),
-    columns: columns.clone(),
+    stop: Arc::new(AtomicBool::new(false)),
+    active: Arc::new(AtomicBool::new(false)),
+    // Until the UI reports a pane width, analyze at the configured cap.
+    columns: Arc::new(AtomicUsize::new(config.bars.max(1))),
   };
-  std::thread::Builder::new()
+  let worker = handle.clone();
+  let spawned = std::thread::Builder::new()
     .name("music-tui-visualizer".to_string())
-    .spawn(move || {
-      run(config, events, stop, columns);
-    })
-    .expect("failed to spawn visualizer thread");
-  Some(handle)
+    .spawn(move || run(config, events, worker));
+  match spawned {
+    Ok(_) => Some(handle),
+    Err(error) => {
+      tracing::warn!(%error, "failed to start the visualizer");
+      None
+    }
+  }
 }
 
 #[cfg(not(unix))]
@@ -167,390 +92,49 @@ pub fn spawn_visualizer(
 fn run(
   config: VisualizerConfig,
   events: mpsc::UnboundedSender<AsyncEvent>,
-  stop: Arc<AtomicBool>,
-  columns: Arc<AtomicUsize>,
+  handle: VisualizerHandle,
 ) {
-  let window = config.window.max(256);
-  let channels = config.channels.max(1) as usize;
-  let mut planner: FftPlanner<f32> = FftPlanner::new();
-  let fft: Arc<dyn Fft<f32>> = planner.plan_fft_forward(window);
-  let hann: Vec<f32> = (0..window)
-    .map(|index| 0.5 * (1.0 - (std::f32::consts::TAU * index as f32 / window as f32).cos()))
-    .collect();
+  let mut analyzer = analysis::Analyzer::new(&config);
+  let frame_period = Duration::from_secs_f64(1.0 / f64::from(config.fps.max(1)));
+  let mut read_buf = vec![0u8; analyzer.window * analyzer.channels * 2 * 2];
+  let mut last_error: Option<String> = None;
 
-  // A zero `sample_rate` (an explicit-but-invalid config: the schema
-  // default is 44100) would make nyquist/hz-per-bin drop to zero below and
-  // panic the thread. Clamp to 80 (= 2 * min_freq) so the Nyquist limit
-  // never falls below the lowest band edge and band-to-bin mapping stays
-  // valid; the schema re-clamps as well (see normalize_defaults).
-  let sample_rate = config.sample_rate.max(80);
-  let mut columns_now = config.bars.max(1);
-  let hz_per_bin = sample_rate as f32 / window as f32;
-  let min_freq = 40.0f32;
-  let max_freq = (sample_rate as f32 / 2.0).min(16_000.0);
-  let mut bin_ranges = band_bin_ranges(
-    &band_edges(columns_now, hz_per_bin, min_freq, max_freq),
-    window,
-    sample_rate,
-  );
-  let mut mono: VecDeque<f32> = VecDeque::with_capacity(window);
-  let mut channel_buf: Vec<f32> = Vec::with_capacity(channels);
-  let mut bars: Vec<u8> = vec![0; bin_ranges.len()];
-  let mut leftover = Vec::new();
-  let frame_period = Duration::from_secs_f64(1.0 / config.fps.max(1) as f64);
-  // Pace the analysis by time (stride = sample_rate / fps) with overlapping
-  // windows instead of draining a fixed window * channels per frame, which
-  // capped the effective frame rate at large windows and discarded audio at
-  // small ones. Keep `fps` from dividing to zero.
-  let stride = (sample_rate / config.fps.max(1)).max(1) as usize;
-  let mut last_frame = Instant::now();
-  let mut read_buf = vec![0u8; window * channels * 2 * 2];
-
-  let path = config.fifo_path.clone();
-  loop {
-    if stop.load(Ordering::SeqCst) {
-      return;
-    }
-    let opened = open_fifo(&path);
-    let mut fifo = match opened {
+  while !handle.stop.load(Ordering::SeqCst) {
+    let fifo = match fifo::open_fifo(&config.fifo_path) {
       Ok(file) => file,
-      Err(error) if error.kind() == std::io::ErrorKind::ResourceBusy => {
-        // Another instance owns the fifo; retry slowly until it exits.
-        tracing::debug!("{error}");
-        std::thread::sleep(Duration::from_secs(5));
-        continue;
-      }
-      Err(_) => {
-        std::thread::sleep(Duration::from_secs(2));
+      Err(error) => {
+        let busy = error.kind() == std::io::ErrorKind::ResourceBusy;
+        let message = error.to_string();
+        if last_error.as_deref() != Some(message.as_str()) {
+          tracing::info!("visualizer fifo unavailable: {message}");
+          last_error = Some(message);
+        }
+        // Another instance owns the fifo: retry slowly until it exits.
+        sleep_unless_stopped(&handle.stop, Duration::from_secs(if busy { 5 } else { 2 }));
         continue;
       }
     };
-
-    loop {
-      if stop.load(Ordering::SeqCst) {
-        return;
-      }
-      match fifo.read(&mut read_buf) {
-        Ok(0) => {
-          // Writer vanished; reopen.
-          break;
-        }
-        Ok(read) => {
-          leftover.extend_from_slice(&read_buf[..read]);
-          while leftover.len() >= 2 {
-            let bytes: [u8; 2] = [leftover[0], leftover[1]];
-            leftover.drain(..2);
-            let sample = i16::from_le_bytes(bytes) as f32 / 32768.0;
-            channel_buf.push(sample);
-            if channel_buf.len() == channels {
-              mono.push_back(channel_buf.iter().sum::<f32>() / channels as f32);
-              channel_buf.clear();
-            }
-          }
-        }
-        Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-          std::thread::sleep(Duration::from_millis(5));
-        }
-        Err(_) => break,
-      }
-
-      if mono.len() >= window && last_frame.elapsed() >= frame_period {
-        last_frame = Instant::now();
-        // Follow the reported pane width: one band per column, capped,
-        // then squeezed to the FFT's real frequency resolution.
-        let target = columns.load(Ordering::Relaxed).clamp(1, config.bars.max(1));
-        if target != columns_now {
-          columns_now = target;
-          bin_ranges = band_bin_ranges(
-            &band_edges(target, hz_per_bin, min_freq, max_freq),
-            window,
-            sample_rate,
-          );
-          bars = vec![0; bin_ranges.len()];
-        }
-        // Take the most recent `window` samples so consecutive frames
-        // overlap, advancing by a stride each period, instead of the old
-        // fixed window * channels drain that stalled at large windows.
-        let frame: Vec<f32> = mono.iter().skip(mono.len() - window).copied().collect();
-        let spectrum = compute_spectrum(&frame, &fft, &hann, &bin_ranges);
-        for (index, value) in spectrum.iter().enumerate() {
-          let previous = f32::from(bars[index]);
-          let smoothed = if *value < previous {
-            previous * 0.75 + value * 0.25
-          } else {
-            *value
-          };
-          bars[index] = smoothed.clamp(0.0, 100.0) as u8;
-        }
-        // Bound the rolling buffer: if analysis falls behind the fifo,
-        // keep only the window plus a couple of strides and drop the oldest
-        // samples so a stalled render loop can't grow memory without limit.
-        let max_keep = window + stride * 2;
-        while mono.len() > max_keep {
-          mono.pop_front();
-        }
-        if events.send(AsyncEvent::Spectrum(bars.clone())).is_err() {
-          return;
-        }
-      }
+    last_error = None;
+    analyzer.reset();
+    if !fifo::pump_fifo(
+      fifo,
+      &handle,
+      &mut analyzer,
+      &mut read_buf,
+      frame_period,
+      &events,
+    ) {
+      return;
     }
+    // The fifo failed: give whatever broke a moment before reopening.
+    sleep_unless_stopped(&handle.stop, Duration::from_millis(500));
   }
-}
-
-/// Resolved band colors handed to the render worker.
-#[cfg(unix)]
-fn open_fifo(path: &str) -> IoResult<std::fs::File> {
-  use std::os::fd::AsRawFd;
-  use std::os::unix::fs::OpenOptionsExt;
-  // mpd only creates the fifo when it loads its config; anything that
-  // wipes it afterwards (e.g. a /tmp cleaner) leaves both sides stranded
-  // until the fifo exists again. Recreate it so mpd can reconnect on its
-  // next output open.
-  if !std::path::Path::new(path).exists()
-    && let Ok(cpath) = std::ffi::CString::new(path)
-  {
-    unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) };
-    // Ignore mkfifo errors: a racing creator (or a bad path) surfaces
-    // as the open error below.
-  }
-  let file = std::fs::OpenOptions::new()
-    .read(true)
-    .write(true)
-    .custom_flags(libc::O_NONBLOCK)
-    .open(path)?;
-  // The fifo stream is single-consumer: if a second music-tui instance
-  // (or any other reader) opened it first, the kernel would split the
-  // samples between both readers and garble every spectrum. An exclusive
-  // advisory lock on the fifo makes the loser back off cleanly. The lock
-  // lives on the open file description and is released on close/drop.
-  let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-  if locked != 0 {
-    let error = std::io::Error::last_os_error();
-    if error.kind() == std::io::ErrorKind::WouldBlock {
-      tracing::info!("visualizer fifo {path} is held by another instance; backing off");
-      return Err(std::io::Error::new(
-        std::io::ErrorKind::ResourceBusy,
-        format!("fifo {path} is already read by another instance"),
-      ));
-    }
-    return Err(error);
-  }
-  tracing::info!("visualizer locked fifo {path}");
-  Ok(file)
 }
 
 #[cfg(unix)]
-fn compute_spectrum(
-  frame: &[f32],
-  fft: &Arc<dyn Fft<f32>>,
-  hann: &[f32],
-  bin_ranges: &[(usize, usize)],
-) -> Vec<f32> {
-  let mut buffer: Vec<Complex<f32>> = frame
-    .iter()
-    .zip(hann)
-    .map(|(sample, gain)| Complex::new(sample * gain, 0.0))
-    .collect();
-  fft.process(&mut buffer);
-
-  // The window's coherent gain (its sum, ~N/2 for Hann) leaves an
-  // exact-bin full-scale sine at N/4; normalizing by the window sum while
-  // keeping the analytic-signal factor of 2 maps that back to 0 dB so bar
-  // heights track the actual signal level.
-  let window_sum: f32 = hann.iter().sum();
-  let mut values = Vec::with_capacity(bin_ranges.len());
-  for &(start_bin, end_bin) in bin_ranges {
-    let mut peak = 0.0f32;
-    for sample in &buffer[start_bin..end_bin.min(buffer.len())] {
-      let magnitude = sample.norm() * 2.0 / window_sum;
-      peak = peak.max(magnitude);
-    }
-    let db = 20.0 * (peak + 1e-7).log10();
-    // Display map: floor at -60 dB, full scale left under the 100 cap so
-    // loud passages don't just pin at the clamp (more visible range).
-    let normalized = ((db + 60.0) / 60.0 * 0.9).clamp(0.0, 1.0);
-    values.push(normalized * 100.0);
-  }
-  values
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-  use super::*;
-
-  /// Hosted macOS runners keep TMPDIR on NFS, where fifo io fails with
-  /// EOPNOTSUPP (mkfifo may still succeed, only the open refuses); the
-  /// tests only make sense on filesystems that support the full fifo
-  /// pipeline, so probe with open_fifo itself and skip otherwise.
-  fn fifo_supported(path: &str) -> bool {
-    let probe_dir = std::env::temp_dir().join(format!(
-      "music-tui-fifo-probe-{}-{:?}",
-      std::process::id(),
-      std::thread::current().id()
-    ));
-    let _ = std::fs::create_dir_all(&probe_dir);
-    let probe = probe_dir.join("probe.fifo");
-    let probe_str = probe.to_string_lossy().into_owned();
-    let supported = match open_fifo(&probe_str) {
-      Ok(file) => {
-        drop(file);
-        true
-      }
-      Err(error)
-        if error.raw_os_error() == Some(libc::EOPNOTSUPP)
-          || error.raw_os_error() == Some(libc::ENOTSUP) =>
-      {
-        eprintln!("skipping fifo test {path}: fifo io unsupported on this filesystem ({error})");
-        false
-      }
-      Err(error) => panic!("fifo probe failed unexpectedly: {error}"),
-    };
-    let _ = std::fs::remove_file(&probe);
-    let _ = std::fs::remove_dir(&probe_dir);
-    supported
-  }
-
-  #[test]
-  fn edges_keep_bands_on_distinct_bins() {
-    // A 256-band log grid over 40..16k Hz at 2048/44.1k (≈21.5 Hz/bin)
-    // collapses to the real resolution; every band keeps its own bin.
-    let window = 2048;
-    let sample_rate = 44_100u32;
-    let hz_per_bin = sample_rate as f32 / window as f32;
-    let edges = band_edges(256, hz_per_bin, 40.0, 16_000.0);
-    let ranges = band_bin_ranges(&edges, window, sample_rate);
-    assert!(ranges.len() < 256, "resolution must squeeze the band count");
-    for pair in ranges.windows(2) {
-      assert!(pair[0].1 <= pair[1].0, "bands must stay disjoint: {pair:?}");
-    }
-    for &(start, end) in &ranges {
-      assert!(end > start, "every band needs at least one bin");
-    }
-  }
-
-  #[test]
-  fn edges_honor_hint_when_resolution_allows() {
-    // A small hint (8 bands) with a fine 8192 window stays near the hint
-    // (the final log step may overshoot 16 kHz and consume one extra band).
-    let window = 8192;
-    let sample_rate = 44_100u32;
-    let hz_per_bin = sample_rate as f32 / window as f32;
-    let edges = band_edges(8, hz_per_bin, 40.0, 16_000.0);
-    assert!(
-      (9..=11).contains(&edges.len()),
-      "hint 8 -> {} edges",
-      edges.len()
-    );
-  }
-
-  #[test]
-  fn band_ranges_stay_valid_when_nyquist_below_min_freq() {
-    // A sample_rate below 2 * min_freq (40 Hz) puts the Nyquist limit under
-    // the lowest band edge; the mapping must keep every range start <= end
-    // (it used to invert and panic the spectrum slice).
-    let window = 512;
-    let ranges = band_bin_ranges(&[40.0, 20.0], window, 40);
-    assert!(!ranges.is_empty());
-    for &(start, end) in &ranges {
-      assert!(start <= end, "band range must not invert: ({start}, {end})");
-    }
-  }
-
-  #[test]
-  fn band_ranges_stay_valid_at_minimum_sample_rate() {
-    // run() clamps sample_rate to 80 (= 2 * min_freq), where the final
-    // edge equals Nyquist: the degenerate [min_freq, max_freq] pair must
-    // not panic the range clamp.
-    let window = 256;
-    let ranges = band_bin_ranges(&[40.0, 40.0], window, 80);
-    assert!(!ranges.is_empty());
-    for &(start, end) in &ranges {
-      assert!(start <= end, "band range must not invert: ({start}, {end})");
-    }
-  }
-
-  #[test]
-  fn spectrum_scaling_tracks_signal_level() {
-    let window = 2048;
-    let sample_rate = 16_384u32;
-    let fft = FftPlanner::new().plan_fft_forward(window);
-    let hann: Vec<f32> = (0..window)
-      .map(|index| 0.5 * (1.0 - (std::f32::consts::TAU * index as f32 / window as f32).cos()))
-      .collect();
-    // Exact-bin sines (1000 Hz at N=2048 over 16.384 kHz -> bin 125): with
-    // the window-sum normalization, full scale reads ~90 (0 dB under the
-    // display cap) and -20 dB reads ~60, so the bars span the display
-    // instead of hugging the top.
-    let sine = |amplitude: f32| -> Vec<f32> {
-      (0..window)
-        .map(|index| {
-          amplitude * (std::f32::consts::TAU * index as f32 * 1000.0 / sample_rate as f32).sin()
-        })
-        .collect()
-    };
-    let ranges = vec![(125usize, 126usize)];
-    let full = compute_spectrum(&sine(1.0), &fft, &hann, &ranges)[0];
-    let quiet = compute_spectrum(&sine(0.1), &fft, &hann, &ranges)[0];
-    assert!(
-      (86.0..=92.0).contains(&full),
-      "full-scale sine reads {full}"
-    );
-    assert!((55.0..=65.0).contains(&quiet), "-20 dB sine reads {quiet}");
-    assert!(
-      full - quiet > 20.0,
-      "dynamic range compressed: {full} vs {quiet}"
-    );
-  }
-
-  #[test]
-  fn open_fifo_recreates_a_deleted_fifo() {
-    // A /tmp cleaner can delete the fifo under us; the reader must
-    // recreate it so mpd can reconnect on its next output open.
-    let dir = std::env::temp_dir().join(format!("music-tui-fifo-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("feed.fifo");
-    let path = path.to_string_lossy().into_owned();
-    if !fifo_supported(&path) {
-      let _ = std::fs::remove_dir(&dir);
-      return;
-    }
-
-    let first = open_fifo(&path).unwrap();
-    assert!(std::path::Path::new(&path).exists());
-    drop(first);
-
-    std::fs::remove_file(&path).unwrap();
-    let _second = open_fifo(&path).unwrap();
-    assert!(
-      std::path::Path::new(&path).exists(),
-      "deleted fifo must be recreated"
-    );
-
-    std::fs::remove_file(&path).unwrap();
-    let _ = std::fs::remove_dir(&dir);
-  }
-
-  #[test]
-  fn open_fifo_is_single_consumer() {
-    // Two readers on one fifo would each get half the samples and both
-    // spectra would be garbage. The second open must refuse (busy) until
-    // the first reader closes.
-    let dir = std::env::temp_dir().join(format!("music-tui-fifo-busy-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("feed.fifo");
-    let path = path.to_string_lossy().into_owned();
-    if !fifo_supported(&path) {
-      let _ = std::fs::remove_dir(&dir);
-      return;
-    }
-
-    let first = open_fifo(&path).unwrap();
-    let second = open_fifo(&path);
-    assert_eq!(second.unwrap_err().kind(), std::io::ErrorKind::ResourceBusy);
-    drop(first);
-    assert!(open_fifo(&path).is_ok(), "lock must release on close");
-
-    std::fs::remove_file(&path).unwrap();
-    let _ = std::fs::remove_dir(&dir);
+fn sleep_unless_stopped(stop: &AtomicBool, total: Duration) {
+  let deadline = Instant::now() + total;
+  while !stop.load(Ordering::SeqCst) && Instant::now() < deadline {
+    std::thread::sleep(fifo::FIFO_WAIT.min(deadline.saturating_duration_since(Instant::now())));
   }
 }

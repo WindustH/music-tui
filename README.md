@@ -1,50 +1,58 @@
 # music-tui
 
-`music-tui` is a terminal music player client for [MPD](https://www.musicpd.org/)
-built with Ratatui. It drives an existing MPD daemon and adds a tabbed,
-mouse-friendly interface: queue, cover art, synced lyrics, metadata editing,
-and a spectrum visualizer.
+`music-tui` is a terminal client for [MPD](https://www.musicpd.org/) built
+with Ratatui. It drives an existing MPD daemon through a tabbed,
+mouse-friendly interface: queue, local library, cover art, synced lyrics,
+tag editing, and a spectrum visualizer.
 
 https://github.com/user-attachments/assets/ed318f7b-a40b-41c5-a3dc-1a8dc9ae14b7
 
 ## Features
 
-- MPD playback control: play/pause, seek, next/previous, volume, repeat/random/single/consume.
-- Tabbed interface with a configurable pane layout DSL (`H(2:1, queue, V(2:1, cover, metadata))`).
-- Queue view with filtering, selection, keyboard and mouse navigation.
-- Secondary detail view for any queue entry: large cover plus full metadata.
-- Cover art rendering with Kitty, Sixel, and iTerm2 graphics protocols, Chafa
-  symbols, and ASCII fallback.
+- Playback control: play/pause, seek, next/previous, volume, and the
+  repeat / random / single / consume modes.
+- Tabs built from a small layout language (`H(2:1, queue, V(2:1, cover, metadata))`).
+- Queue view with live filtering, duplicate hiding, and keyboard and mouse
+  navigation.
+- Library view: music-tui indexes your music folders itself and filters
+  across every tag, file name, and lyrics text.
+- Detail view for any queue or library entry: large cover plus all tags.
+- Cover art through the Kitty, Sixel, and iTerm2 image protocols, with
+  Chafa character art and ASCII as fallbacks.
 - Synced lyrics (`.lrc`, including word-level timestamps) with karaoke
-  highlighting, click-to-seek, and auto-follow; plain/embedded lyrics supported.
-- Metadata viewer and editor (`e` opens a TOML draft in `$EDITOR`).
-- Spectrum visualizer fed by the MPD fifo output.
-- Which-key style hints, scrollable `f1` key-binding help, command prompt (`:`).
-- `music-tui open` subcommand for file-manager integration with four play modes.
+  highlighting, click-to-seek, and auto-follow; plain and embedded lyrics
+  work too.
+- Tag editor: `e` opens the tags as a TOML draft in `$EDITOR`.
+- Spectrum visualizer fed by an MPD fifo output (Linux/macOS).
+- Which-key hints, a scrollable `f1` key help, and a `:` command prompt.
+- `music-tui open` for file-manager integration, including a preview mode
+  that restores your queue afterwards.
 
 ## Usage
 
 ```sh
-music-tui              # connect to MPD (first-run local socket by default)
-music-tui open ~/Music/album   # replace the queue with a folder
-music-tui open song.flac      # see the open modes below
+music-tui                       # start the interface
+music-tui open ~/Music/album    # replace the queue with a folder and play it
+music-tui open song.flac        # preview a song, then restore the queue
 ```
 
-If MPD has no configuration yet, the first music-tui launch creates a minimal
-local Unix-socket config without a `music_directory` and points music-tui at
-that socket. Existing MPD configs and custom remote hosts are never replaced.
-The MPD daemon still needs to be started by the system service manager.
+On its first launch music-tui writes commented default configs
+(`~/.config/music-tui/` on Linux and macOS). If MPD has no configuration
+yet either, it also creates a minimal MPD config that listens on a local
+Unix socket and points music-tui at it (Linux and macOS). Existing MPD
+configs are never touched, and MPD itself still has to be started by your
+service manager.
 
 `open` modes (`-m`/`--mode`, default `interrupt`):
 
-- `append` — append the file/folder to the queue.
-- `next` — insert the file right after the currently playing song.
-- `interrupt` — play the file immediately; when it ends, restore the previous
-  queue and playback state.
-- `folder` — play the file immediately and rebuild the queue from its folder.
+- `append` — add the file (or the folder's songs) to the end of the queue.
+- `next` — insert the file right after the playing song.
+- `interrupt` — play the file now; when it ends, restore the previous queue
+  and playback position.
+- `folder` — replace the queue with the file's folder and play the file.
 
-Options: `-r`/`--recursive` recurses into subfolders; `--no-play` queues
-without starting playback.
+`-r`/`--recursive` includes subfolders; `--no-play` queues without starting
+playback. See [doc/open.md](doc/open.md) for playlists and details.
 
 ## Installation
 
@@ -78,7 +86,9 @@ cd music-tui
 cargo install --path .
 ```
 
-Requires `mpd`, `chafa` and `sqlite`.
+Building needs a Rust toolchain and, on Linux/macOS, the SQLite library
+(Windows builds bundle it). At runtime you need MPD; `chafa` is optional and
+only used for character-art covers.
 
 ### Windows
 
@@ -96,4 +106,4 @@ WezTerm, or kitty (protocols are auto-detected).
 
 ## Documentation
 
-[doc/index.md](doc/index.md).
+Start at [doc/index.md](doc/index.md).

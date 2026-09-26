@@ -102,19 +102,7 @@ impl App {
         });
         true
       }
-      "queue_play" => {
-        if let Some(position) = self
-          .queue_state
-          .selected()
-          .and_then(|row| self.filtered_position(row))
-          && position < self.queue.len()
-        {
-          self.mpdc(MpdCommand::PlayPosition(position as u32));
-        } else if self.queue_state.selected().is_some() {
-          self.set_message("selection is no longer in the queue");
-        }
-        true
-      }
+      "queue_play" => self.play_selected_queue_row(),
       "play_pause" => {
         self.mpdc(MpdCommand::PlayPauseToggle);
         true
@@ -131,22 +119,7 @@ impl App {
         self.mpdc(MpdCommand::Stop);
         true
       }
-      "queue_delete" => {
-        if let Some(position) = self
-          .queue_state
-          .selected()
-          .and_then(|row| self.filtered_position(row))
-          && position < self.queue.len()
-        {
-          let title = song_title(&self.queue[position].song)
-            .unwrap_or_else(|| crate::sanitize::sanitize_text(&self.queue[position].song.url));
-          self.mpdc(MpdCommand::DeleteAt(position));
-          self.set_message(format!("deleted: {title}"));
-        } else if self.queue_state.selected().is_some() {
-          self.set_message("selection is no longer in the queue");
-        }
-        true
-      }
+      "queue_delete" => self.delete_selected_queue_row(),
       "queue_clear" => {
         self.mpdc(MpdCommand::ClearQueue);
         self.set_message("queue cleared");
@@ -178,15 +151,7 @@ impl App {
         true
       }
       "volume_mute" => {
-        let muted = self
-          .status
-          .as_ref()
-          .is_some_and(|status| status.volume == 0);
-        self.mpdc(if muted {
-          MpdCommand::SetVolume(50)
-        } else {
-          MpdCommand::SetVolume(0)
-        });
+        self.toggle_mute();
         true
       }
       "seek_forward" => {
@@ -246,84 +211,16 @@ impl App {
         self.request_metadata_editor();
         true
       }
-      "lyrics_up" => {
-        if self.hover_lyrics_active() {
-          self.scroll_hover_lyrics(-1);
-        } else {
-          self.move_lyrics_cursor(-1);
-        }
-        true
-      }
-      "lyrics_down" => {
-        if self.hover_lyrics_active() {
-          self.scroll_hover_lyrics(1);
-        } else {
-          self.move_lyrics_cursor(1);
-        }
-        true
-      }
-      "lyrics_page_up" => {
-        if self.hover_lyrics_active() {
-          self.scroll_hover_lyrics(-10);
-        } else {
-          self.move_lyrics_cursor(-10);
-        }
-        true
-      }
-      "lyrics_page_down" => {
-        if self.hover_lyrics_active() {
-          self.scroll_hover_lyrics(10);
-        } else {
-          self.move_lyrics_cursor(10);
-        }
-        true
-      }
-      "lyrics_jump" => {
-        if self.hover_lyrics_active() {
-          self.set_message("hovered lyrics: song is not playing");
-          return true;
-        }
-        // Enter: seek to the highlighted (cursor or active) lyric line and
-        // resume auto-follow.
-        let index = self.lyrics_cursor.or_else(|| self.active_lyrics_index());
-        let Some(index) = index else { return false };
-        self.lyrics_seek_to(index)
-      }
-      "lyrics_follow" => {
-        if self.hover_lyrics_active() {
-          self.set_message("hovered lyrics: song is not playing");
-          return true;
-        }
-        self.lyrics_follow = !self.lyrics_follow;
-        if self.lyrics_follow {
-          self.lyrics_cursor = None;
-        }
-        self.set_message(if self.lyrics_follow {
-          "lyrics: following playback"
-        } else {
-          "lyrics: manual scroll"
-        });
-        true
-      }
+      "lyrics_up" => self.lyrics_key_scroll(-1),
+      "lyrics_down" => self.lyrics_key_scroll(1),
+      "lyrics_page_up" => self.lyrics_key_scroll(-10),
+      "lyrics_page_down" => self.lyrics_key_scroll(10),
+      "lyrics_jump" => self.lyrics_jump(),
+      "lyrics_follow" => self.toggle_lyrics_follow(),
       "queue_detail" => self.open_detail(),
       "queue_goto_playing" => self.goto_playing(),
-      "visualizer_reset" => {
-        self.spectrum.fill(0);
-        true
-      }
+      "visualizer_reset" => self.reset_visualizer(),
       _ => false,
     }
-  }
-
-  fn move_lyrics_cursor(&mut self, delta: i32) {
-    self.lyrics_follow = false;
-    let cursor = self
-      .lyrics_cursor
-      .or_else(|| self.active_lyrics_index())
-      .unwrap_or(0);
-    self.lyrics_cursor = self
-      .lyrics
-      .as_ref()
-      .and_then(|lyrics| lyrics.move_item_index(cursor, delta));
   }
 }

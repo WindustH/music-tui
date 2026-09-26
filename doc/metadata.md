@@ -2,49 +2,55 @@
 
 ## View
 
-The metadata pane (and the detail view) show two groups of entries:
+The metadata pane and the detail view list:
 
-- `file` — path, duration, bitrate, sample rate, bit depth
-- `tag` — title, artist, album, album artist, genre, year, track, disk,
-  composer, comment
+- audio properties — duration, bitrate, sample rate, bit depth
+- tags — Title, Artist, Album, AlbumArtist, Genre, Year, Track, Disk,
+  Composer, Comment
 
 ## Editing
 
-Press `e` in a metadata pane (or in the detail view) on the target song.
-This opens a TOML draft in `$EDITOR`:
+`e` opens the tags as a TOML draft in `$EDITOR` (falling back to `$VISUAL`,
+then `vi`, or `notepad` on Windows):
 
 ```toml
-# music-tui metadata draft — save to apply, quit without saving to discard.
-# File: /path/to/song.flac
-# Leave a value empty to remove the tag.
+# Edit music tags. Save and exit to apply.
+# Empty strings clear the field.
+# file = "/path/to/song.flac"
 
 [metadata]
-title = "Old Title"
-artist = "Old Artist"
-album = "Old Album"
-track = "3/12"
+Title = "Old Title"
+Artist = "Old Artist"
+Album = "Old Album"
+AlbumArtist = ""
+Genre = ""
+Year = "2020"
+Track = "3"
+Disk = ""
+Composer = ""
+Comment = ""
 ```
 
-On save, music-tui diffs the draft against the original tags and writes only
-the changed keys back to the file (title/artist/album/album-artist/genre/
-year/track/disk/composer/comment). The queue is not disturbed; metadata
-refreshes automatically after the write.
+Save and quit to apply; quit without saving (or leave the draft unchanged)
+to cancel. music-tui compares the draft with the file and writes only the
+changed tags. An empty value removes the tag; `Year`, `Track` and `Disk`
+keep only the number before a `/` (`3/12` → `3`). Afterwards the views
+refresh; for songs in MPD's music directory, MPD is also asked to re-read
+the file so the queue shows the new tags without a manual `:update`.
 
-Editing targets the song shown in the pane — the current song in a metadata
-pane, the detailed song in the detail view.
+`e` edits the song you are looking at: the detail view's song, the
+selected queue row or library track, or otherwise the song shown by the
+focused pane.
 
 ### Multiple tag blocks
 
-Some files carry more than one tag block — most commonly WAV files with a
-legacy RIFF INFO block (single-byte encodings like GBK) next to an ID3v2
-block. MPD merges every block it can read and replaces undecodable bytes
-with `?`, so such files show up with `???` labels even though a clean
-value exists. music-tui:
+Some files carry more than one tag block — typically WAV files with a
+legacy RIFF INFO block (in an encoding such as GBK) next to an ID3v2 block.
+MPD merges the blocks and shows undecodable bytes as `?`, so such songs
+appear as `???` even though a clean value exists. music-tui:
 
-- lists every tag block in the metadata pane (extra blocks appear with a
-  `riff Title:`-style prefix) so duplicated or corrupted values are
-  visible,
-- writes edits to **every** tag block in the file, so whichever block MPD
-  prefers carries the corrected values,
-- asks MPD to update the file's database entry right after a successful
-  write, so the queue picks up the fixed tags without a manual `:update`.
+- lists every block in the metadata pane (extra blocks are prefixed, e.g.
+  `riff Title:`), and shows their values as comments in the draft;
+- writes edits to **every** block, so whichever one MPD prefers is fixed —
+  saving the draft unchanged still counts as an edit when another block
+  disagrees with it.

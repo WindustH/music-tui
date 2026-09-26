@@ -18,9 +18,16 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "mpd.music_dir" => Some(
       "Optional local music root. Empty reads music_directory from mpd.conf; file:// songs over a unix socket work without either setting.",
     ),
+    "mpd.link_dir" => Some(
+      "Where files outside the music directory are linked (copied on Windows) so MPD can play them over TCP. Empty uses <music_dir>/.music-tui-links.",
+    ),
     "behavior" => Some("Interactive behavior settings."),
-    "behavior.tick_ms" => Some("Status refresh interval while idle."),
-    "behavior.playing_tick_ms" => Some("Status refresh interval while playing."),
+    "behavior.tick_ms" => Some(
+      "Status poll interval (ms) while paused or stopped; MPD also pushes every change as it happens.",
+    ),
+    "behavior.playing_tick_ms" => {
+      Some("Status poll interval (ms) while playing: drives the progress band and synced lyrics.")
+    }
     "behavior.queue_dedup" => Some(
       "Duplicate handling: adding a song that is already queued is skipped, and the queue view hides extra copies of the same song (the first copy and the playing copy stay visible). The existing queue is never modified.",
     ),
@@ -31,17 +38,21 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "render.auto_detect" => Some("Detect terminal graphics capability automatically."),
     "render.chafa_args" => Some("Extra arguments passed to Chafa."),
     "render.chafa_threads" => Some("Threads requested per Chafa render job."),
-    "render.passthrough" => Some("Optional Chafa passthrough mode, such as tmux."),
-    "render.zellij_sixel" => Some("Zellij SIXEL handling mode."),
+    "render.passthrough" => Some(
+      "Graphics escape passthrough: tmux or screen, none to disable; unset detects the multiplexer.",
+    ),
+    "render.zellij_sixel" => Some("Allow Sixel images inside Zellij."),
     "visualizer" => Some("Spectrum visualizer settings."),
     "visualizer.fifo_path" => Some("MPD fifo output path feeding the visualizer."),
     "visualizer.sample_rate" => Some("Sample rate of the fifo audio_output format."),
     "visualizer.channels" => Some("Channel count of the fifo audio_output format."),
     "visualizer.bars" => Some(
-      "Maximum band count; the analysis follows the pane width (one band per column) up to this cap. Wider panes render equal-width bars with evenly spread gaps.",
+      "Maximum band count; the analysis follows the pane width (one band per column) up to this cap. Wider panes use equal-width, centered bars.",
     ),
     "visualizer.fps" => Some("Spectrum analysis updates per second."),
-    "visualizer.window" => Some("FFT window size in samples."),
+    "visualizer.window" => {
+      Some("FFT window size in samples (256-8192, rounded up to a power of two).")
+    }
     "lyrics" => Some("Lyrics loading settings."),
     "lyrics.extra_dirs" => {
       Some("Extra directories searched for `<song>.lrc` and `<artist> - <title>.lrc` files.")
@@ -49,15 +60,25 @@ pub fn config_comment(key: &str) -> Option<&'static str> {
     "lyrics.follow" => Some("Follow playback when synced lyrics are available."),
     "playlist" => Some("Playlist file handling (`:save`, `open` on .m3u/.pls/.txt files)."),
     "playlist.save_dir" => Some(
-      "Directory for `:save` exports; empty uses ~/.local/state/music-tui/playlists. Bare `:save` names resolve here.",
+      "Directory for `:save` exports; empty uses the playlists folder in the state directory (~/.local/state/music-tui/playlists on Linux). Bare `:save` names resolve here.",
+    ),
+    "library" => Some(
+      "Local library pane: music-tui scans these folders into its own database (they may differ from MPD's music directory).",
+    ),
+    "library.paths" => Some("Folders to index; empty disables the library."),
+    "library.recursive" => {
+      Some("Scan subfolders too. Folders containing a .nomedia file are skipped.")
+    }
+    "library.columns" => Some(
+      "Library table columns in order: field is title, artist, album, genre, filename or duration; width is a relative weight.",
     ),
     "layout" => Some(
-      "Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover:hovered, metadata:hovered)) with a main pane that receives its keys. cover/lyrics/metadata panes take an optional :playing/:hovered source suffix.",
+      "Tab layout. Each tab is a layout tree like H(2:1, queue, V(2:1, cover:hovered, metadata:hovered)) with a main pane that receives its keys. cover/lyrics/metadata panes take an optional :playing, :hovered or :library-hovered source suffix.",
     ),
     "layout.detail" => Some(
       "Secondary detail view (i) layout over the cover and metadata panes, e.g. H(2:1, cover, metadata).",
     ),
-    "layout.tabs" => Some("Tabs shown in the tab bar, switched with left/right."),
+    "layout.tabs" => Some("Tabs shown in the tab bar, in order."),
     _ => None,
   }
 }
@@ -120,11 +141,12 @@ fn push_toml_comment(out: &mut String, comment: &str) {
   }
 }
 
+/// Table name of a `[table]` or `[[array.of.tables]]` header line.
 fn toml_table_header(line: &str) -> Option<&str> {
-  if line.starts_with("[[") {
-    return None;
+  match line.strip_prefix("[[") {
+    Some(rest) => rest.strip_suffix("]]"),
+    None => line.strip_prefix('[')?.strip_suffix(']'),
   }
-  line.strip_prefix('[')?.strip_suffix(']')
 }
 
 fn toml_field_key(line: &str) -> Option<&str> {

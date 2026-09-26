@@ -1,31 +1,31 @@
 //! Application state and input handling.
 
-pub(crate) use std::{
+use std::{
   path::{Path, PathBuf},
+  sync::Arc,
   time::{Duration, Instant},
 };
 
-pub(crate) use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
-pub(crate) use framework_tui::{
+use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+use framework_tui::{
   CommandState, KeyBindings, KeyContext, KeyDispatcher, MatchResult, Prompt, PromptInputResult,
   key_event_to_token,
 };
-pub(crate) use mpd_client::commands::SingleMode;
-pub(crate) use mpd_client::responses::{Song, SongInQueue, Status};
-pub(crate) use ratatui::{
+use mpd_client::commands::SingleMode;
+use mpd_client::responses::{Song, SongInQueue, Status};
+use ratatui::{
   layout::Rect,
   widgets::{ListState, TableState},
 };
-pub(crate) use tokio::sync::mpsc;
-pub(crate) use tracing::debug;
+use tokio::sync::mpsc;
+use tracing::debug;
 
-pub(crate) use crate::{
+use crate::{
   config::{Settings, expand_home},
   cover,
   event::{
     AsyncEvent, CoverOutcome, LyricsOutcome, MetadataOutcome, MetadataWriteOutcome, MpdEvent,
   },
-  keymap::KeymapConfig,
   layout::{PaneKind, PaneLayout, PaneSource, TabLayout, parse_detail, parse_tabs},
   library::{resolve_music_dir, uri_to_path},
   lyrics::{self, Lyrics},
@@ -42,144 +42,162 @@ pub enum EditorRequest {
   },
 }
 
-/// Secondary detail view for a queue entry (the `i` key), in the spirit of
-pub(crate) mod actions;
-pub(crate) mod bindings;
-pub(crate) mod commands;
+mod actions;
+mod commands;
 mod detail;
-pub(crate) mod editor;
-pub(crate) mod input;
-pub(crate) mod labels;
-pub(crate) mod library;
-pub(crate) mod loading;
-pub(crate) mod mouse;
-pub(crate) mod outcomes;
-pub(crate) mod snapshot;
-pub(crate) mod viewport;
+mod editor;
+mod input;
+mod labels;
+mod library;
+mod loading;
+mod lyrics_view;
+mod mouse;
+mod outcomes;
+mod queue;
+mod snapshot;
+mod viewport;
 
-use crate::strip::StrippedText;
 pub use detail::SongView;
 pub(crate) use labels::{song_album, song_artist, song_title};
 pub(crate) use library::FilterTarget;
 
+/// Screen geometry recorded while drawing, for mouse hit-testing. Pane
+/// lists are rebuilt every frame (only panes visible on the active tab
+/// are hit-testable).
+#[derive(Debug, Default)]
+pub(crate) struct HitAreas {
+  /// Tab labels in the tab bar (click to switch).
+  pub tabs: Vec<Rect>,
+  /// Inner areas of queue panes (click to select, again to play).
+  pub queue_panes: Vec<Rect>,
+  /// Scrollbar tracks of queue panes (click / drag the viewport).
+  pub queue_bars: Vec<Rect>,
+  /// Data viewports of library panes (below the header row).
+  pub library_panes: Vec<Rect>,
+  pub library_bars: Vec<Rect>,
+  /// Inner areas of lyrics panes with the data source each one shows, so
+  /// clicks know whether a pane shows the hovered song (no seek) or the
+  /// playing song.
+  pub lyrics_panes: Vec<(Rect, PaneSource)>,
+  /// The bottom progress band (click / drag to seek).
+  pub progress_band: Option<Rect>,
+}
+
+impl HitAreas {
+  pub(crate) fn clear_panes(&mut self) {
+    self.queue_panes.clear();
+    self.queue_bars.clear();
+    self.library_panes.clear();
+    self.library_bars.clear();
+    self.lyrics_panes.clear();
+  }
+}
+
+/// What a held left button is dragging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drag {
+  QueueBar,
+  LibraryBar,
+  /// Scrubbing the progress band.
+  Band,
+}
+
 pub struct App {
-  pub settings: Settings,
-  pub mpd: MpdHandle,
-  pub events: mpsc::UnboundedSender<AsyncEvent>,
-  pub music_dir: Option<PathBuf>,
+  pub(crate) settings: Settings,
+  mpd: MpdHandle,
+  events: mpsc::UnboundedSender<AsyncEvent>,
+  pub(crate) music_dir: Option<PathBuf>,
 
   /// Parsed tab layouts from the config.
-  pub tabs: Vec<TabLayout>,
+  pub(crate) tabs: Vec<TabLayout>,
   /// Index of the active tab.
-  pub tab: usize,
+  pub(crate) tab: usize,
+  /// Layout tree for the secondary detail view (cover + metadata panes).
+  pub(crate) detail_layout: PaneLayout,
 
-  pub quit: bool,
-  pub message: Option<(String, Instant)>,
+  quit: bool,
+  message: Option<(String, Instant)>,
 
-  pub connected: Option<String>,
-  pub connection_error: Option<String>,
-  pub status: Option<Status>,
-  pub queue: Vec<SongInQueue>,
-  pub queue_state: ListState,
-  pub follow_current: bool,
-
-  pub prompt: Option<Prompt>,
-  pub command_state: CommandState,
-  pub show_help: bool,
-
-  pub lyrics: Option<crate::lyrics::Lyrics>,
-  pub lyrics_url: String,
-  pub lyrics_error: Option<String>,
-  pub lyrics_scroll: usize,
-  pub lyrics_follow: bool,
+  pub(crate) connected: Option<String>,
+  pub(crate) connection_error: Option<String>,
+  pub(crate) status: Option<Status>,
+  pub(crate) queue: Arc<[SongInQueue]>,
+  pub(crate) queue_state: ListState,
+  pub(crate) follow_current: bool,
   /// Queued selection restore from the persisted state, applied once the
-  /// first non-empty queue snapshot arrives.
-  pub pending_restore_selection: Option<usize>,
+  /// first queue snapshot arrives.
+  pending_restore_selection: Option<usize>,
   /// Active queue filter (case-insensitive substring over title / artist /
   /// album / url), entered via `/`.
-  pub queue_filter: Option<String>,
+  pub(crate) queue_filter: Option<String>,
   /// Hide duplicate queue entries (same URL keeps its first occurrence
   /// visible; the playing copy stays visible) — from [behavior] config.
-  pub queue_dedup: bool,
+  pub(crate) queue_dedup: bool,
   /// Queue positions matching the filter; selection indexes this list.
-  pub queue_filter_matches: Vec<usize>,
+  pub(crate) queue_filter_matches: Vec<usize>,
+  /// Volume to restore when unmuting.
+  pre_mute_volume: Option<u8>,
 
-  pub metadata_entries: Option<Vec<metadata::MetadataEntry>>,
-  pub metadata_url: String,
-  pub metadata_error: Option<String>,
-  pub metadata_scroll: usize,
-  pub editor_request: Option<EditorRequest>,
+  pub(crate) prompt: Option<Prompt>,
+  pub(crate) command_state: CommandState,
+  /// Which list `/` filters (queue or library).
+  filter_target: FilterTarget,
+  pub(crate) show_help: bool,
+  /// Scroll position of the f1 key-help dialog.
+  pub(crate) help_scroll: usize,
+  /// Maximum scroll of the key-help dialog, updated at draw time.
+  pub(crate) max_help_scroll: usize,
 
-  pub cover_path: Option<(String, PathBuf)>,
-  pub cover_dims: Option<(u32, u32)>,
-  pub cover_error: Option<String>,
-  /// Secondary detail view for the selected queue entry (`i`).
-  pub detail: Option<SongView>,
+  /// Data view for the playing song (`:playing` panes); `None` while
+  /// nothing plays or the song has no local file.
+  pub(crate) playing: Option<SongView>,
+  pub(crate) lyrics_follow: bool,
+  /// Selected lyric line while in manual scroll mode.
+  pub(crate) lyrics_cursor: Option<usize>,
+  editor_request: Option<EditorRequest>,
+  /// Secondary detail view for the selected queue/library entry (`i`).
+  pub(crate) detail: Option<SongView>,
   /// Data view for the hovered queue row (`:hovered` pane source).
-  pub hover: Option<SongView>,
+  hover: Option<SongView>,
+  /// Hover view fed by the library pane selection (`:library-hovered`).
+  library_hover: Option<SongView>,
   /// Whether any configured pane uses the hovered data source (gates the
   /// lazy loading in `sync_hover_view`).
-  pub(crate) has_hover_panes: bool,
+  has_hover_panes: bool,
   /// Some pane uses `:library-hovered`; enables the library hover view.
-  pub(crate) has_library_hover_panes: bool,
-  /// Library database state (see `library.rs`).
+  has_library_hover_panes: bool,
+
+  /// Library database state (see `library.rs`): every track, and the
+  /// visible rows (indices into `library`, filtered and ranked).
   pub(crate) library: Vec<crate::library_db::LibraryTrack>,
   pub(crate) library_rows: Vec<crate::library_db::TrackMatch>,
   pub(crate) library_filter: Option<String>,
+  /// Filter the current `library_rows` were computed for; a query that
+  /// extends it only needs to re-check those rows.
+  library_rows_query: String,
   pub(crate) library_state: TableState,
-  pub(crate) library_pane_areas: Vec<Rect>,
-  pub(crate) library_bar_areas: Vec<Rect>,
-  pub(crate) library_bar_dragging: bool,
   /// Scan progress while the scanner thread is running.
   pub(crate) library_scanning: Option<(usize, usize)>,
-  /// Hover view fed by the library pane selection (`:library-hovered`).
-  pub(crate) library_hover: Option<SongView>,
   /// Parsed `[library] columns` config.
   pub(crate) library_columns: Vec<crate::config::LibraryColumn>,
   /// Sender to the library scanner thread (rescan requests).
   pub(crate) library_scan_tx: Option<std::sync::mpsc::Sender<()>>,
-  /// Which list `/` filters (queue or library).
-  pub(crate) filter_target: FilterTarget,
-  /// Layout tree for the secondary detail view (cover + metadata panes).
-  pub(crate) detail_layout: PaneLayout,
+  /// A rescan was requested with `u` (announce when it finishes).
+  library_rescan_requested: bool,
+
   /// Visualizer worker handle (reports pane width for band allocation).
   pub(crate) visualizer: Option<crate::visualizer::VisualizerHandle>,
   /// Off-thread band renderer; layout + styled lines happen on a worker.
-  pub(crate) visualizer_renderer: Option<crate::visualizer::BandRendererHandle>,
+  visualizer_renderer: Option<crate::visualizer::BandRendererHandle>,
   /// Last visualizer pane size seen while drawing.
-  pub(crate) visualizer_geometry: Option<(u16, u16)>,
+  visualizer_geometry: Option<(u16, u16)>,
   /// Latest precomputed visualizer lines ready to blit.
   pub(crate) visualizer_lines: Option<Vec<ratatui::text::Line<'static>>>,
-  /// Scroll position of the f1 key-help dialog.
-  pub help_scroll: usize,
-  /// Maximum scroll of the key-help dialog, updated at draw time.
-  pub max_help_scroll: usize,
-  /// Inner screen areas of lyrics panes in the current tab, recorded at
-  /// draw time so clicks can be mapped to lyric lines.
-  pub lyrics_pane_areas: Vec<Rect>,
-  /// Data source of each recorded lyrics pane (parallel to
-  /// `lyrics_pane_areas`), so mouse handlers know whether a pane shows the
-  /// hovered song (no seek) or the playing song.
-  pub lyrics_pane_sources: Vec<PaneSource>,
-  /// Screen areas of visible queue panes, recorded at draw time for mouse
-  /// hit-testing (click to select, click again to play, wheel to move).
-  pub queue_pane_areas: Vec<Rect>,
-  /// Scrollbar track rectangles of queue panes (viewport dragging).
-  pub queue_bar_areas: Vec<Rect>,
-  /// True while the left button is held on a queue scrollbar.
-  pub queue_bar_dragging: bool,
-  /// Tab label rectangles in the tab bar, recorded at draw time so mouse
-  /// clicks can switch tabs directly.
-  pub tab_hit_areas: Vec<Rect>,
-  /// Selected lyric line while in manual scroll mode.
-  pub lyrics_cursor: Option<usize>,
+  spectrum: Vec<u8>,
 
-  pub spectrum: Vec<u8>,
-
-  /// Screen area of the bottom progress band, recorded at draw time for
-  /// mouse hit-testing (click / drag to seek).
-  pub progress_band_area: Option<Rect>,
-  band_scrubbing: bool,
+  /// Geometry recorded at draw time for mouse hit tests.
+  pub(crate) hit: HitAreas,
+  drag: Option<Drag>,
 
   pub(crate) dispatcher: KeyDispatcher,
   /// Bindings per pane kind, indexed by `PaneKind::index`.
@@ -212,77 +230,70 @@ impl App {
       eprintln!("invalid detail layout ({error}); using default");
       parse_detail(crate::layout::DEFAULT_DETAIL_LAYOUT).expect("default detail layout")
     });
-    let view_bindings = bindings::build_bindings(&settings.keymap);
-    let input_bindings = bindings::build_input_bindings(&settings.keymap);
+    let view_bindings = PaneKind::ALL
+      .iter()
+      .map(|pane| settings.keymap.pane_bindings(*pane))
+      .collect();
+    let input_bindings = settings.keymap.input_only_bindings();
     let help_bindings = settings.keymap.help_bindings();
+    let has_hover_panes = tabs
+      .iter()
+      .any(|tab| tab.layout.has_source(PaneSource::QueueHovered));
+    let has_library_hover_panes = tabs
+      .iter()
+      .any(|tab| tab.layout.has_source(PaneSource::LibraryHovered));
     let mut app = Self {
       mpd,
-      events: events.clone(),
+      events,
       music_dir,
       tabs,
-      detail_layout,
       tab: 0,
+      detail_layout,
       settings,
       quit: false,
       message: initial_notice.map(|notice| (notice, Instant::now())),
       connected: None,
       connection_error: None,
       status: None,
-      queue: Vec::new(),
+      queue: Arc::default(),
       queue_state: ListState::default(),
       follow_current: true,
-      prompt: None,
-      command_state: CommandState::default(),
-      show_help: false,
-      lyrics: None,
-      lyrics_url: String::new(),
-      lyrics_error: None,
-      lyrics_scroll: 0,
-      lyrics_follow,
       pending_restore_selection: None,
       queue_filter: None,
       queue_dedup,
       queue_filter_matches: Vec::new(),
-      metadata_entries: None,
-      metadata_url: String::new(),
-      metadata_error: None,
-      metadata_scroll: 0,
+      pre_mute_volume: None,
+      prompt: None,
+      command_state: CommandState::default(),
+      filter_target: FilterTarget::Queue,
+      show_help: false,
+      help_scroll: 0,
+      max_help_scroll: 0,
+      playing: None,
+      lyrics_follow,
+      lyrics_cursor: None,
       editor_request: None,
-      cover_path: None,
-      cover_dims: None,
-      cover_error: None,
       detail: None,
       hover: None,
-      has_hover_panes: false,
-      has_library_hover_panes: false,
+      library_hover: None,
+      has_hover_panes,
+      has_library_hover_panes,
       library: Vec::new(),
       library_rows: Vec::new(),
       library_filter: None,
+      library_rows_query: String::new(),
       library_state: TableState::default(),
-      library_pane_areas: Vec::new(),
-      library_bar_areas: Vec::new(),
-      library_bar_dragging: false,
       library_scanning: None,
-      library_hover: None,
       library_columns,
       library_scan_tx: None,
-      filter_target: FilterTarget::Queue,
+      library_rescan_requested: false,
       visualizer: None,
       visualizer_renderer: None,
       visualizer_geometry: None,
       visualizer_lines: None,
-      help_scroll: 0,
-      max_help_scroll: 0,
-      lyrics_pane_areas: Vec::new(),
-      lyrics_pane_sources: Vec::new(),
-      queue_pane_areas: Vec::new(),
-      queue_bar_areas: Vec::new(),
-      queue_bar_dragging: false,
-      tab_hit_areas: Vec::new(),
-      lyrics_cursor: None,
       spectrum: Vec::new(),
-      progress_band_area: None,
-      band_scrubbing: false,
+      hit: HitAreas::default(),
+      drag: None,
       dispatcher: KeyDispatcher::default(),
       view_bindings,
       input_bindings,
@@ -290,16 +301,20 @@ impl App {
     };
     app.queue_state.select(Some(0));
     app.library_state.select(Some(0));
-    app.has_hover_panes = app
-      .tabs
-      .iter()
-      .any(|tab| tab.layout.has_source(PaneSource::QueueHovered));
-    app.has_library_hover_panes = app
-      .tabs
-      .iter()
-      .any(|tab| tab.layout.has_source(PaneSource::LibraryHovered));
     app.sync_hover_view();
     app
+  }
+
+  /// Attach the optional background workers spawned next to the app.
+  pub fn attach_workers(
+    &mut self,
+    visualizer: Option<crate::visualizer::VisualizerHandle>,
+    visualizer_renderer: Option<crate::visualizer::BandRendererHandle>,
+    library_scan_tx: Option<std::sync::mpsc::Sender<()>>,
+  ) {
+    self.visualizer = visualizer;
+    self.visualizer_renderer = visualizer_renderer;
+    self.library_scan_tx = library_scan_tx;
   }
 
   pub fn should_quit(&self) -> bool {
@@ -313,6 +328,24 @@ impl App {
 
   pub fn message_text(&self) -> Option<&str> {
     self.message.as_ref().map(|(text, _)| text.as_str())
+  }
+
+  /// When the footer message expires (drives the main loop's timer).
+  pub fn message_deadline(&self) -> Option<Instant> {
+    self.message.as_ref().map(|(_, at)| *at + MESSAGE_TTL)
+  }
+
+  /// Drop the footer message once it has been shown long enough; returns
+  /// whether the screen changed.
+  pub fn expire_message(&mut self, now: Instant) -> bool {
+    if self
+      .message_deadline()
+      .is_some_and(|deadline| deadline <= now)
+    {
+      self.message = None;
+      return true;
+    }
+    false
   }
 
   pub fn take_editor_request(&mut self) -> Option<EditorRequest> {
@@ -345,6 +378,12 @@ impl App {
     self.current_tab().layout.contains(kind)
   }
 
+  /// Is a pane of this kind on screen right now? The detail view replaces
+  /// the tab content while it is open.
+  pub(crate) fn pane_visible(&self, kind: PaneKind) -> bool {
+    self.detail.is_none() && self.tab_contains(kind)
+  }
+
   fn cycle_tab(&mut self, delta: i32) -> bool {
     if self.tabs.len() < 2 {
       return false;
@@ -366,28 +405,28 @@ impl App {
   // --- current song helpers ---------------------------------------------------
 
   pub fn current_song(&self) -> Option<&SongInQueue> {
-    let status = self.status.as_ref()?;
-    let (position, _) = status.current_song?;
-    self.queue.get(position.0)
+    self.queue.get(self.playing_position()?)
   }
 
-  /// The hover-view backing a pane source: queue rows feed
-  /// `QueueHovered`, library rows feed `LibraryHovered`.
-  pub(crate) fn hover_view(&self, source: PaneSource) -> Option<&SongView> {
+  /// The data view backing a pane source.
+  pub(crate) fn song_view(&self, source: PaneSource) -> Option<&SongView> {
     match source {
+      PaneSource::Playing => self.playing.as_ref(),
       PaneSource::QueueHovered => self.hover.as_ref(),
       PaneSource::LibraryHovered => self.library_hover.as_ref(),
-      PaneSource::Playing => None,
+    }
+  }
+
+  fn song_view_mut(&mut self, source: PaneSource) -> Option<&mut SongView> {
+    match source {
+      PaneSource::Playing => self.playing.as_mut(),
+      PaneSource::QueueHovered => self.hover.as_mut(),
+      PaneSource::LibraryHovered => self.library_hover.as_mut(),
     }
   }
 
   pub fn current_song_url(&self) -> Option<String> {
     self.current_song().map(|song| song.song.url.to_string())
-  }
-
-  pub fn current_song_path(&self) -> Option<PathBuf> {
-    let url = self.current_song_url()?;
-    uri_to_path(self.music_dir.as_deref(), &url)
   }
 
   pub fn elapsed(&self) -> f64 {
@@ -408,16 +447,6 @@ impl App {
       .map(|d| d.as_secs_f64())
   }
 
-  // --- event application -------------------------------------------------
-
-  pub(crate) fn active_lyrics_index(&self) -> Option<usize> {
-    self
-      .lyrics
-      .as_ref()
-      .and_then(|lyrics| lyrics.active_index(Duration::from_secs_f64(self.elapsed())))
-  }
-
-  /// Seek to the playback position under a screen column of the progress band.
   fn toggle_flag(&self, flag: &str) -> bool {
     let status = self.status.as_ref();
     let current = match flag {
@@ -440,130 +469,77 @@ impl App {
     self.mpd.send(command);
   }
 
-  fn move_selection(&mut self, delta: i32) -> bool {
-    let len = self.visible_len();
-    if len == 0 {
-      return false;
+  /// Mute, or restore the volume from before muting.
+  fn toggle_mute(&mut self) {
+    let volume = self.status.as_ref().map(|status| status.volume);
+    if volume == Some(0) {
+      let restore = self.pre_mute_volume.take().filter(|volume| *volume > 0);
+      self.mpdc(MpdCommand::SetVolume(restore.unwrap_or(50)));
+    } else {
+      self.pre_mute_volume = volume;
+      self.mpdc(MpdCommand::SetVolume(0));
     }
-    let next =
-      (self.queue_state.selected().unwrap_or(0) as i32 + delta).clamp(0, len as i32 - 1) as usize;
-    self.queue_state.select(Some(next));
-    self.sync_hover_view();
-    true
-  }
-
-  /// Flip the queue viewport one full page; the selection follows
-  /// passively (same model as the mouse wheel).
-  fn queue_page(&mut self, direction: i32) -> bool {
-    let height = self.queue_viewport_height() as i32;
-    self.scroll_queue_viewport(direction * height.max(1))
   }
 
   /// Scroll whichever metadata surface is active: the detail view when
-  /// open, otherwise the playing-song metadata pane.
+  /// open, otherwise the main pane's source view.
   fn scroll_metadata_by(&mut self, delta: i32) {
-    if let Some(detail) = self.detail.as_mut() {
-      detail.metadata_scroll = if delta < 0 {
-        detail
-          .metadata_scroll
-          .saturating_sub(delta.unsigned_abs() as usize)
-      } else {
-        detail.metadata_scroll.saturating_add(delta as usize)
-      };
-    } else if self.main_pane() == PaneKind::Metadata
-      && matches!(
-        self.main_pane_source(),
-        PaneSource::QueueHovered | PaneSource::LibraryHovered
-      )
-      && let Some(hover) = self.hover.as_mut()
-    {
-      hover.metadata_scroll = if delta < 0 {
-        hover
-          .metadata_scroll
-          .saturating_sub(delta.unsigned_abs() as usize)
-      } else {
-        hover.metadata_scroll.saturating_add(delta as usize)
-      };
-    } else if delta < 0 {
-      self.metadata_scroll = self
-        .metadata_scroll
-        .saturating_sub(delta.unsigned_abs() as usize);
+    let view = if self.detail.is_some() {
+      self.detail.as_mut()
     } else {
-      self.metadata_scroll = self.metadata_scroll.saturating_add(delta as usize);
-    }
-  }
-
-  /// Whether the active tab's main lyrics pane reads the hovered song.
-  fn hover_lyrics_active(&self) -> bool {
-    self.main_pane() == PaneKind::Lyrics
-      && matches!(
-        self.main_pane_source(),
-        PaneSource::QueueHovered | PaneSource::LibraryHovered
-      )
-  }
-
-  /// Scroll the hovered song's lyrics (plain list — no playback state).
-  fn scroll_hover_lyrics(&mut self, delta: i32) {
-    // Scroll whichever hover view the visible hovered lyrics pane shows.
-    let source = self
-      .lyrics_pane_sources
-      .iter()
-      .find(|source| {
-        matches!(
-          source,
-          PaneSource::QueueHovered | PaneSource::LibraryHovered
-        )
-      })
-      .copied();
-    let hover = match source {
-      Some(PaneSource::LibraryHovered) => self.library_hover.as_mut(),
-      _ => self.hover.as_mut(),
+      let source = if self.main_pane() == PaneKind::Metadata {
+        self.main_pane_source()
+      } else {
+        PaneSource::Playing
+      };
+      self.song_view_mut(source)
     };
-    let Some(hover) = hover else { return };
-    let line_count = hover.lyrics.as_ref().map(Lyrics::line_count).unwrap_or(0);
-    if line_count == 0 {
-      return;
+    if let Some(view) = view {
+      view.metadata_scroll = view.metadata_scroll.saturating_add_signed(delta as isize);
     }
-    let height = usize::from(
-      self
-        .lyrics_pane_areas
-        .iter()
-        .map(|area| area.height)
-        .max()
-        .unwrap_or(1)
-        .max(1),
-    );
-    let max_scroll = line_count.saturating_sub(height);
-    hover.lyrics_scroll = if delta < 0 {
-      hover
-        .lyrics_scroll
-        .saturating_sub(delta.unsigned_abs() as usize)
-    } else {
-      (hover.lyrics_scroll + delta as usize).min(max_scroll)
-    };
   }
 
   /// Binding tables for the current tab as a priority queue: the main
   /// pane first, then the tab's other panes in layout order (dedup).
   /// Key dispatch walks this queue, so keys the main pane does not claim
   /// fall through to neighboring panes in the same tab.
-  pub(crate) fn pane_binding_indices(&self) -> Vec<usize> {
+  pub(crate) fn pane_bindings(&self) -> Vec<&KeyBindings> {
     let main = self.main_pane();
     let mut panes = self.current_tab().layout.pane_kinds();
     panes.sort_by_key(|pane| (*pane != main) as u8);
     panes.dedup();
-    panes.into_iter().map(|pane| pane.index()).collect()
-  }
-
-  /// The priority queue itself (references into `view_bindings`).
-  pub(crate) fn pane_bindings(&self) -> Vec<&KeyBindings> {
-    self
-      .pane_binding_indices()
+    panes
       .into_iter()
-      .map(|index| self.view_bindings.get(index).expect("bindings for pane"))
+      .filter_map(|pane| self.view_bindings.get(pane.index()))
       .collect()
   }
 }
+
+impl App {
+  /// Capture the current UI state for persistence.
+  pub fn snapshot_state(&self) -> crate::state::PersistedState {
+    crate::state::PersistedState {
+      tab: self.tab,
+      lyrics_follow: Some(self.lyrics_follow),
+      queue_selected: self.queue_state.selected(),
+    }
+  }
+
+  /// Apply a previously persisted state (called once at startup).
+  pub fn restore_state(&mut self, state: crate::state::PersistedState) {
+    if !self.tabs.is_empty() {
+      self.tab = state.tab.min(self.tabs.len() - 1);
+    }
+    if let Some(follow) = state.lyrics_follow {
+      self.lyrics_follow = follow;
+    }
+    self.pending_restore_selection = state.queue_selected;
+  }
+}
+
+/// How long a footer message stays visible.
+const MESSAGE_TTL: Duration = Duration::from_secs(4);
+
 /// `mm:ss` for footer/seek messages.
 pub(crate) fn format_time(secs: f64) -> String {
   let total = secs.max(0.0) as u64;

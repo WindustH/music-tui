@@ -2,22 +2,20 @@
 
 use super::*;
 
-fn hint_rows_for(hints: &[framework_tui::KeyHint], width: u16) -> u16 {
-  if hints.is_empty() {
-    return 0;
-  }
-  key_hint_rows(hints.len(), key_hint_columns(3, width)) as u16
-}
-
+/// Footer: which-key hints (`hint_rows` lines laid out in `hint_columns`
+/// columns, as sized by the caller), status line, prompt/message line and
+/// the progress band.
 pub(super) fn draw_footer(
   frame: &mut Frame,
   app: &mut App,
   area: Rect,
   hints: &[framework_tui::KeyHint],
+  hint_rows: u16,
+  hint_columns: usize,
 ) -> Option<(u16, u16)> {
   let theme = &app.settings.theme;
   let [hints_area, status_line, input_line, band_line] = Layout::vertical([
-    Constraint::Length(hint_rows_for(hints, area.width)),
+    Constraint::Length(hint_rows),
     Constraint::Length(1),
     Constraint::Length(1),
     Constraint::Length(1),
@@ -26,7 +24,7 @@ pub(super) fn draw_footer(
 
   // --- which-key hints (pending key sequences) ---
   if !hints.is_empty() {
-    let background = theme.overlay_background();
+    let background = theme.which_key_background();
     draw_key_hints(
       frame,
       hints,
@@ -46,7 +44,7 @@ pub(super) fn draw_footer(
           .fg(theme.color(&theme.which_key.description))
           .bg(background),
         separator_text: theme.which_key.separator.clone(),
-        columns: key_hint_columns(usize::from(theme.which_key.columns), area.width),
+        columns: hint_columns,
       },
     );
   }
@@ -138,7 +136,7 @@ pub(super) fn draw_footer(
     frame.render_widget(
       Paragraph::new(Line::from(Span::styled(
         format!(" {message}"),
-        Style::default().fg(theme.color(&theme.base.accent_alt)),
+        Style::default().fg(theme.color(&theme.footer.message)),
       ))),
       input_line,
     );
@@ -155,7 +153,7 @@ pub(super) fn draw_footer(
 /// Full-width progress band pinned to the bottom of the interface.
 /// Clicking or dragging it seeks (hit-tested in `App::handle_mouse`).
 fn draw_progress_band(frame: &mut Frame, app: &mut App, area: Rect) {
-  app.progress_band_area = (area.width > 0).then_some(area);
+  app.hit.progress_band = (area.width > 0).then_some(area);
   let theme = &app.settings.theme;
   let filled = theme.color(&theme.progress.bar);
   let rest = theme.color(&theme.progress.background);
