@@ -176,6 +176,15 @@ impl ThemeConfig {
     }
   }
 
+  /// Background of the which-key hint bar: `which_key.background` when set
+  /// to a color, else the overlay background.
+  pub fn which_key_background(&self) -> ratatui::style::Color {
+    match self.color(&self.which_key.background) {
+      ratatui::style::Color::Reset => self.overlay_background(),
+      color => color,
+    }
+  }
+
   pub fn overlay_background(&self) -> ratatui::style::Color {
     let base_bg = self.base_background();
     if base_bg != ratatui::style::Color::Reset {
@@ -191,38 +200,31 @@ impl ThemeConfig {
   }
 }
 
+/// music-tui's own names first (`white` is the normal-intensity white,
+/// `bright white` the bold one), then ratatui's parser, which also accepts
+/// spellings such as `light_cyan`, `dark-gray`, indexed colors (`208`)
+/// and `#rrggbb`.
 fn parse_color(name: &str) -> Option<ratatui::style::Color> {
+  use ratatui::style::Color;
   let color = match name.trim().to_ascii_lowercase().as_str() {
-    "default" | "reset" => ratatui::style::Color::Reset,
-    "black" => ratatui::style::Color::Black,
-    "red" => ratatui::style::Color::Red,
-    "green" => ratatui::style::Color::Green,
-    "yellow" => ratatui::style::Color::Yellow,
-    "blue" => ratatui::style::Color::Blue,
-    "magenta" => ratatui::style::Color::Magenta,
-    "cyan" => ratatui::style::Color::Cyan,
-    "gray" | "grey" | "white" => ratatui::style::Color::Gray,
-    "dark gray" | "dark grey" | "bright black" => ratatui::style::Color::DarkGray,
-    "bright red" => ratatui::style::Color::LightRed,
-    "bright green" => ratatui::style::Color::LightGreen,
-    "bright yellow" => ratatui::style::Color::LightYellow,
-    "bright blue" => ratatui::style::Color::LightBlue,
-    "bright magenta" => ratatui::style::Color::LightMagenta,
-    "bright cyan" => ratatui::style::Color::LightCyan,
-    "bright white" => ratatui::style::Color::White,
-    _ => {
-      if let Some(hex) = name.trim().strip_prefix('#')
-        && hex.len() == 6
-        && let Ok(value) = u32::from_str_radix(hex, 16)
-      {
-        return Some(ratatui::style::Color::Rgb(
-          ((value >> 16) & 0xff) as u8,
-          ((value >> 8) & 0xff) as u8,
-          (value & 0xff) as u8,
-        ));
-      }
-      return None;
-    }
+    "default" | "reset" => Color::Reset,
+    "black" => Color::Black,
+    "red" => Color::Red,
+    "green" => Color::Green,
+    "yellow" => Color::Yellow,
+    "blue" => Color::Blue,
+    "magenta" => Color::Magenta,
+    "cyan" => Color::Cyan,
+    "gray" | "grey" | "white" => Color::Gray,
+    "dark gray" | "dark grey" | "bright black" => Color::DarkGray,
+    "bright red" => Color::LightRed,
+    "bright green" => Color::LightGreen,
+    "bright yellow" => Color::LightYellow,
+    "bright blue" => Color::LightBlue,
+    "bright magenta" => Color::LightMagenta,
+    "bright cyan" => Color::LightCyan,
+    "bright white" => Color::White,
+    other => return other.parse().ok(),
   };
   Some(color)
 }
@@ -237,7 +239,7 @@ const THEME_HEADER: &str = "\
 const SECTION_COMMENTS: &[(&str, &str)] = &[
   (
     "base",
-    "# Shared colors: default text, pane borders, dimmed text,\n# accents, and the secondary accent (artist/genre fields, notices).\n",
+    "# Shared colors: default text, background (painted only with\n# render_background = true), pane borders, dimmed text, and the accent\n# for focused titles and prompts (accent_alt is currently unused).\n",
   ),
   (
     "tab_bar",
@@ -253,7 +255,7 @@ const SECTION_COMMENTS: &[(&str, &str)] = &[
   ),
   (
     "footer",
-    "# Footer status line: the play-state icon, the song title while\n# stopped, and transient messages.\n",
+    "# Footer status line: the play-state icon (stopped also colors the\n# offline notice) and transient messages.\n",
   ),
   (
     "progress",
@@ -270,7 +272,7 @@ const SECTION_COMMENTS: &[(&str, &str)] = &[
   ),
   (
     "which_key",
-    "# Which-key hint bar (pending key sequences). `separator` is the\n# text between key and description; `columns` wraps hints when the\n# bar gets crowded.\n",
+    "# Which-key hint bar (pending key sequences). `background` = \"reset\"\n# uses the overlay background; `separator` is the text between key and\n# description; `columns` wraps hints when the bar gets crowded.\n",
   ),
 ];
 
@@ -293,4 +295,38 @@ pub(crate) fn format_theme_toml(theme: &ThemeConfig) -> String {
     out.push('\n');
   }
   out
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use ratatui::style::Color;
+
+  #[test]
+  fn default_theme_colors_all_parse() {
+    let theme = ThemeConfig::default();
+    let which_key = &theme.which_key;
+    for name in [
+      &which_key.foreground,
+      &which_key.key,
+      &which_key.description,
+      &which_key.separator_color,
+      &which_key.background,
+    ] {
+      assert!(parse_color(name).is_some(), "{name:?} must parse");
+    }
+    assert_eq!(theme.color(&which_key.key), Color::LightCyan);
+    assert_eq!(theme.color(&which_key.separator_color), Color::DarkGray);
+  }
+
+  #[test]
+  fn color_names_keep_their_meaning() {
+    assert_eq!(parse_color("white"), Some(Color::Gray));
+    assert_eq!(parse_color("bright white"), Some(Color::White));
+    assert_eq!(parse_color("Bright Black"), Some(Color::DarkGray));
+    assert_eq!(parse_color("#ff8000"), Some(Color::Rgb(255, 128, 0)));
+    assert_eq!(parse_color("208"), Some(Color::Indexed(208)));
+    assert_eq!(parse_color("light-magenta"), Some(Color::LightMagenta));
+    assert_eq!(parse_color("no such color"), None);
+  }
 }

@@ -1,35 +1,44 @@
 # Cover Rendering
 
-Cover art is looked up per song (embedded pictures first, then sibling
-files like `cover.*`, `folder.*`, `front.*`, a file named like the track,
-and finally any image in the same folder) and rendered
-aspect-correct and centered via [img-tui](https://github.com/WindustH/img-tui).
+## Where covers come from
 
-## Protocol selection
+For each song, music-tui uses the first of:
 
-On startup music-tui probes the terminal and picks the first working mode:
+1. a picture embedded in the file (extracted into the cover cache);
+2. `cover`, `folder`, `front`, `albumart`, or `album` with a `png`, `jpg`,
+   `jpeg`, `webp`, `bmp`, or `gif` extension next to the file;
+3. an image named like the audio file (`song.jpg` for `song.flac`);
+4. the alphabetically first image in the same folder.
 
-1. **Kitty graphics protocol** — transmitted as escape sequences; placements
-   are erased/redrawn on layout changes. Under Zellij 0.45+, KGP is selected
-   only when Zellij's protocol query confirms that it and the host terminal
-   support it. Regular Kitty placements are used because Zellij does not
-   currently support Kitty Unicode placeholders.
-2. **Sixel** — including inside Zellij with `render.zellij_sixel = true`.
-3. **iTerm2 inline images** — also used by some WezTerm/mintty setups.
-4. **Chafa symbols** — half-block symbol art via the `chafa` binary; colors
-   and symbols follow `render.chafa_args`.
-5. **ASCII** — Chafa with `--colors=none --symbols=ascii`, for the most
-   constrained terminals.
+Covers are drawn aspect-correct and centered via
+[img-tui](https://github.com/WindustH/img-tui).
 
-Set `MUSIC_TUI_RENDER_MODES` (comma-separated: `kitty,sixel,iterm,symbols,ascii`)
-to override the detection order.
+## Render modes
 
-`render.zellij_sixel` controls only Sixel. Kitty remains automatically enabled
-when Zellij confirms KGP support; older or KGP-disabled Zellij sessions fall
-back to the remaining modes.
+At startup music-tui probes the terminal and uses the first mode that
+works:
+
+1. **Kitty graphics protocol** — inside Zellij 0.45+ only when Zellij's
+   protocol query confirms support (plain Kitty placements, since Zellij
+   has no Unicode-placeholder support).
+2. **Sixel** — inside Zellij only with `render.zellij_sixel = true`.
+3. **iTerm2 inline images** — iTerm2, WezTerm, some mintty setups.
+4. **Symbols** — colored character art drawn by the `chafa` binary
+   (options from `render.chafa_args`).
+5. **ASCII** — `chafa` with plain ASCII, for the most limited terminals.
+
+With `render.auto_detect = false`, only the character-art modes are used.
+
+The `GALLERY_TUI_RENDER_MODES` environment variable (read by img-tui)
+overrides the order: a comma-separated list of `kitty`, `sixel`, `iterm`,
+`symbols`, `ascii` (or `auto`). Inside tmux or GNU screen, image escapes are
+wrapped for the multiplexer automatically; `render.passthrough` (`tmux`,
+`screen`, or `none`) overrides the detection.
 
 ## Cache
 
-Extracted covers are cached under `~/.cache/music-tui/covers/` keyed by a
-hash of the picture bytes; renders are kept in a small in-memory LRU keyed by
-path + size + mode, so pane resizes re-render only what changed.
+Extracted embedded covers are stored in the `covers/` folder of the cache
+directory (`~/.cache/music-tui/covers/`), named by a hash of the picture;
+it is safe to delete. Rendered covers are kept in memory for the last few
+path/size combinations, so switching tabs or songs back and forth does not
+re-render.

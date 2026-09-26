@@ -12,7 +12,9 @@ pub const MAX_LRC_BYTES: usize = 512 * 1024;
 pub const MAX_LRC_LINES: usize = 2000;
 
 pub fn parse(body: &str) -> Result<Lyrics, String> {
-  let mut body = body;
+  // Editors on Windows often save LRC files with a UTF-8 byte-order mark;
+  // left in place it hides the first line's timestamp.
+  let mut body = body.strip_prefix('\u{feff}').unwrap_or(body);
   if body.len() > MAX_LRC_BYTES {
     let mut end = MAX_LRC_BYTES;
     while !body.is_char_boundary(end) {
@@ -23,6 +25,7 @@ pub fn parse(body: &str) -> Result<Lyrics, String> {
   }
   let mut timed: Vec<SyncedLine> = Vec::new();
   let mut plain: Vec<String> = Vec::new();
+  let mut offset_secs = 0.0;
 
   let mut lines = body.lines();
   for raw_line in lines.by_ref().take(MAX_LRC_LINES) {
@@ -44,7 +47,10 @@ pub fn parse(body: &str) -> Result<Lyrics, String> {
           }
         }
       }
-      ParsedLine::Untimed => plain.push(line.to_string()),
+      ParsedLine::Untimed => match parse_offset_tag(&line) {
+        Some(offset) => offset_secs = offset,
+        None => plain.push(line.to_string()),
+      },
     }
   }
 
@@ -64,6 +70,9 @@ pub fn parse(body: &str) -> Result<Lyrics, String> {
     ));
   }
 
+  if offset_secs != 0.0 {
+    apply_offset(&mut timed, offset_secs);
+  }
   timed.sort_by(|left, right| {
     left
       .time_secs
@@ -186,6 +195,23 @@ fn parse_lrc_line(line: &str) -> ParsedLine {
   }
 }
 
+/// `[offset:±ms]`: a positive offset makes the lyrics appear sooner.
+fn parse_offset_tag(line: &str) -> Option<f64> {
+  let value = line.trim().strip_prefix("[offset:")?.strip_suffix(']')?;
+  let millis: i64 = value.trim().parse().ok()?;
+  Some(millis as f64 / 1000.0)
+}
+
+fn apply_offset(lines: &mut [SyncedLine], offset_secs: f64) {
+  let shift = |time: f64| (time - offset_secs).clamp(0.0, MAX_LRC_SECS);
+  for line in lines {
+    line.time_secs = shift(line.time_secs);
+    for word in line.words.iter_mut().flatten() {
+      word.start_secs = shift(word.start_secs);
+    }
+  }
+}
+
 /// Upper bound for a sane LRC timestamp (hours). Anything beyond it is a
 /// corrupt/hostile file rather than a real position, so it is rejected
 /// instead of producing an infinite or overflowing duration downstream.
@@ -194,7 +220,14 @@ const MAX_LRC_SECS: f64 = 24.0 * 60.0 * 60.0;
 fn parse_lrc_timestamp(stamp: &str) -> Option<f64> {
   let (minutes, seconds) = stamp.split_once(':')?;
   let minutes: f64 = minutes.trim().parse().ok()?;
-  let seconds: f64 = seconds.trim().parse().ok()?;
+  let seconds = seconds.trim();
+  // Some exporters write hundredths after a second colon (`mm:ss:xx`).
+  let seconds: f64 = match seconds.split_once(':') {
+    Some((whole, fraction)) if fraction.bytes().all(|byte| byte.is_ascii_digit()) => {
+      format!("{whole}.{fraction}").parse().ok()?
+    }
+    _ => seconds.parse().ok()?,
+  };
   let value = minutes * 60.0 + seconds;
   if !value.is_finite() || !(0.0..=MAX_LRC_SECS).contains(&value) {
     return None;
@@ -233,6 +266,43 @@ mod tests {
     let body = "[00:01.00]one\n[00:02.00]two\n";
     let lyrics = parse(body).unwrap();
     assert_eq!(lyrics.line_count(), 2);
+  }
+
+  #[test]
+  fn byte_order_mark_keeps_the_first_line() {
+    let lyrics = parse("\u{feff}[00:00.50]first\n[00:01.00]second\n").unwrap();
+    assert_eq!(lyrics.line_count(), 2);
+    assert_eq!(lyrics.line(0), Some("first"));
+  }
+
+  #[test]
+  fn offset_tag_shifts_every_timestamp() {
+    let lyrics = parse("[offset:+500]\n[00:01.00]<00:01.00>a <00:02.00>b\n[00:03.00]c\n").unwrap();
+    let Lyrics::Synced(lines) = &lyrics else {
+      panic!("expected synced lyrics");
+    };
+    assert_eq!(lines[0].time_secs, 0.5);
+    assert_eq!(lines[0].words.as_ref().unwrap()[1].start_secs, 1.5);
+    assert_eq!(lines[1].time_secs, 2.5);
+    assert_eq!(lines[0].end_secs, 2.5, "end times follow the shifted lines");
+
+    let later = parse("[offset:-1000]\n[00:01.00]a\n").unwrap();
+    let Lyrics::Synced(lines) = &later else {
+      panic!("expected synced lyrics");
+    };
+    assert_eq!(lines[0].time_secs, 2.0);
+  }
+
+  #[test]
+  fn colon_separated_hundredths_parse() {
+    let lyrics = parse("[00:12:34]line\n").unwrap();
+    let Lyrics::Synced(lines) = &lyrics else {
+      panic!("expected synced lyrics");
+    };
+    assert!((lines[0].time_secs - 12.34).abs() < 1e-9);
+    // Metadata tags still do not parse as timestamps.
+    assert!(parse_lrc_timestamp("ar:Artist").is_none());
+    assert!(parse_lrc_timestamp("00:12:3x").is_none());
   }
 
   #[test]

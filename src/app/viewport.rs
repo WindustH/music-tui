@@ -117,14 +117,19 @@ pub(crate) fn scroll_viewport<S: PaneState>(
   set_viewport(state, len, height, next)
 }
 
-/// First pane area containing the pointer (row AND column).
+/// Whether the pointer lies inside `area` (row AND column).
+pub(crate) fn contains(area: Rect, mouse: MouseEvent) -> bool {
+  area.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+}
+
+/// First pane area containing the pointer.
 pub(crate) fn hit_pane(areas: &[Rect], mouse: MouseEvent) -> Option<Rect> {
-  areas.iter().copied().find(|area| {
-    mouse.row >= area.y
-      && mouse.row < area.y + area.height
-      && mouse.column >= area.x
-      && mouse.column < area.x + area.width
-  })
+  areas.iter().copied().find(|area| contains(*area, mouse))
+}
+
+/// Index of the first area containing the pointer.
+pub(crate) fn hit_index(areas: &[Rect], mouse: MouseEvent) -> Option<usize> {
+  areas.iter().position(|area| contains(*area, mouse))
 }
 
 /// Map a pointer on a pane to the data row under it.

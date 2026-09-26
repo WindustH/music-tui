@@ -1,9 +1,10 @@
 //! MPD connection worker.
 //!
 //! Owns the [`Client`], executes commands from the app, watches connection
-//! events for subsystem changes, and periodically refreshes a full
-//! status + queue snapshot which is forwarded to the UI. Also implements the
-//! "interrupt preview" lifecycle used by `music-tui open --mode interrupt`.
+//! events for subsystem changes, and refreshes status (plus the queue when
+//! MPD's playlist version moves) which is forwarded to the UI. Also
+//! implements the "interrupt preview" lifecycle used by
+//! `music-tui open --mode interrupt`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,13 +12,7 @@ use std::time::Duration;
 
 use mpd_client::{
   Client,
-  client::ConnectionEvent,
-  commands::{
-    self, Add, ClearQueue, Delete, DeletePlaylist, LoadPlaylist, Play, Previous,
-    SaveQueueAsPlaylist, Seek, SeekMode, SetConsume, SetPause, SetRandom, SetRepeat, SetSingle,
-    SetVolume, Shuffle, SingleMode, SongPosition, Stop,
-  },
-  responses::{PlayState, SongInQueue, Status},
+  commands::{SingleMode, SongId},
 };
 use tokio::{net::TcpStream, sync::mpsc, time::sleep};
 use tracing::{debug, info, warn};
@@ -26,6 +21,24 @@ use crate::{
   config::{BehaviorConfig, MpdConfig},
   event::{AsyncEvent, MpdEvent},
 };
+
+mod commands;
+mod interrupt;
+mod worker;
+
+use interrupt::RestoreState;
+pub use interrupt::capture_interrupt_session;
+
+/// Upper bound for establishing a connection (TCP/socket connect plus the
+/// greeting and password exchange). Without it a black-holed host stalls
+/// the worker for the kernel's SYN timeout (minutes on Linux).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Reconnect delays double from `MIN_BACKOFF` up to `MAX_BACKOFF`.
+const MIN_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// A session at least this long counts as healthy and resets the backoff.
+const STABLE_SESSION: Duration = Duration::from_secs(10);
 
 /// Saved playback state to restore after an interrupt preview finishes.
 #[derive(Debug, Clone)]
@@ -40,7 +53,9 @@ pub struct InterruptSession {
 
 #[derive(Debug)]
 pub enum MpdCommand {
-  PlayPosition(u32),
+  /// Play the queue entry with this id. Ids (unlike positions) stay valid
+  /// when the queue shifts between the UI's snapshot and the command.
+  PlaySong(SongId),
   PlayPauseToggle,
   Pause(bool),
   Stop,
@@ -57,7 +72,8 @@ pub enum MpdCommand {
   ClearQueue,
   /// Shuffle the entire queue.
   Shuffle,
-  DeleteAt(usize),
+  /// Remove the queue entry with this id.
+  Delete(SongId),
   AddUri(String),
   /// Play (or append) a local file from the library pane. The path is
   /// resolved to an MPD URI (music dir relative, `file://`, or symlink
@@ -95,33 +111,44 @@ pub fn spawn_mpd_worker(
   events: mpsc::UnboundedSender<AsyncEvent>,
 ) -> MpdHandle {
   let (tx, mut rx) = mpsc::unbounded_channel();
-  let queue_dedup = Arc::new(AtomicBool::new(false));
+  let queue_dedup = Arc::new(AtomicBool::new(behavior.queue_dedup));
   let worker_dedup = queue_dedup.clone();
   tokio::spawn(async move {
-    let mut backoff = Duration::from_secs(1);
+    let mut backoff = MIN_BACKOFF;
+    // The interrupt session outlives individual connections: a dropped
+    // connection mid-preview must still restore the saved queue later.
+    let mut restore = RestoreState::default();
     loop {
       match connect(&config).await {
         Ok((client, mut connection_events)) => {
-          backoff = Duration::from_secs(1);
           let address = describe_address(&config);
           info!(%address, "connected to mpd");
           let _ = events.send(AsyncEvent::Mpd(MpdEvent::Connected(address)));
-          if let Err(error) = run_session(
-            &client,
-            &mut connection_events,
-            &mut rx,
-            &events,
-            &config,
-            &behavior,
-            &worker_dedup,
-          )
-          .await
-          {
+          // Commands issued while the connection was down are stale by now
+          // (replaying five queued `next` presses would surprise the user).
+          drain_offline_commands(&mut rx, &mut restore, &events);
+          let started = tokio::time::Instant::now();
+          let session = worker::Session {
+            client: &client,
+            commands: &mut rx,
+            events: &events,
+            config: &config,
+            behavior: &behavior,
+            dedup: &worker_dedup,
+            restore: &mut restore,
+          };
+          if let Err(error) = session.run(&mut connection_events).await {
             warn!(%error, "mpd session ended");
           }
           let _ = events.send(AsyncEvent::Mpd(MpdEvent::ConnectionLost(
             "connection closed".to_string(),
           )));
+          // Only a session that worked for a while resets the backoff: one
+          // that fails right after connecting must not reconnect every
+          // second forever.
+          if started.elapsed() >= STABLE_SESSION {
+            backoff = MIN_BACKOFF;
+          }
         }
         Err(error) => {
           warn!(%error, "failed to connect to mpd");
@@ -131,14 +158,72 @@ pub fn spawn_mpd_worker(
         }
       }
       debug!(?backoff, "reconnecting to mpd");
-      sleep(backoff).await;
-      backoff = (backoff * 2).min(Duration::from_secs(30));
+      if !wait_offline(backoff, &mut rx, &mut restore, &events).await {
+        break;
+      }
+      backoff = (backoff * 2).min(MAX_BACKOFF);
     }
   });
   MpdHandle { tx, queue_dedup }
 }
 
+/// Sleep out the reconnect backoff while still answering the app: an
+/// interrupt hand-off is kept for the next session, everything else is
+/// refused with a notice. Returns false once the app has shut down.
+async fn wait_offline(
+  backoff: Duration,
+  commands: &mut mpsc::UnboundedReceiver<MpdCommand>,
+  restore: &mut RestoreState,
+  events: &mpsc::UnboundedSender<AsyncEvent>,
+) -> bool {
+  let deadline = sleep(backoff);
+  tokio::pin!(deadline);
+  loop {
+    tokio::select! {
+      _ = &mut deadline => return true,
+      command = commands.recv() => match command {
+        Some(command) => handle_offline_command(command, restore, events),
+        None => return false,
+      },
+    }
+  }
+}
+
+fn drain_offline_commands(
+  commands: &mut mpsc::UnboundedReceiver<MpdCommand>,
+  restore: &mut RestoreState,
+  events: &mpsc::UnboundedSender<AsyncEvent>,
+) {
+  while let Ok(command) = commands.try_recv() {
+    handle_offline_command(command, restore, events);
+  }
+}
+
+fn handle_offline_command(
+  command: MpdCommand,
+  restore: &mut RestoreState,
+  events: &mpsc::UnboundedSender<AsyncEvent>,
+) {
+  match command {
+    MpdCommand::ArmInterrupt(session) => restore.arm(session),
+    command => {
+      debug!(?command, "dropping command while mpd is offline");
+      let _ = events.send(AsyncEvent::Mpd(MpdEvent::Notice(
+        "mpd is not connected".to_string(),
+      )));
+    }
+  }
+}
+
 pub async fn connect(
+  config: &MpdConfig,
+) -> anyhow::Result<(Client, mpd_client::client::ConnectionEvents)> {
+  tokio::time::timeout(CONNECT_TIMEOUT, connect_inner(config))
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out after {}s", CONNECT_TIMEOUT.as_secs()))?
+}
+
+async fn connect_inner(
   config: &MpdConfig,
 ) -> anyhow::Result<(Client, mpd_client::client::ConnectionEvents)> {
   let host = crate::config::expand_home(&config.host);
@@ -161,14 +246,8 @@ pub async fn connect(
 
 fn describe_address(config: &MpdConfig) -> String {
   #[cfg(unix)]
-  if config.host.starts_with('/') {
+  if crate::library::is_socket_host(&config.host) {
     return config.host.clone();
   }
   format!("{}:{}", config.host, config.port)
 }
-
-mod interrupt;
-mod worker;
-use worker::run_session;
-
-pub use interrupt::capture_interrupt_session;

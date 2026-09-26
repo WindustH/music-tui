@@ -1,6 +1,9 @@
+use std::collections::HashSet;
 use std::fmt::Write as FmtWrite;
 
-use framework_tui::{KeyBindingConfig, KeyBindings};
+use framework_tui::{KeyBindingConfig, KeyBindings, KeyContext};
+
+use crate::layout::PaneKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,39 +216,42 @@ impl Default for KeymapConfig {
 
 impl KeymapConfig {
   /// View bindings share one shape: the section's keys + input + global,
-  /// with global keys taking priority over view-local ones.
+  /// with global keys taking priority over view-local ones — except where
+  /// the section binds the exact same key sequence itself: that explicit
+  /// pane binding wins inside the pane (the library's `a` appends while `a`
+  /// switches tabs everywhere else).
   fn view_bindings(&self, section: &KeymapSection) -> KeyBindings {
+    let claimed: HashSet<String> = section
+      .keymap
+      .iter()
+      .filter_map(|entry| normalized_sequence(&entry.on))
+      .collect();
+    let global: Vec<KeymapEntry> = self
+      .global
+      .keymap
+      .iter()
+      .filter(|entry| normalized_sequence(&entry.on).is_none_or(|keys| !claimed.contains(&keys)))
+      .cloned()
+      .collect();
     KeyBindings::from_sections(
       binding_configs(&section.keymap),
       Vec::new(),
       binding_configs(&self.input.keymap),
-      binding_configs(&self.global.keymap),
+      binding_configs(&global),
     )
     .with_global_priority()
   }
 
-  pub fn queue_bindings(&self) -> KeyBindings {
-    self.view_bindings(&self.queue)
-  }
-
-  pub fn library_bindings(&self) -> KeyBindings {
-    self.view_bindings(&self.library)
-  }
-
-  pub fn metadata_bindings(&self) -> KeyBindings {
-    self.view_bindings(&self.metadata)
-  }
-
-  pub fn cover_bindings(&self) -> KeyBindings {
-    self.view_bindings(&self.cover)
-  }
-
-  pub fn lyrics_bindings(&self) -> KeyBindings {
-    self.view_bindings(&self.lyrics)
-  }
-
-  pub fn visualizer_bindings(&self) -> KeyBindings {
-    self.view_bindings(&self.visualizer)
+  /// Bindings of one pane kind.
+  pub fn pane_bindings(&self, pane: PaneKind) -> KeyBindings {
+    self.view_bindings(match pane {
+      PaneKind::Queue => &self.queue,
+      PaneKind::Library => &self.library,
+      PaneKind::Cover => &self.cover,
+      PaneKind::Lyrics => &self.lyrics,
+      PaneKind::Metadata => &self.metadata,
+      PaneKind::Visualizer => &self.visualizer,
+    })
   }
 
   /// Input-context bindings only: the input section without global keys, so
@@ -271,40 +277,19 @@ impl KeymapConfig {
     )
   }
 
-  pub(crate) fn queue_section(&self) -> &KeymapSection {
-    &self.queue
-  }
-
-  pub(crate) fn library_section(&self) -> &KeymapSection {
-    &self.library
-  }
-
-  pub(crate) fn metadata_section(&self) -> &KeymapSection {
-    &self.metadata
-  }
-
-  pub(crate) fn cover_section(&self) -> &KeymapSection {
-    &self.cover
-  }
-
-  pub(crate) fn lyrics_section(&self) -> &KeymapSection {
-    &self.lyrics
-  }
-
-  pub(crate) fn visualizer_section(&self) -> &KeymapSection {
-    &self.visualizer
-  }
-
-  pub(crate) fn input_section(&self) -> &KeymapSection {
-    &self.input
-  }
-
-  pub(crate) fn help_section(&self) -> &KeymapSection {
-    &self.help
-  }
-
-  pub(crate) fn global_section(&self) -> &KeymapSection {
-    &self.global
+  /// Every section with its name in the TOML file, in write order.
+  fn sections(&self) -> [(&'static str, &KeymapSection); 9] {
+    [
+      ("queue", &self.queue),
+      ("library", &self.library),
+      ("metadata", &self.metadata),
+      ("cover", &self.cover),
+      ("lyrics", &self.lyrics),
+      ("visualizer", &self.visualizer),
+      ("input", &self.input),
+      ("help", &self.help),
+      ("global", &self.global),
+    ]
   }
 
   pub(crate) fn normalize_defaults(&mut self) {
@@ -327,22 +312,9 @@ impl KeymapConfig {
 }
 
 pub(crate) fn format_keymap_toml(config: &KeymapConfig) -> String {
-  /// (section name in the TOML file, accessor) pairs, in write order.
-  type KeymapSectionRef = fn(&KeymapConfig) -> &KeymapSection;
-  const KEYMAP_SECTIONS: [(&str, KeymapSectionRef); 9] = [
-    ("queue", KeymapConfig::queue_section),
-    ("library", KeymapConfig::library_section),
-    ("metadata", KeymapConfig::metadata_section),
-    ("cover", KeymapConfig::cover_section),
-    ("lyrics", KeymapConfig::lyrics_section),
-    ("visualizer", KeymapConfig::visualizer_section),
-    ("input", KeymapConfig::input_section),
-    ("help", KeymapConfig::help_section),
-    ("global", KeymapConfig::global_section),
-  ];
   let mut out = String::new();
-  for (name, section) in KEYMAP_SECTIONS {
-    push_keymap_section(&mut out, name, section(config));
+  for (name, section) in config.sections() {
+    push_keymap_section(&mut out, name, section);
   }
   out
 }
@@ -356,6 +328,27 @@ fn binding_configs(entries: &[KeymapEntry]) -> Vec<KeyBindingConfig> {
       desc: entry.desc.clone(),
     })
     .collect()
+}
+
+/// The key sequence of `on` in framework-tui's canonical token form (so
+/// aliases such as `<C-c>` / `ctrl-c` compare equal); `None` when no key
+/// parses.
+fn normalized_sequence(on: &KeymapOn) -> Option<String> {
+  let probe = KeyBindings::from_sections(
+    [KeyBindingConfig {
+      on: keymap_on_values(on),
+      action: String::new(),
+      desc: String::new(),
+    }],
+    Vec::new(),
+    Vec::new(),
+    Vec::new(),
+  );
+  probe
+    .help_entries(KeyContext::Browser)
+    .into_iter()
+    .next()
+    .map(|entry| entry.keys)
 }
 
 fn keymap_on_values(on: &KeymapOn) -> Vec<String> {
@@ -471,4 +464,56 @@ fn toml_basic_string(value: &str) -> String {
   }
   out.push('"');
   out
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use framework_tui::{KeyDispatcher, MatchResult};
+
+  fn dispatch(bindings: &KeyBindings, keys: &[&str]) -> MatchResult {
+    let mut dispatcher = KeyDispatcher::default();
+    let mut result = MatchResult::None;
+    for key in keys {
+      result = dispatcher.dispatch(bindings, KeyContext::Browser, *key);
+    }
+    result
+  }
+
+  #[test]
+  fn pane_binding_overrides_the_same_global_key() {
+    let keymap = KeymapConfig::default();
+    let library = keymap.pane_bindings(PaneKind::Library);
+    assert_eq!(
+      dispatch(&library, &["a"]),
+      MatchResult::Action("library_append".to_string())
+    );
+    // Other global keys still win in the library pane.
+    assert_eq!(
+      dispatch(&library, &["q"]),
+      MatchResult::Action("quit".to_string())
+    );
+    // Elsewhere `a` keeps switching tabs.
+    assert_eq!(
+      dispatch(&keymap.pane_bindings(PaneKind::Queue), &["a"]),
+      MatchResult::Action("tab_previous".to_string())
+    );
+  }
+
+  #[test]
+  fn aliases_normalize_to_one_sequence() {
+    assert_eq!(
+      normalized_sequence(&KeymapOn::One("<C-c>".to_string())),
+      normalized_sequence(&KeymapOn::One("ctrl-c".to_string()))
+    );
+    assert_eq!(normalized_sequence(&KeymapOn::Many(Vec::new())), None);
+  }
+
+  #[test]
+  fn default_keymap_round_trips_through_toml() {
+    let keymap = KeymapConfig::default();
+    let parsed: KeymapConfig = toml::from_str(&format_keymap_toml(&keymap)).unwrap();
+    assert_eq!(parsed.global.keymap.len(), keymap.global.keymap.len());
+    assert_eq!(parsed.library.keymap.len(), keymap.library.keymap.len());
+  }
 }

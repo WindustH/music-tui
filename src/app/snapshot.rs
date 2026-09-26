@@ -1,5 +1,5 @@
-//! MPD event application: connection state, notices and queue snapshots
-//! (song-change detection, filter recompute, selection clamping).
+//! MPD event application: connection state, notices and status/queue
+//! snapshots (song-change detection, filter recompute, selection clamping).
 
 use super::*;
 
@@ -22,204 +22,41 @@ impl App {
         true
       }
       MpdEvent::Snapshot { status, queue } => {
-        let song_changed =
-          Self::snapshot_song_url(&status, &queue).as_deref() != self.current_song_url().as_deref();
-        self.status = Some(status);
-        self.queue = queue;
-        self.recompute_queue_filter();
-        self.clamp_queue_selection();
-        if let Some(position) = self
-          .pending_restore_selection
-          .take()
-          .filter(|position| *position < self.queue.len())
-          && self
-            .queue_state
-            .selected()
-            .is_none_or(|current| current == 0)
-        {
-          self.queue_state.select(Some(position));
-        }
-        if song_changed {
-          self.on_song_changed();
-        }
-        self.sync_hover_view();
+        self.apply_snapshot(status, queue);
         true
       }
     }
   }
 
-  fn snapshot_song_url(status: &Status, queue: &[SongInQueue]) -> Option<String> {
-    let (position, _) = status.current_song?;
-    queue.get(position.0).map(|song| song.song.url.to_string())
-  }
-
-  pub(crate) fn clamp_queue_selection(&mut self) {
-    // A filter shrinking the list lands the selection on the best row
-    // (row 0) instead of pinning it to the last row. The queue's
-    // ListState scrolls itself, so no viewport window is applied here.
-    let len = self.queue_filter_matches.len();
-    match viewport::clamp_selection(self.queue_state.selected(), 0, len, len) {
-      Some((selected, _)) => self.queue_state.select(Some(selected)),
-      None => self.queue_state.select(None),
+  fn apply_snapshot(&mut self, status: Status, queue: Option<Arc<[SongInQueue]>>) {
+    let previous_url = self.current_song_url();
+    let previous_position = self.playing_position();
+    self.status = Some(status);
+    let queue_changed = queue.is_some();
+    if let Some(queue) = queue {
+      self.queue = queue;
     }
-    self.sync_hover_view();
-  }
-
-  /// Number of rows visible in the queue pane (filtered or not).
-  pub(crate) fn visible_len(&self) -> usize {
-    self.queue_filter_matches.len()
-  }
-
-  /// Map the selection (an index into the visible rows) to a queue position.
-  pub(crate) fn filtered_position(&self, selected: usize) -> Option<usize> {
-    self.queue_filter_matches.get(selected).copied()
-  }
-
-  fn song_matches_filter(song: &Song, terms: &[String]) -> bool {
-    // Every space-separated term must match somewhere (AND); field text
-    // matches with spaces ignored ("Love Story" ~ "lovestory").
-    terms.iter().all(|term| {
-      song_title(song).is_some_and(|value| StrippedText::new(&value).matches(term))
-        || song_artist(song).is_some_and(|value| StrippedText::new(&value).matches(term))
-        || song_album(song).is_some_and(|value| StrippedText::new(&value).matches(term))
-        || StrippedText::new(&song.url).matches(term)
-    })
-  }
-
-  pub(crate) fn recompute_queue_filter(&mut self) {
-    let urls: Vec<&str> = self
-      .queue
-      .iter()
-      .map(|song| song.song.url.as_str())
-      .collect();
-    let playing = self
-      .status
-      .as_ref()
-      .and_then(|status| status.current_song)
-      .map(|(position, _)| position.0);
-    let positions: Vec<usize> = match self.queue_filter.as_deref() {
-      None | Some("") => (0..self.queue.len()).collect(),
-      Some(needle) => {
-        let terms: Vec<String> = needle.split_whitespace().map(str::to_string).collect();
-        self
-          .queue
-          .iter()
-          .enumerate()
-          .filter(|(_, song)| Self::song_matches_filter(&song.song, &terms))
-          .map(|(position, _)| position)
-          .collect()
-      }
-    };
-    let visible = visible_positions(
-      self.queue_dedup,
-      self.queue_filter.as_deref(),
-      &urls,
-      positions,
-      playing,
-    );
-    self.queue_filter_matches = visible;
-  }
-
-  pub(crate) fn clear_queue_filter(&mut self) {
-    self.queue_filter = None;
-    self.recompute_queue_filter();
-    self.clamp_queue_selection();
-  }
-
-  pub(crate) fn follow_playing_position(&mut self) {
-    if let Some(status) = &self.status
-      && let Some((position, _)) = status.current_song
+    // The visible rows depend on the queue and (through dedup) on which
+    // copy is playing; plain progress updates leave them untouched.
+    if queue_changed || self.playing_position() != previous_position {
+      self.recompute_queue_filter();
+      self.clamp_queue_selection();
+    }
+    if queue_changed
+      && let Some(position) = self
+        .pending_restore_selection
+        .take()
+        .filter(|position| *position < self.visible_len())
+      && self
+        .queue_state
+        .selected()
+        .is_none_or(|current| current == 0)
     {
-      let row = self
-        .queue_filter_matches
-        .iter()
-        .position(|candidate| *candidate == position.0)
-        .or(if self.queue_filter.is_none() {
-          Some(position.0)
-        } else {
-          None
-        });
-      if let Some(row) = row {
-        self.queue_state.select(Some(row));
-      }
+      self.queue_state.select(Some(position));
+      self.sync_hover_view();
     }
-  }
-}
-
-/// Dedup hides extra copies of a song only in the unfiltered view;
-/// while a filter is active every matching copy stays visible so
-/// search results never lose rows mid-filter.
-fn visible_positions(
-  dedup: bool,
-  filter: Option<&str>,
-  urls: &[&str],
-  positions: Vec<usize>,
-  playing: Option<usize>,
-) -> Vec<usize> {
-  if dedup && filter.is_none_or(str::is_empty) {
-    dedup_positions(urls, positions, playing)
-  } else {
-    positions
-  }
-}
-
-fn dedup_positions(urls: &[&str], positions: Vec<usize>, playing: Option<usize>) -> Vec<usize> {
-  let mut seen = std::collections::HashSet::new();
-  let mut out = Vec::with_capacity(positions.len());
-  for position in positions {
-    if playing == Some(position) || seen.insert(urls[position]) {
-      out.push(position);
+    if self.current_song_url() != previous_url {
+      self.on_song_changed();
     }
-  }
-  out
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn dedup_keeps_first_occurrence_of_each_url() {
-    let urls = ["a", "b", "a", "c", "b"];
-    let positions = vec![0, 1, 2, 3, 4];
-    assert_eq!(dedup_positions(&urls, positions, None), vec![0, 1, 3]);
-  }
-
-  #[test]
-  fn dedup_not_applied_while_filtering() {
-    let urls = ["a", "x", "a"];
-    // No filter: duplicate hidden.
-    assert_eq!(
-      visible_positions(true, None, &urls, vec![0, 1, 2], None),
-      vec![0, 1]
-    );
-    assert_eq!(
-      visible_positions(true, Some(""), &urls, vec![0, 1, 2], None),
-      vec![0, 1]
-    );
-    // Filter active: every matching copy stays visible.
-    assert_eq!(
-      visible_positions(true, Some("a"), &urls, vec![0, 2], None),
-      vec![0, 2]
-    );
-    // Dedup off: never hidden.
-    assert_eq!(
-      visible_positions(false, None, &urls, vec![0, 2], None),
-      vec![0, 2]
-    );
-  }
-
-  #[test]
-  fn dedup_keeps_the_playing_copy_visible() {
-    let urls = ["a", "a"];
-    let positions = vec![0, 1];
-    assert_eq!(dedup_positions(&urls, positions, Some(1)), vec![0, 1]);
-  }
-
-  #[test]
-  fn dedup_applies_after_text_filtering() {
-    let urls = ["a", "x", "a"];
-    // positions pre-filtered to [0, 2]
-    assert_eq!(dedup_positions(&urls, vec![0, 2], None), vec![0]);
   }
 }

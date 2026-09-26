@@ -9,16 +9,18 @@
 //! - `H(a:b, left, right)` splits horizontally (side by side) with the width
 //!   shared `a:b`.
 //! - `V(a:b, top, bottom)` splits vertically with the height shared `a:b`.
-//! - leaf panes: `queue`, `cover`, `lyrics`, `metadata`, `visualizer`.
+//! - leaf panes: `queue`, `library`, `cover`, `lyrics`, `metadata`,
+//!   `visualizer`.
 //!
 //! `cover`, `lyrics` and `metadata` panes take an optional **data source**
 //! suffix: `cover:hovered` shows the cover of the song hovered in the queue
-//! instead of the playing song (`lyrics:hovered` has no playback state, so
-//! it renders as a plain scrollable list). The default source is `playing`.
+//! (`:library-hovered`: the library selection) instead of the playing song
+//! (hovered lyrics have no playback state, so they render as a plain
+//! scrollable list). The default source is `playing`.
 //!
-//! A tab's keymap is decided by its **main pane** (see `TabLayout::main`):
-//! keys always dispatch to the main pane's bindings, which take priority over
-//! global bindings. Other panes in the same tab are display-only.
+//! Keys dispatch to the **main pane** first (see `TabLayout::main`), then
+//! fall through to the tab's other panes; `global` bindings win in every
+//! pane unless the pane binds the very same key itself.
 
 use crate::config::{LayoutConfig, TabConfig};
 
@@ -35,6 +37,16 @@ pub enum PaneKind {
 }
 
 impl PaneKind {
+  /// Every kind, in `index` order.
+  pub const ALL: [PaneKind; 6] = [
+    Self::Queue,
+    Self::Library,
+    Self::Cover,
+    Self::Lyrics,
+    Self::Metadata,
+    Self::Visualizer,
+  ];
+
   pub fn parse(value: &str) -> Option<Self> {
     match value.trim() {
       "queue" => Some(Self::Queue),
@@ -232,6 +244,13 @@ mod tests {
     assert!(layout.contains(PaneKind::Metadata));
     assert!(!layout.contains(PaneKind::Visualizer));
     assert_eq!(layout.first_pane(), PaneKind::Queue);
+  }
+
+  #[test]
+  fn pane_kind_index_matches_all_order() {
+    for (index, kind) in PaneKind::ALL.iter().enumerate() {
+      assert_eq!(kind.index(), index);
+    }
   }
 
   #[test]

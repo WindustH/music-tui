@@ -1,12 +1,11 @@
 //! Queue pane rendering.
 
+use ratatui::widgets::ListState;
+
+use super::highlight::highlighted_ranges_spans;
 use super::*;
 use crate::sanitize::sanitize_text;
 use crate::strip::StrippedText;
-
-fn sanitize_url(url: &str) -> String {
-  sanitize_text(url)
-}
 
 pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let theme = &app.settings.theme;
@@ -32,7 +31,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   if inner.height == 0 || inner.width == 0 {
     return;
   }
-  app.queue_pane_areas.push(inner);
+  app.hit.queue_panes.push(inner);
 
   if app.queue.is_empty() {
     let hint = if app.connection_error.is_some() {
@@ -63,18 +62,23 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     return;
   }
 
-  let (position, _) = app
-    .status
-    .as_ref()
-    .and_then(|status| status.current_song)
-    .unzip();
-  let playing = position.map(|pos| pos.0);
-
-  let items: Vec<ListItem> = app
-    .queue_filter_matches
+  let playing = app.playing_position();
+  // Build only the rows on screen: a long queue must not cost a label per
+  // song on every redraw (progress ticks redraw several times a second).
+  let len = app.queue_filter_matches.len();
+  let selected = app.queue_state.selected().map(|row| row.min(len - 1));
+  let (start, end) = visible_window(
+    len,
+    usize::from(inner.height),
+    app.queue_state.offset(),
+    selected,
+  );
+  let items: Vec<ListItem> = app.queue_filter_matches[start..end]
     .iter()
-    .filter_map(|position| app.queue.get(*position).map(|song| (position, song)))
-    .map(|(position, song)| ListItem::new(queue_line(app, *position, song, playing)))
+    .map(|position| match app.queue.get(*position) {
+      Some(song) => ListItem::new(queue_line(app, *position, song, playing)),
+      None => ListItem::new(""),
+    })
     .collect();
 
   let list = List::new(items).highlight_style(
@@ -82,7 +86,11 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
       .fg(theme.color(&theme.queue.selection))
       .add_modifier(Modifier::BOLD),
   );
-  frame.render_stateful_widget(list, inner, &mut app.queue_state);
+  let mut window_state = ListState::default();
+  window_state.select(selected.map(|row| row - start));
+  frame.render_stateful_widget(list, inner, &mut window_state);
+  app.queue_state.select(selected);
+  *app.queue_state.offset_mut() = start;
 
   // The scrollbar mirrors the viewport (offset + size), not the selection,
   // and doubles as a mouse drag target.
@@ -94,7 +102,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   frame.render_stateful_widget(scrollbar, area, &mut state);
   // Scrollbar renders over the pane's last column; record the exact track
   // (full pane height) for mouse hit tests.
-  app.queue_bar_areas.push(Rect {
+  app.hit.queue_bars.push(Rect {
     x: area.x + area.width.saturating_sub(1),
     y: area.y,
     width: 1,
@@ -109,7 +117,7 @@ fn queue_line(
   playing: Option<usize>,
 ) -> Line<'static> {
   let theme = &app.settings.theme;
-  let title = song_title(&song.song).unwrap_or_else(|| sanitize_url(&song.song.url));
+  let title = song_title(&song.song).unwrap_or_else(|| sanitize_text(&song.song.url));
   let artist = song_artist(&song.song).unwrap_or_default();
   let marker = if playing == Some(index) {
     match app.status.as_ref().map(|status| status.state) {
@@ -189,7 +197,7 @@ fn queue_line(
         ));
       }
     }
-    let url = sanitize_url(&song.song.url);
+    let url = sanitize_text(&song.song.url);
     let url_text = StrippedText::new(&url);
     let url_ranges: Vec<(usize, usize)> = terms
       .iter()

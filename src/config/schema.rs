@@ -41,9 +41,10 @@ impl Default for MpdConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BehaviorConfig {
-  /// Interval between MPD status refreshes while idle.
+  /// Interval between MPD status polls while paused or stopped (MPD's idle
+  /// notifications report changes as they happen).
   pub tick_ms: u64,
-  /// Interval between MPD status refreshes while playing.
+  /// Interval between MPD status polls while playing (progress, lyrics).
   pub playing_tick_ms: u64,
   /// Hide duplicate queue entries (same URL keeps its first occurrence
   /// visible; the playing copy stays visible too).
@@ -61,9 +62,9 @@ impl Default for BehaviorConfig {
 }
 
 impl BehaviorConfig {
-  /// MPD status-refresh periods for the idle and playing states
+  /// MPD status-poll periods for the idle and playing states
   /// (idle, playing), clamped so degenerate config values cannot spin the
-  /// worker or stall the UI. Shared by the MPD worker and the UI tick task.
+  /// worker or stall the UI.
   pub fn refresh_durations(&self) -> (Duration, Duration) {
     (
       Duration::from_millis(self.tick_ms.clamp(100, 10_000)),
@@ -79,6 +80,8 @@ pub struct RenderConfig {
   pub auto_detect: bool,
   pub chafa_args: Vec<String>,
   pub chafa_threads: usize,
+  /// Graphics escape passthrough override (`tmux` / `screen` / `none`);
+  /// unset detects the terminal multiplexer.
   pub passthrough: Option<String>,
   pub zellij_sixel: bool,
 }
@@ -275,8 +278,9 @@ pub struct TabConfig {
   pub name: String,
   /// Layout tree, e.g. `H(2:1, queue, V(2:1, cover, metadata))`.
   pub layout: String,
-  /// Pane that receives this tab's keys (`queue`, `cover`, `lyrics`,
-  /// `metadata`, `visualizer`). Defaults to the first pane in the tree.
+  /// Pane that receives this tab's keys (`queue`, `library`, `cover`,
+  /// `lyrics`, `metadata`, `visualizer`). Defaults to the first pane in the
+  /// tree.
   pub main: Option<String>,
 }
 

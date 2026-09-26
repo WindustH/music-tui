@@ -2,8 +2,8 @@
 
 ## Tabs and panes
 
-The interface is a row of tabs, each rendering a configurable pane layout.
-The default layout configuration:
+The interface is a row of tabs, each showing a layout of panes. The
+defaults:
 
 ```toml
 [[layout.tabs]]
@@ -32,65 +32,59 @@ layout = "lyrics"
 main = "lyrics"
 
 [[layout.tabs]]
-name = "visualizer"
+name = "visualizer"   # not on Windows
 layout = "visualizer"
 main = "visualizer"
 ```
 
-See [Configuration](configuration.md) for the full DSL (`H`/`V` splits, pane
-names, `main`).
+See [Configuration](configuration.md#layout-language) for the layout
+language.
 
-Each tab declares one **main pane**. The main pane's title is highlighted and
-its key bindings are the ones active while the tab is shown — pressing keys
-always targets the main pane of the current tab. Keys bound in the `global`
-keymap section (playback control, tab switching, `:` command, quit) take
-priority over pane bindings everywhere.
+Each tab has one **main pane**, drawn with a highlighted title. Keys go to
+the main pane first; keys it does not use fall through to the other panes
+of the tab, and `global` keys (playback, tab switching, `:`, quit) work
+everywhere.
 
 ## Panes
 
-- `queue` — the MPD current playlist. The playing song is marked with `▶`/`⏸`,
-  filtered mode narrows the list as you type (`/`).
-- `library` — a local music library scanned by music-tui itself (SQLite),
-  drawn as a calibre-tui style table: a bold header row, weighted columns
-  (`[library] columns`), an inverted hover bar, and per-field colors.
-  `/` filters every field (title, artist, album, genre, filename, lyrics)
-  and highlights matches (long fields scroll to the match), `esc` clears
-  the filter, `enter` plays the selected track, `a` appends it, `i` opens
-  the detail view, `u` rescans. Untagged files derive artist/title from
-  the usual `NN. artist - title` filename convention. Both the queue and
-  the library panes have a viewport scrollbar on the right that can be
-  dragged with the mouse.
-- `cover` — cover art for the currently playing song, aspect-correct and
-  centered (see [Cover Rendering](cover-rendering.md)).
-- `lyrics` — synced or plain lyrics for the current song with auto-follow and
-  karaoke highlighting (see [Lyrics](lyrics.md)).
-- `metadata` — tag and file properties of the current song, `e` edits.
-- `visualizer` — spectrum bars fed from the MPD fifo output.
+- `queue` — MPD's queue. The playing song is marked `▶`/`⏸`; `/` filters
+  as you type (title, artist, album, and file path; every word must match,
+  spaces inside words are ignored). Duplicate entries are hidden unless
+  `behavior.queue_dedup` is off.
+- `library` — the music-tui library as a table with weighted columns
+  (`[library] columns`). `/` filters every field, lyrics included, and
+  highlights matches; `enter` plays, `a` appends, `i` opens the detail
+  view, `u` rescans. See [Configuration](configuration.md#library).
+- `cover` — cover art, aspect-correct and centered (see
+  [Cover Rendering](cover-rendering.md)).
+- `lyrics` — synced or plain lyrics with auto-follow and karaoke
+  highlighting (see [Lyrics](lyrics.md)).
+- `metadata` — tags and audio properties; `e` edits the tags (see
+  [Metadata](metadata.md)).
+- `visualizer` — spectrum bars from the MPD fifo output (see
+  [Visualizer](visualizer.md)).
+
+The queue and library panes have a scrollbar that can be clicked or dragged.
 
 ### Hovered data sources
 
-`cover`, `lyrics` and `metadata` panes accept a data-source suffix to show
-a hovered row instead of the playing song:
+`cover`, `lyrics` and `metadata` panes can show the selected row instead of
+the playing song:
 
-- `:hovered` — the song selected (hovered) in the **queue** (alias
-  `:queue-hovered`)
-- `:library-hovered` — the track selected in the **library** pane
+- `:hovered` — the song selected in the queue (alias `:queue-hovered`)
+- `:library-hovered` — the track selected in the library
 
-Hovered lyrics have no playback state — they render as a plain scrollable
-list (j/k scroll, no sync highlight, no seek). See
-[Configuration](configuration.md#pane-data-sources).
+Hovered lyrics have no playback state: a plain scrollable list without
+highlighting or seeking.
 
 ## Detail view
 
-Pressing `i` on a queue entry opens a secondary detail view (like opening an
-image in a gallery browser): a large cover beside the metadata of that
-entry (layout configurable via `[layout].detail`, cover left by default).
-The sidebar panes always keep showing the *currently playing* song. `e`
-edits the detailed song's tags, `esc`/`i`/`q` returns to the queue — with a
-secondary view open, `q` leaves that level instead of quitting the app.
+`i` on a queue or library entry opens a full-screen detail view: a large
+cover beside the song's tags (arranged by `[layout].detail`). The other
+tabs keep showing the playing song. `e` edits the shown song's tags;
+`esc`, `i`, or `q` closes the view.
 
 ## Progress band
 
-The bottom of the screen is a full-width seek bar showing elapsed/total time.
-Click anywhere on it to seek; click-drag to scrub; the mouse wheel on it seeks
-±5 seconds.
+The bottom line is a seek bar with the elapsed and total time. Click to
+seek, drag to scrub, or use the wheel to seek ±5 seconds.

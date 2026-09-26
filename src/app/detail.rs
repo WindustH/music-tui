@@ -1,19 +1,21 @@
-//! Secondary song views: the full-screen detail view and the hovered
-//! sidebars (`:queue-hovered` / `:library-hovered` panes).
+//! Song views (playing song, detail view, hovered sidebars) and opening /
+//! closing the full-screen detail view.
 
 use super::*;
 
 /// Data view for one song that is not necessarily playing: cover,
 /// metadata and lyrics slots fed by async reads.
 ///
-/// The same type backs three surfaces:
+/// The same type backs four surfaces:
+/// - `playing` — the song MPD is playing (`:playing` panes);
 /// - `detail` — the full-screen view opened with `i`;
 /// - `hover` — the queue's selected row feeding `:queue-hovered` panes;
 /// - `library_hover` — the library's selected row feeding
 ///   `:library-hovered` panes.
 ///
 /// Lyrics in a non-playing view have no playback state: no sync
-/// highlight, no auto-follow, no click-to-seek.
+/// highlight, no auto-follow, no click-to-seek. For the playing view,
+/// `lyrics_scroll` is the viewport offset driven by follow mode.
 pub struct SongView {
   pub url: String,
   pub path: PathBuf,
@@ -52,65 +54,37 @@ impl App {
   /// gallery-tui's image detail view pattern: the sidebar always shows
   /// the playing song, details open as their own full-screen surface.
   pub(crate) fn open_detail(&mut self) -> bool {
-    let Some(index) = self.queue_state.selected() else {
+    let Some(song) = self.selected_queue_song() else {
       return false;
     };
-    let Some(index) = self.filtered_position(index) else {
-      return false;
-    };
-    let Some(song) = self.queue.get(index) else {
-      return false;
-    };
-    let url = song.song.url.to_string();
-    if self.detail.as_ref().is_some_and(|detail| detail.url == url) {
-      self.close_detail();
-      return true;
-    }
-    let Some(path) = self.song_path(&url) else {
-      self.set_message("local song path is unavailable");
-      return true;
-    };
+    let url = song.song.url.clone();
     let title = song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&url));
-    self.open_detail_view(url, path, title);
-    true
+    let Some(path) = self.song_path(&url) else {
+      if self.detail.as_ref().is_some_and(|detail| detail.url == url) {
+        self.close_detail();
+      } else {
+        self.set_message("local song path is unavailable");
+      }
+      return true;
+    };
+    self.open_detail_for(url, path, title)
   }
 
-  /// `i` in the library: same detail view, sourced from the library row.
+  /// Open the detail view for a song, or close it when it already shows
+  /// that song (`i` toggles).
   pub(crate) fn open_detail_for(&mut self, url: String, path: PathBuf, title: String) -> bool {
     if self.detail.as_ref().is_some_and(|detail| detail.url == url) {
       self.close_detail();
       return true;
     }
-    self.open_detail_view(url, path, title);
-    true
-  }
-
-  fn open_detail_view(&mut self, url: String, path: PathBuf, title: String) {
     self.detail = Some(SongView::new(url.clone(), path.clone(), title));
     // The detail layout shows cover + metadata only; no lyrics load.
     self.spawn_metadata_read(url.clone(), path.clone());
     self.spawn_cover_read(url, path);
+    true
   }
 
   pub(crate) fn close_detail(&mut self) {
     self.detail = None;
-  }
-
-  /// `g` / `c` in the queue: jump the selection (and view) to the song
-  /// that is currently playing.
-  pub(crate) fn goto_playing(&mut self) -> bool {
-    let Some(position) = self.status.as_ref().and_then(|status| status.current_song) else {
-      self.set_message("nothing is playing");
-      return true;
-    };
-    let row = self
-      .queue_filter_matches
-      .iter()
-      .position(|candidate| *candidate == position.0.0);
-    match row {
-      Some(row) => self.select_queue_row(row),
-      None => self.set_message("the playing song is hidden by the current filter"),
-    }
-    true
   }
 }

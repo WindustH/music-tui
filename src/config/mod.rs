@@ -23,8 +23,8 @@ mod paths;
 mod schema;
 
 pub use comments::app_config_toml;
-use paths::{app_cache_dir, app_config_dir, app_state_dir};
-pub use paths::{detect_music_dir, expand_home};
+use paths::{app_cache_dir, app_config_dir};
+pub use paths::{app_state_dir, detect_music_dir, expand_home};
 pub use schema::{
   BehaviorConfig, LayoutConfig, LibraryColumn, LibraryConfig, LyricsConfig, MpdConfig,
   PlaylistConfig, RenderConfig, TabConfig, VisualizerConfig,
@@ -413,6 +413,10 @@ mod tests {
     toml::from_str::<AppConfig>(&body).expect("commented default config should parse");
     assert!(body.contains("# music-tui main configuration."));
     assert!(body.contains("# Connection settings for the MPD daemon."));
+    // Array-of-tables sections get their comment once, before the first.
+    let columns = body.find("[[library.columns]]").unwrap();
+    assert!(body[..columns].contains("# Library table columns"));
+    assert_eq!(body.matches("# Library table columns").count(), 1);
   }
 
   #[test]

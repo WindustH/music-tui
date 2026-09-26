@@ -3,6 +3,7 @@
 //! filename > genre > lyrics.
 
 use super::LibraryTrack;
+use crate::strip::{contains_needle, fold, needle};
 
 /// Track field for filter/match purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,77 +53,84 @@ impl TrackField {
   }
 }
 
-/// A matched track plus the field that produced the best
-/// (highest-priority) term-0 match; used for result ordering.
-#[derive(Debug, Clone)]
+/// Fields in match-priority order (title > artist > album > filename >
+/// genre > lyrics): the first field containing a term is its best match.
+const RANKED_FIELDS: [TrackField; 6] = [
+  TrackField::Title,
+  TrackField::Artist,
+  TrackField::Album,
+  TrackField::Filename,
+  TrackField::Genre,
+  TrackField::Lyrics,
+];
+
+/// A visible library row: an index into the full track list plus the
+/// field holding the best (highest-priority) term-0 match, used for
+/// result ordering.
+#[derive(Debug, Clone, Copy)]
 pub struct TrackMatch {
-  pub track: LibraryTrack,
-  /// Field holding the best match.
+  pub index: usize,
   pub field: TrackField,
 }
 
-/// Filter tracks by `query` over every field. The query is split on
-/// whitespace; every term must match somewhere (AND) with spaces inside
-/// the field text ignored, and the reported field/range is the term-0
-/// match with the best priority (in original-text byte coordinates).
-pub fn filter_tracks(tracks: &[LibraryTrack], query: &str) -> Vec<TrackMatch> {
-  let terms: Vec<String> = query.split_whitespace().map(str::to_string).collect();
+/// Every track, unfiltered, in library order.
+pub fn all_rows(tracks: &[LibraryTrack]) -> Vec<TrackMatch> {
+  (0..tracks.len())
+    .map(|index| TrackMatch {
+      index,
+      field: TrackField::Title,
+    })
+    .collect()
+}
+
+/// Filter the `candidates` (indices into `tracks`) by `query` over every
+/// field. The query is split on whitespace; every term must match
+/// somewhere (AND) with spaces inside the field text ignored. Results are
+/// ordered by the best field of term 0, then artist / album / title.
+///
+/// Field texts are folded lazily, in priority order, and only until a term
+/// matches — the (large) lyrics blob is only touched for tracks no other
+/// field matches.
+pub fn filter_tracks(
+  tracks: &[LibraryTrack],
+  candidates: impl IntoIterator<Item = usize>,
+  query: &str,
+) -> Vec<TrackMatch> {
+  let needles: Vec<String> = query.split_whitespace().map(needle).collect();
   let mut out = Vec::new();
-  for track in tracks {
-    let fields: Vec<(TrackField, crate::strip::StrippedText)> = [
-      TrackField::Title,
-      TrackField::Artist,
-      TrackField::Album,
-      TrackField::Genre,
-      TrackField::Filename,
-      TrackField::Lyrics,
-    ]
-    .iter()
-    .map(|field| (*field, crate::strip::StrippedText::new(field.text(track))))
-    .collect();
-    let mut best: Option<(TrackField, (usize, usize))> = None;
-    let mut all_terms_match = true;
-    for (index, term) in terms.iter().enumerate() {
-      let mut term_match: Option<(TrackField, (usize, usize))> = None;
-      for (field, text) in &fields {
-        if let Some(range) = text.find_all(term).first().copied() {
-          let candidate = (*field, range);
-          term_match = Some(match term_match {
-            None => candidate,
-            Some(current) if field.rank() < current.0.rank() => candidate,
-            Some(current) => current,
-          });
-        }
-      }
-      match term_match {
-        Some(found) => {
-          if index == 0 {
-            best = Some(found);
-          }
-        }
-        None => {
-          all_terms_match = false;
-          break;
-        }
-      }
-    }
-    if all_terms_match {
-      let (field, _range) = best.unwrap_or((TrackField::Title, (0, 0)));
-      out.push(TrackMatch {
-        track: track.clone(),
-        field,
-      });
+  for index in candidates {
+    let Some(track) = tracks.get(index) else {
+      continue;
+    };
+    if let Some(field) = best_match(track, &needles) {
+      out.push(TrackMatch { index, field });
     }
   }
   out.sort_by(|a, b| {
+    let (left, right) = (&tracks[a.index], &tracks[b.index]);
     a.field
       .rank()
       .cmp(&b.field.rank())
-      .then_with(|| a.track.artist.cmp(&b.track.artist))
-      .then_with(|| a.track.album.cmp(&b.track.album))
-      .then_with(|| a.track.title.cmp(&b.track.title))
+      .then_with(|| left.artist.cmp(&right.artist))
+      .then_with(|| left.album.cmp(&right.album))
+      .then_with(|| left.title.cmp(&right.title))
+      .then_with(|| a.index.cmp(&b.index))
   });
   out
+}
+
+/// The best field for term 0 when every term matches some field.
+fn best_match(track: &LibraryTrack, needles: &[String]) -> Option<TrackField> {
+  let mut folded: [Option<String>; RANKED_FIELDS.len()] = Default::default();
+  let mut best = None;
+  for needle in needles {
+    let field = RANKED_FIELDS.iter().enumerate().find_map(|(slot, field)| {
+      let text = folded[slot].get_or_insert_with(|| fold(field.text(track)));
+      contains_needle(text, needle).then_some(*field)
+    })?;
+    best.get_or_insert(field);
+  }
+  Some(best.unwrap_or(TrackField::Title))
 }
 
 #[cfg(test)]
@@ -144,9 +152,10 @@ mod tests {
     later.album = "Album Z".to_string();
     let mut earlier = track("same title", "artist", "");
     earlier.album = "Album A".to_string();
-    let hits = filter_tracks(&[later, earlier], "title");
-    assert_eq!(hits[0].track.album, "Album A");
-    assert_eq!(hits[1].track.album, "Album Z");
+    let tracks = [later, earlier];
+    let hits = filter_tracks(&tracks, 0..tracks.len(), "title");
+    assert_eq!(tracks[hits[0].index].album, "Album A");
+    assert_eq!(tracks[hits[1].index].album, "Album Z");
   }
 
   #[test]
@@ -155,7 +164,7 @@ mod tests {
       track("夜的第七章", "周杰伦", "夜曲不停写"),
       track("以父之名", "周杰伦", ""),
     ];
-    let hits = filter_tracks(&tracks, "夜曲");
+    let hits = filter_tracks(&tracks, 0..tracks.len(), "夜曲");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].field, TrackField::Lyrics);
   }
@@ -166,7 +175,7 @@ mod tests {
       track("album-hit", "a", ""), // title match
       track("song", "b", "album-hit in lyrics"),
     ];
-    let hits = filter_tracks(&tracks, "album-hit");
+    let hits = filter_tracks(&tracks, 0..tracks.len(), "album-hit");
     assert_eq!(hits[0].field, TrackField::Title);
     assert_eq!(hits[1].field, TrackField::Lyrics);
   }
@@ -174,7 +183,23 @@ mod tests {
   #[test]
   fn filter_requires_every_term() {
     let tracks = vec![track("夜的第七章", "周杰伦", "")];
-    assert_eq!(filter_tracks(&tracks, "夜 不存在").len(), 0);
-    assert_eq!(filter_tracks(&tracks, "夜 第七").len(), 1);
+    assert_eq!(filter_tracks(&tracks, 0..1, "夜 不存在").len(), 0);
+    assert_eq!(filter_tracks(&tracks, 0..1, "夜 第七").len(), 1);
+  }
+
+  #[test]
+  fn narrowing_a_query_filters_the_previous_rows_identically() {
+    let tracks = vec![
+      track("Love Story", "Taylor Swift", ""),
+      track("Lover", "Taylor Swift", ""),
+      track("Story of My Life", "One Direction", "love"),
+      track("Other", "Band", "lovely day"),
+    ];
+    let broad = filter_tracks(&tracks, 0..tracks.len(), "lo");
+    let narrowed = filter_tracks(&tracks, broad.iter().map(|row| row.index), "love st");
+    let full = filter_tracks(&tracks, 0..tracks.len(), "love st");
+    let indices = |rows: &[TrackMatch]| rows.iter().map(|row| row.index).collect::<Vec<_>>();
+    assert_eq!(indices(&narrowed), indices(&full));
+    assert_eq!(indices(&full), vec![0, 2]);
   }
 }

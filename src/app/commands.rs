@@ -268,9 +268,16 @@ impl App {
     self.set_message(format!("no such tab: {target}"));
   }
 
+  /// `:add <path> [-r|--recursive]`: queue a file or a folder's audio
+  /// files. The directory walk runs off the UI thread; the worker queues
+  /// the whole batch before refreshing once.
   fn command_add(&mut self, args: &[&str]) {
-    let Some(target) = args.first() else {
-      self.set_message("usage: add <path>");
+    let recursive = args.iter().any(|arg| *arg == "--recursive" || *arg == "-r");
+    let Some(target) = args
+      .iter()
+      .find(|arg| **arg != "--recursive" && **arg != "-r")
+    else {
+      self.set_message("usage: add <path> [-r]");
       return;
     };
     let path = expand_home(target);
@@ -283,47 +290,16 @@ impl App {
       };
       music_dir.join(path)
     };
-    let canonical = match resolved.canonicalize() {
-      Ok(canonical) => canonical,
-      Err(_) => {
-        self.set_message(format!("path not found: {}", resolved.display()));
-        return;
-      }
-    };
-    if canonical.is_dir() {
-      let recursive = args.iter().any(|arg| *arg == "--recursive" || *arg == "-r");
-      let files = match crate::library::collect_audio_files(&canonical, recursive) {
-        Ok(files) => files,
-        Err(error) => {
-          self.set_message(format!("scan failed: {error}"));
-          return;
-        }
-      };
-      let mut count = 0;
-      for file in files {
-        if let Some(uri) =
-          crate::open::direct_open_uri(&file, &self.settings.config.mpd, self.music_dir.as_deref())
-        {
-          self.mpdc(MpdCommand::AddUri(uri));
-          count += 1;
-        }
-      }
-      if count == 0 {
-        self.set_message("local files over TCP require a configured music directory");
-      } else {
-        self.set_message(format!("queued {count} song(s)"));
-      }
-    } else if let Some(uri) = crate::open::direct_open_uri(
-      &canonical,
-      &self.settings.config.mpd,
-      self.music_dir.as_deref(),
-    ) {
-      self.mpdc(MpdCommand::AddUri(uri));
-      self.set_message(format!("queued {}", canonical.display()));
-    } else {
-      self.set_message("local files over TCP require a configured music directory");
-    }
+    let mpd = self.mpd.clone();
+    let events = self.events.clone();
+    let config = self.settings.config.mpd.clone();
+    let music_dir = self.music_dir.clone();
+    tokio::task::spawn_blocking(move || {
+      let notice = queue_local_path(&resolved, recursive, &config, music_dir.as_deref(), &mpd);
+      let _ = events.send(AsyncEvent::Mpd(MpdEvent::Notice(notice)));
+    });
   }
+
   /// `:save [path]` — export the current queue as an m3u8 file. Bare file
   /// names resolve under `playlist.save_dir` (default
   /// `~/.local/state/music-tui/playlists`); relative paths are rejected.
@@ -338,7 +314,7 @@ impl App {
     };
     let mut body = String::from("#EXTM3U\n");
     let mut written = 0;
-    for song in &self.queue {
+    for song in self.queue.iter() {
       let song = &song.song;
       let artist = song_artist(song).unwrap_or_default();
       let label = match (artist.is_empty(), song_title(song)) {
@@ -366,6 +342,42 @@ impl App {
       Ok(()) => self.set_message(format!("saved {written} song(s) to {}", target.display())),
       Err(error) => self.set_message(format!("save failed: {error}")),
     }
+  }
+}
+
+/// Resolve `path` (a file or a folder of audio files) to MPD URIs and queue
+/// them; returns the notice to show.
+fn queue_local_path(
+  path: &Path,
+  recursive: bool,
+  config: &crate::config::MpdConfig,
+  music_dir: Option<&Path>,
+  mpd: &MpdHandle,
+) -> String {
+  let Ok(canonical) = path.canonicalize() else {
+    return format!("path not found: {}", path.display());
+  };
+  let files = if canonical.is_dir() {
+    match crate::library::collect_audio_files(&canonical, recursive) {
+      Ok(files) => files,
+      Err(error) => return format!("scan failed: {error:#}"),
+    }
+  } else {
+    vec![canonical.clone()]
+  };
+  let uris: Vec<String> = files
+    .iter()
+    .filter_map(|file| crate::open::direct_open_uri(file, config, music_dir))
+    .collect();
+  let count = uris.len();
+  for uri in uris {
+    mpd.send(MpdCommand::AddUri(uri));
+  }
+  match count {
+    0 if files.is_empty() => format!("no audio files in {}", canonical.display()),
+    0 => "local files over TCP require a configured music directory".to_string(),
+    1 if !canonical.is_dir() => format!("queued {}", canonical.display()),
+    count => format!("queued {count} song(s)"),
   }
 }
 

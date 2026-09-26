@@ -51,6 +51,10 @@ pub fn collect_audio_files(root: &Path, recursive: bool) -> Result<Vec<PathBuf>>
 /// junction into a parent directory otherwise recurses forever). The same
 /// bookkeeping skips directories reachable through two links, collecting
 /// each physical directory's files exactly once.
+///
+/// Only an unreadable `dir` itself is an error: unreadable subdirectories
+/// (a root-owned `lost+found` on a music drive, a permission-locked
+/// folder) are skipped so they cannot hide the rest of the tree.
 fn visit_audio_files(
   dir: &Path,
   recursive: bool,
@@ -62,18 +66,20 @@ fn visit_audio_files(
   }
   let entries = std::fs::read_dir(dir)
     .with_context(|| format!("failed to read directory {}", dir.display()))?;
-  for entry in entries {
-    let entry = entry.with_context(|| format!("failed to read entry in {}", dir.display()))?;
+  for entry in entries.flatten() {
     let path = entry.path();
-    let name = entry.file_name();
-    let name = name.to_string_lossy();
-    if name.starts_with('.') {
+    if entry.file_name().to_string_lossy().starts_with('.') {
       continue;
     }
-    let file_type = entry.file_type().context("failed to read file type")?;
+    let Ok(file_type) = entry.file_type() else {
+      continue;
+    };
     if file_type.is_dir() {
-      if recursive && !has_nomedia(&path) {
-        visit_audio_files(&path, recursive, visited, files)?;
+      if recursive
+        && !has_nomedia(&path)
+        && let Err(error) = visit_audio_files(&path, recursive, visited, files)
+      {
+        tracing::warn!("skipping {}: {error:#}", path.display());
       }
     } else if is_audio_file(&path) {
       files.push(path);
@@ -96,20 +102,6 @@ fn canonical_or_self(path: &Path) -> PathBuf {
 /// filtered, so `music-tui open <dir>` never comes back empty by accident.
 pub fn has_nomedia(dir: &Path) -> bool {
   dir.join(".nomedia").exists()
-}
-
-/// True when any directory from `root` down to the track (exclusive of the
-/// root itself) carries a `.nomedia` marker. Used to drop tracks from the
-/// library database after a marker appears.
-pub fn is_excluded_by_nomedia(root: &Path, rel: &Path) -> bool {
-  let mut current = root.to_path_buf();
-  for component in rel.components() {
-    current.push(component);
-    if has_nomedia(&current) {
-      return true;
-    }
-  }
-  false
 }
 
 /// Convert an absolute library path to an MPD uri relative to the music dir.
@@ -168,12 +160,28 @@ pub fn local_uri_to_path(uri: &str) -> Option<PathBuf> {
   file_uri_to_path(uri).or_else(|| Path::new(uri).is_absolute().then(|| PathBuf::from(uri)))
 }
 
+/// Identity of an MPD song URI for duplicate detection. MPD normalizes
+/// `file://` URIs to plain absolute paths in queue data, so local files
+/// compare by path and everything else by the raw URI. Two URIs name the
+/// same song exactly when their keys are equal, which lets dedup checks
+/// use hash lookups instead of pairwise comparisons.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SongKey {
+  Local(PathBuf),
+  Uri(String),
+}
+
+pub fn song_key(uri: &str) -> SongKey {
+  match local_uri_to_path(uri) {
+    Some(path) => SongKey::Local(path),
+    None => SongKey::Uri(uri.to_string()),
+  }
+}
+
 /// Compare MPD song URIs while accounting for its `file://` normalization.
+#[cfg(all(test, unix))]
 pub fn same_song_uri(left: &str, right: &str) -> bool {
-  left == right
-    || local_uri_to_path(left)
-      .zip(local_uri_to_path(right))
-      .is_some_and(|(left, right)| left == right)
+  song_key(left) == song_key(right)
 }
 
 /// True when the host selects a UNIX socket connection — the only
@@ -342,6 +350,8 @@ mod tests {
       Some(path.to_path_buf())
     );
     assert!(same_song_uri(&file_uri(path), path.to_str().unwrap()));
+    assert!(!same_song_uri(&file_uri(path), "tmp/音乐/100% a song.flac"));
+    assert!(same_song_uri("Artist/song.flac", "Artist/song.flac"));
   }
 
   #[test]
@@ -478,18 +488,25 @@ mod tests {
     let _ = std::fs::remove_dir_all(&dir);
   }
 
+  #[cfg(unix)]
   #[test]
-  fn nomedia_exclusion_covers_nested_paths() {
-    let dir = std::env::temp_dir().join(format!("music-tui-nomedia-db-{}", std::process::id()));
+  fn unreadable_subdirectory_does_not_hide_the_tree() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("music-tui-locked-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("a/b")).unwrap();
-    std::fs::write(dir.join("a/.nomedia"), b"").unwrap();
+    std::fs::create_dir_all(dir.join("locked")).unwrap();
+    std::fs::create_dir_all(dir.join("album")).unwrap();
+    std::fs::write(dir.join("album/a.flac"), b"").unwrap();
+    std::fs::write(dir.join("locked/b.flac"), b"").unwrap();
+    std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
 
-    assert!(is_excluded_by_nomedia(&dir, Path::new("a/song.mp3")));
-    assert!(is_excluded_by_nomedia(&dir, Path::new("a/b/song.mp3")));
-    assert!(!is_excluded_by_nomedia(&dir, Path::new("top.mp3")));
-    assert!(!is_excluded_by_nomedia(&dir, Path::new("c/other.mp3")));
+    let files = collect_audio_files(&dir, true);
+    std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let files = files.expect("an unreadable subdirectory must not fail the walk");
+    assert!(files.iter().any(|file| file.ends_with("album/a.flac")));
 
+    // The root itself being unreadable is still an error.
+    assert!(collect_audio_files(&dir.join("missing"), true).is_err());
     let _ = std::fs::remove_dir_all(&dir);
   }
 

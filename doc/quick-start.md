@@ -1,45 +1,50 @@
 # Quick Start
 
-`music-tui` is a client for an [MPD](https://www.musicpd.org/) daemon. Make
-sure MPD is installed, then start the client:
+`music-tui` is a client for an [MPD](https://www.musicpd.org/) daemon.
+Install MPD, make sure it runs, then start the client:
 
 ```sh
 music-tui
 ```
 
-When no MPD startup config exists, music-tui creates a minimal one on first
-launch and configures both sides to use `~/.config/mpd/socket`. On macOS the
-generated config is `~/.mpd/mpd.conf`; on other Unix systems it is
-`$XDG_CONFIG_HOME/mpd/mpd.conf`. It does not set `music_directory` and never
-overwrites an existing MPD config or a custom music-tui host. Start MPD with
-your service manager after installation; music-tui reconnects automatically.
+## First run
 
-The music directory is auto-detected from the usual MPD config locations
-(`music_directory`); it can also be set explicitly in `config.toml`
-(`mpd.music_dir`). Neither setting is required when music-tui connects through
-a UNIX socket and songs are queued as local `file://` URIs: `open`, Library
-playback, covers, lyrics, and metadata editing can resolve those paths
-directly. MPD-relative queue URIs and local-file playback over TCP still need
-the music directory.
+music-tui writes commented default configs on its first launch. If no MPD
+config exists yet (`~/.config/mpd/mpd.conf`, `~/.mpd/mpd.conf`, or
+`~/.mpdconf`), it also generates a minimal one that listens on the Unix
+socket `~/.config/mpd/socket` and points music-tui there. The generated file
+is `~/.mpd/mpd.conf` on macOS and `$XDG_CONFIG_HOME/mpd/mpd.conf`
+(`~/.config/mpd/mpd.conf`) elsewhere; it sets no `music_directory` and no
+extra outputs. Existing MPD configs and a host you already configured are
+never replaced. Start MPD with your service manager; music-tui reconnects
+automatically. (Windows has no automatic setup — see [Windows](windows.md).)
 
-Default configuration files are created on first run:
+## Music directory
 
-- `~/.config/music-tui/config.toml`
-- `~/.config/music-tui/keymap.toml`
-- `~/.config/music-tui/theme.toml`
+Songs queued as local `file://` URIs over a Unix socket need no music
+directory: `open`, library playback, covers, lyrics, and tag editing resolve
+their paths directly. Relative MPD song URIs — and local files over TCP —
+need one. music-tui takes `mpd.music_dir` from `config.toml`, or else reads
+`music_directory` from the MPD config locations above.
 
-State (last tab, queue selection, lyrics follow mode) is restored between runs;
-logs are written under `~/.cache/music-tui/`.
+## Files
 
-Basic workflow:
+| | Linux / macOS | Windows |
+| --- | --- | --- |
+| `config.toml`, `keymap.toml`, `theme.toml` | `$XDG_CONFIG_HOME/music-tui` (`~/.config/music-tui`) | `%APPDATA%\music-tui` |
+| `library.db`, `state.toml`, `playlists/` | `$XDG_STATE_HOME/music-tui` (`~/.local/state/music-tui`) | `%APPDATA%\music-tui` |
+| `music-tui.log`, `covers/` | `$XDG_CACHE_HOME/music-tui` (`~/.cache/music-tui`) | `%LOCALAPPDATA%\music-tui` |
 
-1. Switch tabs with `h`/`l`, arrow keys, or `tab` (cycles; wraps around).
+`state.toml` remembers the active tab, the queue selection, and the lyrics
+follow mode between runs.
+
+## Basic workflow
+
+1. Switch tabs with `h`/`l`, the arrow keys, or `tab` (wraps around).
 2. In the queue, move with `j`/`k` and press `enter` to play a song.
-3. Press `i` on a queue entry for its detail view (cover + metadata);
-   `esc` returns.
-4. Press `[`/`]` for previous/next, `\` to toggle pause, `-`/`=` to seek.
+3. Press `i` for a song's detail view (cover + tags); `esc` returns.
+4. `[`/`]` skip to the previous/next song, `\` toggles pause, `-`/`=` seek.
 5. Click the progress band at the bottom to seek; drag to scrub.
-6. Press `:` for the command prompt, `f1` for the key-binding help.
+6. `:` opens the command prompt, `f1` lists the keys of the current tab.
 
-To hook up the visualizer, MPD needs a fifo output — see
-[Visualizer](visualizer.md).
+The visualizer needs an MPD fifo output — see [Visualizer](visualizer.md).

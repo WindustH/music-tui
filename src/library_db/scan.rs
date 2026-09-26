@@ -2,15 +2,26 @@
 //! and upsert tracks into SQLite (mtime-based incremental sync).
 
 use std::{
-  path::{Path, PathBuf},
+  collections::{HashMap, HashSet},
+  path::Path,
   time::UNIX_EPOCH,
 };
 
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
+use tracing::{debug, warn};
 
 use super::LibraryTrack;
 use crate::config::LibraryConfig;
+
+/// Changed tracks written per transaction. Committing in batches keeps the
+/// write lock short (a concurrent instance's scan waits on the busy
+/// timeout instead of failing) and makes a first scan of a large library
+/// resumable: quitting halfway keeps everything indexed so far.
+const COMMIT_BATCH: usize = 200;
+
+/// Progress is reported every this many files.
+const PROGRESS_EVERY: usize = 200;
 
 pub fn scan_roots(
   connection: &mut Connection,
@@ -19,170 +30,197 @@ pub fn scan_roots(
 ) -> Result<()> {
   let roots: Vec<(i64, String)> = {
     let mut statement = connection.prepare("SELECT id, path FROM roots")?;
-
     statement
       .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
       .collect::<std::result::Result<Vec<_>, _>>()?
   };
+  let configured = super::configured_root_paths(config);
 
-  let transaction = connection.transaction()?;
-  let mut scanned = 0usize;
-  let mut changed = 0usize;
+  let mut counts = ScanCounts::default();
   for (root_id, root_path) in &roots {
-    let Ok(root) = PathBuf::from(&root_path).canonicalize() else {
-      continue;
-    };
-    for file in walk(&root, config.recursive) {
-      scanned += 1;
-      if scanned.is_multiple_of(200) {
-        progress(scanned, changed);
-      }
-      let rel = match file.strip_prefix(&root) {
-        Ok(rel) => rel.to_string_lossy().to_string(),
-        Err(_) => continue,
-      };
-      let Ok(metadata) = std::fs::metadata(&file) else {
-        continue;
-      };
-      let mtime = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-      let known: Option<(i64, u64)> = {
-        let mut statement = transaction
-          .prepare("SELECT id, mtime FROM tracks WHERE root_id = ?1 AND rel_path = ?2")?;
-        statement
-          .query_row((root_id, rel.as_str()), |row| {
-            Ok((row.get(0)?, row.get::<_, i64>(1)? as u64))
-          })
-          .ok()
-      };
-      if known.is_some_and(|(_, known_mtime)| known_mtime == mtime) {
-        continue;
-      }
-      let track = read_track(&file).unwrap_or_else(|| LibraryTrack {
-        id: 0,
-        path: file.clone(),
-        title: String::new(),
-        artist: String::new(),
-        album: String::new(),
-        genre: String::new(),
-        filename: file
-          .file_stem()
-          .map(|stem| stem.to_string_lossy().to_string())
-          .unwrap_or_default(),
-        duration_secs: 0.0,
-        lyrics: String::new(),
-        mtime,
-      });
-      let lyrics = if track.lyrics.is_empty() {
-        read_sidecar_lyrics(&file)
-      } else {
-        track.lyrics
-      };
-      // Untagged files still follow the usual "NN. artist - title"
-      // filename convention; derive artist/title from the stem.
-      let (derived_artist, derived_title) = derive_from_filename(&track.filename);
-      let artist = if track.artist.is_empty() {
-        derived_artist
-      } else {
-        track.artist
-      };
-      let title = if track.title.is_empty() {
-        derived_title
-      } else {
-        track.title
-      };
-      if let Some((id, _)) = known {
-        transaction.execute(
-          "UPDATE tracks SET title=?1, artist=?2, album=?3, genre=?4, filename=?5,
-             duration_secs=?6, lyrics=?7, mtime=?8 WHERE id=?9",
-          rusqlite::params![
-            title,
-            artist,
-            track.album,
-            track.genre,
-            track.filename,
-            track.duration_secs,
-            lyrics,
-            mtime as i64,
-            id
-          ],
-        )?;
-      } else {
-        transaction.execute(
-          "INSERT INTO tracks (root_id, rel_path, title, artist, album, genre, filename,
-             duration_secs, lyrics, mtime) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-          rusqlite::params![
-            root_id,
-            rel,
-            title,
-            artist,
-            track.album,
-            track.genre,
-            track.filename,
-            track.duration_secs,
-            lyrics,
-            mtime as i64
-          ],
-        )?;
-      }
-      changed += 1;
+    if configured.contains(root_path) {
+      scan_root(
+        connection,
+        *root_id,
+        Path::new(root_path),
+        config,
+        &mut counts,
+        progress,
+      )?;
+    }
+  }
+
+  // Drop roots no longer configured (or no longer resolvable) with their
+  // tracks.
+  let transaction = connection.transaction()?;
+  for (root_id, root_path) in &roots {
+    if !configured.contains(root_path) {
+      transaction.execute("DELETE FROM tracks WHERE root_id = ?1", [root_id])?;
+      transaction.execute("DELETE FROM roots WHERE id = ?1", [root_id])?;
     }
   }
   transaction.commit()?;
-  // Drop tracks of roots no longer configured and vanished files.
-  drop_missing(connection, &roots, config)?;
-  progress(scanned, changed);
+  progress(counts.scanned, counts.changed);
   Ok(())
 }
 
-fn drop_missing(
-  connection: &Connection,
-  roots: &[(i64, String)],
-  config: &LibraryConfig,
-) -> Result<()> {
-  for (root_id, root_path) in roots {
-    let root = PathBuf::from(root_path);
-    let vanished: Vec<i64> = {
-      let mut statement =
-        connection.prepare("SELECT id, rel_path FROM tracks WHERE root_id = ?1")?;
+#[derive(Default)]
+struct ScanCounts {
+  scanned: usize,
+  changed: usize,
+}
 
-      statement
-        .query_map([root_id], |row| {
-          Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?
-        .filter_map(|row| row.ok())
-        .filter(|(_, rel)| {
-          let path = root.join(rel);
-          !path.exists() || crate::library::is_excluded_by_nomedia(&root, Path::new(rel))
-        })
-        .map(|(id, _)| id)
-        .collect()
+/// Sync one root: upsert new or modified files, then delete rows whose
+/// file vanished, moved under a `.nomedia` marker, or became unreadable.
+fn scan_root(
+  connection: &mut Connection,
+  root_id: i64,
+  root: &Path,
+  config: &LibraryConfig,
+  counts: &mut ScanCounts,
+  progress: &mut dyn FnMut(usize, usize),
+) -> Result<()> {
+  let files = match crate::library::collect_audio_files(root, config.recursive) {
+    Ok(files) => files,
+    Err(error) => {
+      // The root itself is unreadable: keep its rows rather than wiping
+      // them over what may be a transient failure.
+      warn!("library root {} skipped: {error:#}", root.display());
+      return Ok(());
+    }
+  };
+  let known: HashMap<String, (i64, i64)> = {
+    let mut statement =
+      connection.prepare("SELECT rel_path, id, mtime FROM tracks WHERE root_id = ?1")?;
+    statement
+      .query_map([root_id], |row| {
+        Ok((row.get::<_, String>(0)?, (row.get(1)?, row.get(2)?)))
+      })?
+      .collect::<std::result::Result<_, _>>()?
+  };
+
+  let mut seen: HashSet<&str> = HashSet::with_capacity(files.len());
+  let mut transaction = connection.transaction()?;
+  let mut pending = 0usize;
+  for file in &files {
+    counts.scanned += 1;
+    if counts.scanned.is_multiple_of(PROGRESS_EVERY) {
+      progress(counts.scanned, counts.changed);
+    }
+    // The database stores paths as text: a non-UTF-8 name would be saved
+    // lossily, fail to resolve, and be dropped and re-added on every scan.
+    let Some(rel) = file.strip_prefix(root).ok().and_then(Path::to_str) else {
+      debug!("library scan skips non-UTF-8 path {}", file.display());
+      continue;
     };
-    for id in vanished {
-      connection.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    seen.insert(rel);
+    let Ok(metadata) = std::fs::metadata(file) else {
+      continue;
+    };
+    let mtime = metadata
+      .modified()
+      .ok()
+      .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+      .map(|duration| duration.as_secs() as i64)
+      .unwrap_or(0);
+    let known_id = match known.get(rel) {
+      Some((_, known_mtime)) if *known_mtime == mtime => continue,
+      Some((id, _)) => Some(*id),
+      None => None,
+    };
+    upsert_track(&transaction, root_id, rel, file, mtime, known_id)?;
+    counts.changed += 1;
+    pending += 1;
+    if pending >= COMMIT_BATCH {
+      transaction.commit()?;
+      transaction = connection.transaction()?;
+      pending = 0;
     }
   }
-  let configured = super::configured_root_paths(config);
-  let stale: Vec<i64> = roots
-    .iter()
-    .filter(|(_, path)| !configured.contains(path))
-    .map(|(id, _)| *id)
-    .collect();
-  for id in stale {
-    connection.execute("DELETE FROM tracks WHERE root_id = ?1", [id])?;
-    connection.execute("DELETE FROM roots WHERE id = ?1", [id])?;
+
+  for (rel, (id, _)) in &known {
+    if !seen.contains(rel.as_str()) {
+      transaction.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    }
   }
+  transaction.commit()?;
   Ok(())
 }
 
-fn walk(root: &Path, recursive: bool) -> Vec<PathBuf> {
-  // Scanning tolerates unreadable directories (treated as empty); open's
-  // collect_audio_files still surfaces the error to the user.
-  crate::library::collect_audio_files(root, recursive).unwrap_or_default()
+fn upsert_track(
+  transaction: &Transaction<'_>,
+  root_id: i64,
+  rel: &str,
+  file: &Path,
+  mtime: i64,
+  known_id: Option<i64>,
+) -> Result<()> {
+  let track = read_track(file).unwrap_or_else(|| LibraryTrack {
+    path: file.to_path_buf(),
+    filename: file
+      .file_stem()
+      .map(|stem| crate::sanitize::sanitize_text(&stem.to_string_lossy()))
+      .unwrap_or_default(),
+    ..LibraryTrack::default()
+  });
+  let lyrics = if track.lyrics.is_empty() {
+    read_sidecar_lyrics(file)
+  } else {
+    track.lyrics
+  };
+  // Untagged files still follow the usual "NN. artist - title" filename
+  // convention; derive artist/title from the stem.
+  let (derived_artist, derived_title) = derive_from_filename(&track.filename);
+  let artist = if track.artist.is_empty() {
+    derived_artist
+  } else {
+    track.artist
+  };
+  let title = if track.title.is_empty() {
+    derived_title
+  } else {
+    track.title
+  };
+  match known_id {
+    Some(id) => {
+      transaction
+        .prepare_cached(
+          "UPDATE tracks SET title=?1, artist=?2, album=?3, genre=?4, filename=?5,
+             duration_secs=?6, lyrics=?7, mtime=?8 WHERE id=?9",
+        )?
+        .execute(rusqlite::params![
+          title,
+          artist,
+          track.album,
+          track.genre,
+          track.filename,
+          track.duration_secs,
+          lyrics,
+          mtime,
+          id
+        ])?;
+    }
+    None => {
+      transaction
+        .prepare_cached(
+          "INSERT INTO tracks (root_id, rel_path, title, artist, album, genre, filename,
+             duration_secs, lyrics, mtime) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        )?
+        .execute(rusqlite::params![
+          root_id,
+          rel,
+          title,
+          artist,
+          track.album,
+          track.genre,
+          track.filename,
+          track.duration_secs,
+          lyrics,
+          mtime
+        ])?;
+    }
+  }
+  Ok(())
 }
 
 /// Split a filename stem like `2. ARForest - Your Way` into
@@ -227,10 +265,7 @@ fn read_track(path: &Path) -> Option<LibraryTrack> {
     id: 0,
     path: path.to_path_buf(),
     title: crate::sanitize::sanitize_text(tag.title().unwrap_or_default().trim()),
-    artist: tag
-      .artist()
-      .map(|artist| crate::sanitize::sanitize_text(&artist))
-      .unwrap_or_default(),
+    artist: crate::sanitize::sanitize_text(tag.artist().unwrap_or_default().trim()),
     album: crate::sanitize::sanitize_text(tag.album().unwrap_or_default().trim()),
     genre: crate::sanitize::sanitize_text(tag.genre().unwrap_or_default().trim()),
     filename: path

@@ -1,158 +1,150 @@
 # Configuration
 
-Configuration lives in `~/.config/music-tui/`:
+Configuration lives in the config directory (`~/.config/music-tui/` on
+Linux and macOS, `%APPDATA%\music-tui\` on Windows — see
+[Quick Start](quick-start.md#files)):
 
 - `config.toml` — general settings (below)
 - `keymap.toml` — see [Keymap](keymap.md)
 - `theme.toml` — see [Theme](theme.md)
 
-Files are created with commented defaults on first run. An incompatible or
-invalid file is backed up (`config.toml.bak.<timestamp>`) and rewritten.
-If MPD itself has no startup config, music-tui also creates a minimal
-Unix-socket config without `music_directory`. Existing MPD configs are left
-untouched.
+Each file is created with commented defaults on first run, and missing keys
+are filled in with their defaults when music-tui starts. A file that no
+longer parses (or, for `config.toml`, has an invalid layout) is moved aside
+as `<name>.bak.<timestamp>` and replaced with defaults; the footer reports
+it.
 
 ## `config.toml`
 
+The defaults, with notes:
+
 ```toml
 [mpd]
-host = "~/.config/mpd/socket"  # generated first-run local socket
+host = "127.0.0.1"   # a path starting with / or ~ connects over a Unix socket
 port = 6600
-password = ""        # optional MPD password
-music_dir = ""       # optional; auto-detected, unnecessary for file:// over a UNIX socket
+# password = "..."   # optional
+# music_dir = ""     # optional; empty = music_directory from mpd.conf
+link_dir = ""        # outside files over TCP; empty = <music_dir>/.music-tui-links
 
 [behavior]
-tick_ms = 1000         # status refresh while idle
-playing_tick_ms = 200  # status refresh while playing
-queue_dedup = true     # auto-remove duplicate queue entries: any queue change
-                       # (appends, other clients, restores) deletes redundant copies in
-                       # MPD itself — first occurrence stays, the playing copy stays;
-                       # toggle with ,d or :dedup (enforces immediately when enabled)
+tick_ms = 1000          # status poll while paused/stopped (100–10000)
+playing_tick_ms = 200   # status poll while playing (100–10000)
+queue_dedup = true      # hide duplicate queue entries, skip duplicate adds
 
 [render]
-chafa_bin = "chafa"    # Chafa binary for symbol/ASCII rendering
-auto_detect = true     # probe terminal graphics support
-chafa_args = []        # extra args, e.g. ["--colors", "256"]
-chafa_threads = 0      # 0 = Chafa default
-passthrough = ""       # optional escape passthrough (Zellij etc.)
-zellij_sixel = false   # advertise Sixel inside Zellij
+chafa_bin = "chafa"     # character-art fallback renderer
+auto_detect = true      # probe the terminal's image protocols
+chafa_args = []         # extra Chafa arguments, e.g. ["--colors=256"]
+chafa_threads = 0       # 0 = Chafa's default
+# passthrough = "tmux"  # force tmux/screen escape wrapping, or "none"
+zellij_sixel = false    # also allow Sixel inside Zellij
 
 [visualizer]
-fifo_path = "/tmp/mpd.fifo"  # MPD fifo output path
-sample_rate = 44100          # must match the fifo format
-channels = 2
-bars = 256                   # band cap; analysis follows the pane width
-fps = 30
-window = 2048                # FFT window in samples (256..=8192)
+fifo_path = "/tmp/mpd.fifo"   # path of the MPD fifo output
+sample_rate = 44100           # must match the fifo format
+channels = 2                  # must match the fifo format (1–8)
+bars = 256                    # band cap; one band per pane column up to this
+fps = 30                      # spectrum updates per second
+window = 2048                 # FFT size, 256–8192 (rounded up to a power of two)
 
 [lyrics]
-extra_dirs = []   # extra lookup dirs for `<artist> - <title>.lrc`
+extra_dirs = []   # extra folders searched for .lrc files
 follow = true     # auto-scroll synced lyrics
 
 [playlist]
-save_dir = ""     # `:save` destination dir; empty = ~/.local/state/music-tui/playlists
+save_dir = ""     # :save folder; empty = <state dir>/playlists
+
+[library]
+paths = []        # folders to index; empty disables the library
+recursive = true
+
+[[library.columns]]
+field = "title"
+width = 4
+# … artist (3), album (3), duration (1)
 
 [layout]
-detail = "H(2:1, cover, metadata)"  # secondary detail view (`i`)
+detail = "H(2:1, cover, metadata)"   # the detail view (i)
 
 [[layout.tabs]]
 name = "playlist"
 layout = "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))"
 main = "queue"
+# … library, playing, metadata, lyrics, visualizer (see Views)
 ```
 
-If an MPD config already exists, music-tui preserves it and the connection
-host you selected; TCP (`127.0.0.1:6600` by default) remains available for
-remote/container setups.
+Notes:
 
-## Layout DSL
+- On the very first run on Linux/macOS, `mpd.host` may be set to the
+  generated Unix socket (`~/.config/mpd/socket`) instead of `127.0.0.1`.
+- `queue_dedup` never deletes anything from MPD's queue: adding a song that
+  is already queued is skipped, and the queue view hides extra copies (the
+  first copy and the playing copy stay visible; every copy shows while a
+  filter is active). Toggle it with `,` `d` or `:dedup`.
+- MPD pushes every change as it happens; the polls above only keep the
+  elapsed time moving.
+
+## Layout language
 
 Each tab's `layout` is a tree of splits and panes:
 
-- `H(ratio, left, right)` — horizontal split (side by side)
-- `V(ratio, top, bottom)` — vertical split (stacked)
-- leaf panes: `queue`, `library`, `cover`, `lyrics`, `metadata`, `visualizer`
+- `H(a:b, left, right)` — side by side, widths shared `a:b`
+- `V(a:b, top, bottom)` — stacked, heights shared `a:b`
+- panes: `queue`, `library`, `cover`, `lyrics`, `metadata`, `visualizer`
 
-`ratio` is `a:b` (e.g. `2:1` — left pane gets two thirds). Splits nest
-freely:
+Splits nest freely:
 
 ```text
 H(1:2, cover, V(2:1, lyrics, metadata))
 ```
 
-`main` names the pane that receives key input while the tab is active; it
-must appear in the tree (defaults to the first leaf).
+`main` names the pane whose keys are active on the tab (it must be in the
+tree; default: the first pane). Keys the main pane does not use fall
+through to the tab's other panes.
 
 ### Pane data sources
 
-The `cover`, `lyrics` and `metadata` panes take an optional `:source`
-suffix selecting which song they display:
+`cover`, `lyrics` and `metadata` panes take an optional `:source` suffix:
 
-- `playing` (default) — the currently playing song
-- `hovered` (alias `queue-hovered`) — the song selected in the queue
-- `library-hovered` — the track selected in the library pane
+- `playing` (default) — the song MPD is playing
+- `hovered` (also `queue-hovered`) — the song selected in the queue
+- `library-hovered` — the track selected in the library
 
 ```text
 H(2:1, queue, V(2:1, cover:hovered, lyrics:hovered))
 H(2:1, library, V(2:1, cover:library-hovered, metadata:library-hovered))
 ```
 
-The first tree is the default sidebar companion for the playlist tab
-(metadata instead of lyrics); the second is the default library tab.
-
-A `:hovered` lyrics pane has no playback state: it renders as a plain
-scrollable list without sync highlighting, follow mode, or click-to-seek
-(those report "song is not playing"). Data for the hovered song loads
-lazily, only when some pane uses the source.
+Hovered lyrics have no playback state: they show as a plain scrollable list
+(no highlighting, follow mode, or click-to-seek). Hovered data is only
+loaded when some tab uses the source.
 
 ## Library
 
-The library pane indexes directories you configure — independent of MPD's
-music directory (files outside the MPD library are still playable: they
-are resolved through `file://` over a UNIX socket or a symlink bridge over
-TCP, like `music-tui open`). The UNIX socket route needs no `music_dir`; the
-TCP bridge does.
+The library pane indexes the folders in `[library] paths` into its own
+database (`library.db` in the state directory), independent of MPD's music
+directory. Scans are incremental (by modification time) and run in the
+background at startup; `u` rescans. Folders containing a `.nomedia` file
+are skipped with everything below them, and tracks under them are dropped
+on the next scan. Untagged files take artist and title from a
+`NN. Artist - Title` file name.
 
-```toml
-[library]
-paths = ["/home/user/Music"]   # source directories (empty = library disabled)
-recursive = true               # scan subdirectories
-# Directories containing a `.nomedia` marker file (Android convention) are
-# skipped with everything below them; already-indexed tracks under such a
-# directory are dropped from the database on the next rescan (`u`).
+Playing a library track queues its file: a relative URI inside the music
+directory, `file://` over a Unix socket, or a link in `mpd.link_dir` over
+TCP (a copy on Windows) — the same rules as `music-tui open`.
 
-[[library.columns]]
-field = "title"
-width = 4
-
-[[library.columns]]
-field = "artist"
-width = 3
-
-[[library.columns]]
-field = "album"
-width = 3
-
-[[library.columns]]
-field = "duration"
-width = 1
-```
-
-`field` is one of `title`, `artist`, `album`, `genre`, `filename` or
-`duration`; `width` is a relative weight shared across the pane width.
-The scan is incremental (mtime-based) and stored in `library.db` under
-`~/.local/state/music-tui/`. `/` filters every field including lyrics text
-and highlights the match; long fields scroll horizontally to the match.
-`u` triggers a rescan.
+`[[library.columns]]` picks the table columns in order: `field` is `title`,
+`artist`, `album`, `genre`, `filename`, or `duration`; `width` is a relative
+weight. `/` filters every field (lyrics text included) and scrolls long
+cells to the match.
 
 ## Detail view layout
 
-`[layout].detail` configures the secondary detail view opened with `i`
-from the queue. It is a layout tree over exactly one `cover` and one
-`metadata` pane — side by side by default:
+`[layout].detail` arranges the detail view (`i`): exactly one `cover` and
+one `metadata` pane.
 
 ```toml
 [layout]
-detail = "H(2:1, cover, metadata)"   # default: cover left, metadata right
-# detail = "V(2:1, cover, metadata)" # stacked instead
+detail = "H(2:1, cover, metadata)"    # default: cover left, tags right
+# detail = "V(2:1, cover, metadata)"  # stacked instead
 ```

@@ -1,84 +1,98 @@
 # Controls
 
-All keys are remappable — this documents the defaults. The `global` section
-wins over pane bindings in every view.
+These are the default keys; all of them can be changed in
+[keymap.toml](keymap.md). `global` keys work in every pane, except where a
+pane binds the same key itself (the library's `a`). Keys the focused (main)
+pane does not use fall through to the other panes of the tab. `f1` shows
+the keys of the current tab.
 
-## Global (every view)
+## Global
 
 | Key | Action |
 | --- | --- |
 | `:` | command prompt |
-| `q` / `ctrl-c` | quit |
-| `h`/`l`, `left`/`right`, `a`/`f`, `tab`/`backtab` | previous/next tab (cycles) |
+| `q`, `ctrl-c` | quit — or close the detail view first when one is open |
+| `h`/`l`, `left`/`right`, `a`/`f`, `backtab`/`tab` | previous / next tab (wraps) |
 | `[` / `]` | previous / next song |
-| `\` | play/pause toggle |
+| `\` | play / pause |
 | `x` | stop |
-| `-` / `=` | seek 5s back / forward |
-| `_` / `+` | seek 30s back / forward |
-| `{` / `}` | volume down / up |
-| `m` | mute toggle |
-| `r` / `t` | repeat / random toggle |
-| `y` | single mode (off → on → oneshot) |
-| `C` | consume toggle |
-| `f1` | key-binding help (scrollable) |
+| `-` / `=` | seek 5 s back / forward |
+| `_` / `+` | seek 30 s back / forward |
+| `{` / `}` | volume down / up (5%) |
+| `m` | mute / restore the volume |
+| `,` `r` | toggle repeat |
+| `,` `t` | toggle random |
+| `,` `y` | cycle single mode (off → on → oneshot) |
+| `,` `c` | toggle consume |
 
-## Queue pane
+## Every pane
 
 | Key | Action |
 | --- | --- |
-| `j`/`k`, `up`/`down` | move selection |
-| `pgup`/`pgdn` | page up / down |
-| `home` / `G`/`end` | top / end |
-| `g` `c` | jump to the currently playing song |
-| `g` `g` | move selection to top |
-| `enter` | play selected song |
-| `d` | remove selected song |
+| `f1` | key help for the current tab (scrollable) |
+| `esc` | close the detail view, else clear the pane's filter, else go to the first tab |
+
+## Queue
+
+| Key | Action |
+| --- | --- |
+| `j`/`k`, `down`/`up` | move the selection |
+| `pgdn`/`pgup` | page down / up |
+| `g` `g`, `home` / `G`, `end` | first / last row |
+| `g` `c` | jump to the playing song |
+| `enter` | play the selected song |
+| `d` | remove the selected song |
 | `D` | clear the queue |
 | `?` | shuffle the queue |
-| `i` | open detail view for the selected song |
+| `,` `d` | toggle hiding duplicate entries (on by default) |
+| `i` | detail view of the selected song |
 | `e` | edit the selected song's tags in `$EDITOR` |
-| `/` | filter the queue (enter keeps, `esc` clears) |
-| `,d` | toggle hiding duplicate queue entries (default on) |
+| `/` | filter (`enter` keeps it, `esc` clears it) |
 
-## Library pane
+## Library
 
 | Key | Action |
 | --- | --- |
-| `j`/`k`, `up`/`down` | move selection |
-| `pgup`/`pgdn` | page up / down |
-| `home` / `G`/`end` | top / end |
-| `enter` | play the selected track now (inserted after the current song) |
+| `j`/`k`, `down`/`up` | move the selection |
+| `pgdn`/`pgup` | page down / up |
+| `g` `g`, `home` / `G`, `end` | first / last row |
+| `enter` | play the selected track now (inserted after the playing song) |
 | `a` | append the selected track to the queue |
-| `i` | open the detail view for the selected track |
-| `u` | rescan the library directories |
-| `/` | filter every field (enter keeps, `esc` clears) |
+| `i` | detail view of the selected track |
+| `u` | rescan the library folders |
+| `/` | filter every field, lyrics included (`enter` keeps, `esc` clears) |
 
-## Lyrics pane
+In the default library tab, `e` (from the metadata pane) edits the selected
+track's tags.
 
-| Key | Action |
-| --- | --- |
-| `j`/`k`, `up`/`down` | scroll (leaves auto-follow) |
-| `pgup`/`pgdn` | scroll by page |
-| `F` | toggle auto-follow playback |
-| `enter` | seek to the highlighted line and resume following |
-
-## Metadata pane
+## Lyrics
 
 | Key | Action |
 | --- | --- |
-| `j`/`k`, `up`/`down`, `pgup`/`pgdn` | scroll |
-| `e` | edit tags in `$EDITOR` |
-| `esc` | back (close filter/detail, then first tab) |
-| `q` | quit — or close the detail view first when one is open |
+| `j`/`k`, `down`/`up` | move the line cursor (leaves auto-follow) |
+| `pgdn`/`pgup` | move by ten lines |
+| `F` | toggle auto-follow |
+| `enter` | seek to the selected line and resume following |
+
+## Metadata
+
+| Key | Action |
+| --- | --- |
+| `j`/`k`, `down`/`up` | scroll |
+| `pgdn`/`pgup` | scroll by ten lines |
+| `e` | edit the shown song's tags in `$EDITOR` |
+
+## Help dialog
+
+`j`/`k`, `down`/`up`, `pgdn`/`pgup` scroll; any other key or a click closes it.
 
 ## Mouse
 
-- **Queue / Library**: wheel scrolls the viewport (the selection passively
-  follows and stays in view); click selects, clicking the selected row plays;
-  middle-click selects and plays. The scrollbar on the right reflects the
-  viewport position — click or drag it to jump/pan.
-- **Lyrics**: wheel scrolls the viewport like the queue; clicking a synced
-  line seeks there.
 - **Tabs**: click a tab to switch.
-- **Progress band**: click to seek, drag to scrub, wheel seeks ±5s.
-- **Help dialog**: wheel scrolls, any click or key closes.
+- **Queue / library**: the wheel scrolls the viewport (the selection follows
+  to stay visible); click selects, clicking the selected row plays it;
+  middle-click plays directly. Click or drag the scrollbar to jump.
+- **Lyrics**: the wheel scrolls; clicking a synced line of the playing song
+  seeks there.
+- **Progress band**: click to seek, drag to scrub, wheel seeks ±5 s.
+- **Help dialog**: the wheel scrolls, any click closes it.

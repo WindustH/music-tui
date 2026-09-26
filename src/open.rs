@@ -14,11 +14,11 @@ use mpd_client::{
 use tracing::info;
 
 use crate::{
-  cli::OpenArgs,
+  cli::{OpenArgs, OpenMode},
   config::{MpdConfig, Settings},
   library::{
     collect_audio_files, ensure_link, file_uri, is_audio_file, is_socket_host, links_dir,
-    path_to_uri, resolve_music_dir, same_song_uri,
+    path_to_uri, resolve_music_dir, song_key,
   },
   mpd::{InterruptSession, capture_interrupt_session, connect},
   playlist::{self, PlaylistKind},
@@ -41,7 +41,7 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
   let (client, _events) = client;
 
   if path.is_dir() {
-    let notice = if args.mode == crate::cli::OpenMode::Append {
+    let notice = if args.mode == OpenMode::Append {
       open_folder_append(
         &client,
         &path,
@@ -92,44 +92,21 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
 
   let uri = resolve_open_uri(&client, &path, &settings.config.mpd, music_dir.as_deref()).await?;
   let dedup = settings.config.behavior.queue_dedup;
+  let name = short_name(&path);
   let mut interrupt: Option<InterruptSession> = None;
-  let notice = match () {
-    _ if args.no_play => {
-      if dedup && queue_has(&client, &uri).await? {
-        format!("{} already queued (not playing)", short_name(&path))
-      } else {
-        client.command(Add::uri(&uri)).await?;
-        format!(
-          "queued {} (not playing)",
-          path.file_name().unwrap_or_default().to_string_lossy()
-        )
-      }
+  let notice = match args.mode {
+    OpenMode::Interrupt if !args.no_play => {
+      // Snapshot state, replace the queue with the single song, arm restore.
+      let session = capture_interrupt_session(&client).await?;
+      client.command(ClearQueue).await?;
+      client.command(Add::uri(&uri)).await?;
+      client.command(SetSingle(SingleMode::Oneshot)).await?;
+      client.command(Play::current()).await?;
+      info!(playlist = ?session.playlist, "interrupt preview started");
+      interrupt = Some(session);
+      format!("previewing {name} (queue will be restored afterwards)")
     }
-    _ if args.mode == crate::cli::OpenMode::Append => {
-      if dedup && queue_has(&client, &uri).await? {
-        maybe_start_if_idle(&client).await?;
-        format!("{} already queued", short_name(&path))
-      } else {
-        client.command(Add::uri(&uri)).await?;
-        maybe_start_if_idle(&client).await?;
-        format!("appended {}", short_name(&path))
-      }
-    }
-    _ if args.mode == crate::cli::OpenMode::Next => {
-      if dedup && queue_has(&client, &uri).await? {
-        format!("{} already queued", short_name(&path))
-      } else {
-        let status = client.command(Status).await?;
-        if let Some((position, _)) = status.current_song {
-          client.command(Add::uri(&uri).at(position.0 + 1)).await?;
-        } else {
-          client.command(Add::uri(&uri)).await?;
-          maybe_start_if_idle(&client).await?;
-        }
-        format!("queued {} next", short_name(&path))
-      }
-    }
-    _ if args.mode == crate::cli::OpenMode::Folder => {
+    OpenMode::Folder => {
       let folder = path
         .parent()
         .map(Path::to_path_buf)
@@ -145,27 +122,50 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       for file_uri in &uris {
         client.command(Add::uri(file_uri)).await?;
       }
-      let position = target.unwrap_or(0);
-      client.command(Play::song(SongPosition(position))).await?;
-      format!(
-        "playing {} from folder queue ({} songs)",
-        short_name(&path),
-        uris.len()
-      )
+      if args.no_play {
+        format!(
+          "queued the folder of {name} ({} songs, not playing)",
+          uris.len()
+        )
+      } else {
+        client
+          .command(Play::song(SongPosition(target.unwrap_or(0))))
+          .await?;
+        format!("playing {name} from folder queue ({} songs)", uris.len())
+      }
     }
-    _ => {
-      // Interrupt: snapshot state, replace queue with the single song, arm restore.
-      let session = capture_interrupt_session(&client).await?;
-      client.command(ClearQueue).await?;
-      client.command(Add::uri(&uri)).await?;
-      client.command(SetSingle(SingleMode::Oneshot)).await?;
-      client.command(Play::current()).await?;
-      info!(playlist = ?session.playlist, "interrupt preview started");
-      interrupt = Some(session);
-      format!(
-        "previewing {} (queue will be restored afterwards)",
-        short_name(&path)
-      )
+    OpenMode::Next => {
+      if dedup && queue_has(&client, &uri).await? {
+        format!("{name} already queued")
+      } else {
+        let status = client.command(Status).await?;
+        if let Some((position, _)) = status.current_song {
+          client.command(Add::uri(&uri).at(position.0 + 1)).await?;
+        } else {
+          client.command(Add::uri(&uri)).await?;
+          if !args.no_play {
+            maybe_start_if_idle(&client).await?;
+          }
+        }
+        format!("queued {name} next")
+      }
+    }
+    // Append — and an interrupt preview that must not play, which is just
+    // a queued song.
+    OpenMode::Append | OpenMode::Interrupt => {
+      let queued = dedup && queue_has(&client, &uri).await?;
+      if !queued {
+        client.command(Add::uri(&uri)).await?;
+      }
+      if !args.no_play {
+        maybe_start_if_idle(&client).await?;
+      }
+      match (queued, args.no_play) {
+        (true, false) => format!("{name} already queued"),
+        (true, true) => format!("{name} already queued (not playing)"),
+        (false, false) => format!("appended {name}"),
+        (false, true) => format!("queued {name} (not playing)"),
+      }
     }
   };
 
@@ -200,10 +200,7 @@ async fn open_playlist(
   let name = short_name(path);
   // `interrupt` previews a single song; for whole playlists the natural
   // default is a plain replace (folder-style).
-  let replace = matches!(
-    args.mode,
-    crate::cli::OpenMode::Folder | crate::cli::OpenMode::Interrupt
-  );
+  let replace = matches!(args.mode, OpenMode::Folder | OpenMode::Interrupt);
   if dedup {
     skip_queued_and_batch_dups(client, &mut uris, !replace).await?;
   }
@@ -220,7 +217,7 @@ async fn open_playlist(
       client.command(Play::song(SongPosition(0))).await?;
     }
     format!("queued {} song(s) from {name}", uris.len())
-  } else if args.mode == crate::cli::OpenMode::Next {
+  } else if args.mode == OpenMode::Next {
     let status = client.command(Status).await?;
     let start = status
       .current_song
@@ -430,8 +427,9 @@ pub(crate) async fn maybe_start_if_idle(client: &Client) -> Result<()> {
 
 /// Whether the queue already contains `uri` (add-time dedup).
 async fn queue_has(client: &Client, uri: &str) -> Result<bool> {
+  let key = song_key(uri);
   let queue = client.command(Queue).await?;
-  Ok(queue.iter().any(|song| same_song_uri(&song.song.url, uri)))
+  Ok(queue.iter().any(|song| song_key(&song.song.url) == key))
 }
 
 /// Drop URIs already queued and duplicates within the batch itself;
@@ -442,20 +440,19 @@ async fn skip_queued_and_batch_dups(
   uris: &mut Vec<String>,
   include_queue: bool,
 ) -> Result<()> {
-  let queued: Vec<String> = if include_queue {
+  // Seed the seen-set with the queue: a uri is kept only the first time
+  // its song key shows up.
+  let mut seen: HashSet<_> = if include_queue {
     client
       .command(Queue)
       .await?
-      .into_iter()
-      .map(|song| song.song.url)
+      .iter()
+      .map(|song| song_key(&song.song.url))
       .collect()
   } else {
-    Vec::new()
+    HashSet::new()
   };
-  let mut seen = HashSet::new();
-  uris.retain(|uri| {
-    seen.insert(uri.clone()) && !queued.iter().any(|queued| same_song_uri(queued, uri))
-  });
+  uris.retain(|uri| seen.insert(song_key(uri)));
   Ok(())
 }
 

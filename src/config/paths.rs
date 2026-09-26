@@ -10,7 +10,7 @@ pub(super) fn app_cache_dir() -> PathBuf {
   platform_cache_dir().join("music-tui")
 }
 
-pub(super) fn app_state_dir() -> PathBuf {
+pub fn app_state_dir() -> PathBuf {
   platform_state_dir().join("music-tui")
 }
 
