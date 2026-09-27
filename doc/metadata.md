@@ -10,8 +10,8 @@ The metadata pane and the detail view list:
 
 ## Editing
 
-`e` opens the tags as a TOML draft in `$EDITOR` (falling back to `$VISUAL`,
-then `vi`, or `notepad` on Windows):
+`e` opens the tags as a TOML draft in your editor (`$VISUAL`, then
+`$EDITOR`, then `vi`, or `notepad` on Windows):
 
 ```toml
 # Edit music tags. Save and exit to apply.

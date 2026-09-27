@@ -22,7 +22,7 @@
 
 ## Cover shows as character art on a capable terminal
 
-- Check `GALLERY_TUI_RENDER_MODES` and `render.auto_detect`. Inside Zellij,
+- Check `MUSIC_TUI_RENDER_MODES` and `render.auto_detect`. Inside Zellij,
   Kitty images need Zellij 0.45+; `render.zellij_sixel = true` additionally
   allows Sixel.
 
