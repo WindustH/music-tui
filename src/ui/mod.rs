@@ -12,7 +12,6 @@ use mpd_client::commands::SingleMode;
 use mpd_client::responses::{PlayState, SongInQueue};
 use ratatui::{
   Frame,
-  buffer::CellDiffOption,
   layout::{Alignment, Constraint, Layout, Rect},
   style::{Modifier, Style},
   text::{Line, Span},
