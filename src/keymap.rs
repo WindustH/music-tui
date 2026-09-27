@@ -1,7 +1,9 @@
 use std::collections::HashSet;
-use std::fmt::Write as FmtWrite;
 
-use framework_tui::{KeyBindingConfig, KeyBindings, KeyContext};
+use framework_tui::keymap::{
+  InputKeymapOptions, KeyBindingConfig, KeyBindings, KeymapEntry, KeymapOn, KeymapSection,
+  default_input_keymap, format_keymap_sections, key,
+};
 
 use crate::layout::PaneKind;
 use serde::{Deserialize, Serialize};
@@ -18,27 +20,6 @@ pub struct KeymapConfig {
   pub input: KeymapSection,
   pub help: KeymapSection,
   pub global: KeymapSection,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-pub struct KeymapSection {
-  pub keymap: Vec<KeymapEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct KeymapEntry {
-  pub on: KeymapOn,
-  pub run: String,
-  pub desc: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum KeymapOn {
-  One(String),
-  Many(Vec<String>),
 }
 
 impl Default for KeymapConfig {
@@ -165,7 +146,11 @@ impl Default for KeymapConfig {
           key("f1", "help", "Show visualizer key bindings"),
         ],
       },
-      input: default_input_keymap_section(),
+      input: default_input_keymap(&InputKeymapOptions {
+        help: Some("Show input key bindings".to_string()),
+        help_after_cancel: true,
+        ..InputKeymapOptions::default()
+      }),
       help: KeymapSection {
         keymap: vec![
           key("pgdn", "page_down", "Scroll help one page down"),
@@ -221,7 +206,7 @@ impl KeymapConfig {
   /// pane binding wins inside the pane (the library's `a` appends while `a`
   /// switches tabs everywhere else).
   fn view_bindings(&self, section: &KeymapSection) -> KeyBindings {
-    let claimed: HashSet<String> = section
+    let claimed: HashSet<Vec<String>> = section
       .keymap
       .iter()
       .filter_map(|entry| normalized_sequence(&entry.on))
@@ -234,10 +219,10 @@ impl KeymapConfig {
       .cloned()
       .collect();
     KeyBindings::from_sections(
-      binding_configs(&section.keymap),
+      section.binding_configs(),
       Vec::new(),
-      binding_configs(&self.input.keymap),
-      binding_configs(&global),
+      self.input.binding_configs(),
+      global.iter().map(KeyBindingConfig::from),
     )
     .with_global_priority()
   }
@@ -260,7 +245,7 @@ impl KeymapConfig {
     KeyBindings::from_sections(
       Vec::<KeyBindingConfig>::new(),
       Vec::<KeyBindingConfig>::new(),
-      binding_configs(&self.input.keymap),
+      self.input.binding_configs(),
       Vec::<KeyBindingConfig>::new(),
     )
   }
@@ -270,7 +255,7 @@ impl KeymapConfig {
   /// here closes the dialog.
   pub fn help_bindings(&self) -> KeyBindings {
     KeyBindings::from_sections(
-      binding_configs(&self.help.keymap),
+      self.help.binding_configs(),
       Vec::<KeyBindingConfig>::new(),
       Vec::<KeyBindingConfig>::new(),
       Vec::<KeyBindingConfig>::new(),
@@ -306,170 +291,26 @@ impl KeymapConfig {
       (&mut self.global, &default.global),
     ];
     for (section, default_section) in sections {
-      append_missing_actions(&mut section.keymap, &default_section.keymap);
+      section.append_missing_actions(default_section);
     }
   }
 }
 
 pub(crate) fn format_keymap_toml(config: &KeymapConfig) -> String {
-  let mut out = String::new();
-  for (name, section) in config.sections() {
-    push_keymap_section(&mut out, name, section);
-  }
-  out
+  format_keymap_sections(config.sections())
 }
 
-fn binding_configs(entries: &[KeymapEntry]) -> Vec<KeyBindingConfig> {
-  entries
-    .iter()
-    .map(|entry| KeyBindingConfig {
-      on: keymap_on_values(&entry.on),
-      action: entry.run.clone(),
-      desc: entry.desc.clone(),
-    })
-    .collect()
-}
-
-/// The key sequence of `on` in framework-tui's canonical token form (so
-/// aliases such as `<C-c>` / `ctrl-c` compare equal); `None` when no key
-/// parses.
-fn normalized_sequence(on: &KeymapOn) -> Option<String> {
-  let probe = KeyBindings::from_sections(
-    [KeyBindingConfig {
-      on: keymap_on_values(on),
-      action: String::new(),
-      desc: String::new(),
-    }],
-    Vec::new(),
-    Vec::new(),
-    Vec::new(),
-  );
-  probe
-    .help_entries(KeyContext::Browser)
-    .into_iter()
-    .next()
-    .map(|entry| entry.keys)
-}
-
-fn keymap_on_values(on: &KeymapOn) -> Vec<String> {
-  match on {
-    KeymapOn::One(value) => vec![value.clone()],
-    KeymapOn::Many(values) => values.clone(),
-  }
-}
-
-fn append_missing_actions(entries: &mut Vec<KeymapEntry>, defaults: &[KeymapEntry]) {
-  for default in defaults {
-    if entries.iter().any(|entry| entry.run == default.run) {
-      continue;
-    }
-    entries.push(default.clone());
-  }
-}
-
-fn default_input_keymap_section() -> KeymapSection {
-  KeymapSection {
-    keymap: vec![
-      key("esc", "cancel", "Cancel input"),
-      key("f1", "help", "Show input key bindings"),
-      key("enter", "submit", "Submit input"),
-      key("backspace", "backspace", "Delete before cursor"),
-      key("delete", "delete", "Delete under cursor"),
-      key("left", "move_left", "Move cursor left"),
-      key("right", "move_right", "Move cursor right"),
-      key("home", "move_start", "Move cursor to start"),
-      key("ctrl-a", "move_start", "Move cursor to start"),
-      key("end", "move_end", "Move cursor to end"),
-      key("ctrl-e", "move_end", "Move cursor to end"),
-      key("ctrl-u", "kill_before_cursor", "Delete before cursor"),
-      key("ctrl-k", "kill_after_cursor", "Delete after cursor"),
-      key("tab", "completion_next", "Select next completion"),
-      key(
-        "backtab",
-        "completion_previous",
-        "Select previous completion",
-      ),
-      key("up", "history_previous", "Previous command history"),
-      key("down", "history_next", "Next command history"),
-    ],
-  }
-}
-
-fn key(on: impl Into<KeymapOn>, run: &str, desc: &str) -> KeymapEntry {
-  KeymapEntry {
-    on: on.into(),
-    run: run.to_string(),
-    desc: desc.to_string(),
-  }
-}
-
-impl From<&str> for KeymapOn {
-  fn from(value: &str) -> Self {
-    Self::One(value.to_string())
-  }
-}
-
-impl<const N: usize> From<[&str; N]> for KeymapOn {
-  fn from(value: [&str; N]) -> Self {
-    Self::Many(value.into_iter().map(str::to_string).collect())
-  }
-}
-
-fn push_keymap_section(out: &mut String, name: &str, section: &KeymapSection) {
-  let _ = writeln!(out, "[{name}]");
-  out.push_str("keymap = [\n");
-  for entry in &section.keymap {
-    let _ = writeln!(
-      out,
-      "  {{ on = {}, run = {}, desc = {} }},",
-      format_keymap_on(&entry.on),
-      toml_basic_string(&entry.run),
-      toml_basic_string(&entry.desc)
-    );
-  }
-  out.push_str("]\n\n");
-}
-
-fn format_keymap_on(on: &KeymapOn) -> String {
-  match on {
-    KeymapOn::One(value) => toml_basic_string(value),
-    KeymapOn::Many(values) => {
-      let keys = values
-        .iter()
-        .map(|value| toml_basic_string(value))
-        .collect::<Vec<_>>()
-        .join(", ");
-      format!("[{keys}]")
-    }
-  }
-}
-
-fn toml_basic_string(value: &str) -> String {
-  let mut out = String::with_capacity(value.len() + 2);
-  out.push('"');
-  for ch in value.chars() {
-    match ch {
-      '\\' => out.push_str("\\\\"),
-      '"' => out.push_str("\\\""),
-      '\n' => out.push_str("\\n"),
-      '\r' => out.push_str("\\r"),
-      '\t' => out.push_str("\\t"),
-      '\u{08}' => out.push_str("\\b"),
-      '\u{0c}' => out.push_str("\\f"),
-      ch if ch.is_control() => {
-        let _ = write!(out, "\\u{:04X}", ch as u32);
-      }
-      ch => out.push(ch),
-    }
-  }
-  out.push('"');
-  out
+/// The key sequence of `on` as canonical tokens (so aliases such as
+/// `<C-c>` / `ctrl-c` compare equal); `None` when no key parses.
+fn normalized_sequence(on: &KeymapOn) -> Option<Vec<String>> {
+  let tokens = on.tokens();
+  (!tokens.is_empty()).then_some(tokens)
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use framework_tui::{KeyDispatcher, MatchResult};
+  use framework_tui::{KeyContext, KeyDispatcher, MatchResult};
 
   fn dispatch(bindings: &KeyBindings, keys: &[&str]) -> MatchResult {
     let mut dispatcher = KeyDispatcher::default();
