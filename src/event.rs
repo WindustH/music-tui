@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crossterm::event::Event;
-use img_tui::{ProtocolPlacement, RenderMode};
+use img_tui::{ProtocolImage, RenderMode};
 use mpd_client::responses::{SongInQueue, Status};
 use ratatui::text::Text;
 
@@ -90,12 +90,5 @@ pub enum RenderedImage {
     mode: RenderMode,
     text: Text<'static>,
   },
-  Protocol {
-    mode: RenderMode,
-    data: String,
-    refresh: Option<String>,
-    placement: Option<ProtocolPlacement>,
-    fingerprint: u64,
-    erase: Option<String>,
-  },
+  Protocol(ProtocolImage),
 }

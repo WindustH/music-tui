@@ -1,5 +1,7 @@
 //! Cover pane rendering (protocol images and Chafa symbols).
 
+use img_tui::reserve_protocol_area;
+
 use super::*;
 
 /// Draw cover art into `image_area` (aspect-fitted by the caller); hints
@@ -41,25 +43,10 @@ pub(super) fn draw_cover_art(
         image_area,
       );
     }
-    Some(RenderedImage::Protocol {
-      mode,
-      data,
-      refresh,
-      placement,
-      fingerprint,
-      erase,
-    }) => {
+    Some(RenderedImage::Protocol(image)) => {
       // Keep the TUI from touching cells under the protocol image.
       reserve_protocol_area(frame, image_area);
-      images.overlays.push(ProtocolOverlay {
-        area: image_area,
-        mode: *mode,
-        data: data.clone(),
-        refresh: refresh.clone(),
-        placement: placement.clone(),
-        fingerprint: *fingerprint,
-        erase: erase.clone(),
-      });
+      images.overlays.push(image.overlay(image_area));
     }
     None => {
       if let Some(error) = images
@@ -150,16 +137,5 @@ pub(super) fn fitted_cover_area(
     y: inner.y + inner.height.saturating_sub(fitted_height) / 2,
     width: fitted_width,
     height: fitted_height,
-  }
-}
-
-pub(super) fn reserve_protocol_area(frame: &mut Frame, area: Rect) {
-  let buffer = frame.buffer_mut();
-  for y in area.y..area.y.saturating_add(area.height) {
-    for x in area.x..area.x.saturating_add(area.width) {
-      if let Some(cell) = buffer.cell_mut((x, y)) {
-        cell.set_diff_option(CellDiffOption::Skip);
-      }
-    }
   }
 }

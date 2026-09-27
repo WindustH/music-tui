@@ -29,7 +29,9 @@ use std::time::Instant;
 
 use anyhow::Result;
 use clap::Parser;
-use framework_tui::editor::edit_text_in_editor;
+use framework_tui::{
+  EditorOptions, InputReader, PanicOrigin, edit_text_outside_tui, install_panic_hook,
+};
 use tokio::{sync::mpsc, time::sleep_until};
 use tracing::debug;
 
@@ -40,7 +42,7 @@ use crate::{
   mpd::InterruptSession,
   render::CoverRenderStore,
   state::StateSaver,
-  terminal::{InputReader, Tui},
+  terminal::Tui,
 };
 
 #[tokio::main]
@@ -93,7 +95,15 @@ async fn run_tui(
     .map(|_| visualizer::spawn_band_renderer(tx.clone()));
   let library_scan_tx =
     library_db::spawn_scanner(&settings.config.library, &settings.state_dir, tx.clone());
-  let input = InputReader::spawn(tx.clone());
+  let input_tx = tx.clone();
+  let input = InputReader::spawn_named("music-tui-input", move |input| {
+    input_tx
+      .send(AsyncEvent::Input {
+        event: input.event,
+        generation: input.generation,
+      })
+      .is_ok()
+  })?;
 
   let mut renderer = CoverRenderStore::new(
     settings.config.render.clone(),
@@ -101,7 +111,14 @@ async fn run_tui(
     render_setup.modes,
   );
   let mut tui = Tui::new(render_setup.protocol_reset)?;
-  install_panic_hook();
+  // Panics on the UI thread restore the terminal before the message is
+  // printed; panics on worker threads are logged instead, since writing
+  // them to stderr would scribble over the running TUI.
+  install_panic_hook(|info, origin| {
+    if origin == PanicOrigin::Background {
+      tracing::error!("background thread panicked: {info}");
+    }
+  });
   let mut app = App::new(settings, mpd, tx.clone(), initial_notice, interrupt);
   app.attach_workers(visualizer.clone(), band_renderer, library_scan_tx);
   app.restore_state(state::PersistedState::load(&app.settings.state_dir));
@@ -122,14 +139,16 @@ async fn run_tui(
     }
 
     if let Some(request) = app.take_editor_request() {
-      input.pause();
-      tui.suspend()?;
       let EditorRequest::Metadata { draft, .. } = &request;
-      let result = edit_text_in_editor(draft, &app.settings.cache_dir);
-      let resume_result = tui.resume();
-      input.resume();
-      app.finish_metadata_editor(request, result.ok());
-      resume_result?;
+      let handoff = edit_text_outside_tui(
+        &mut tui,
+        Some(&input),
+        draft,
+        &app.settings.cache_dir,
+        &EditorOptions::default(),
+      );
+      app.finish_metadata_editor(request, handoff.output.ok());
+      handoff.terminal?;
       needs_draw = true;
       continue;
     }
@@ -178,10 +197,10 @@ fn handle_async_event(
 ) -> bool {
   match message {
     AsyncEvent::Input { event, generation } => {
-      let current = input.generation();
-      if generation == current {
+      if input.is_current(generation) {
         app.handle_input(event)
       } else {
+        let current = input.generation();
         debug!(?event, generation, current, "stale input event ignored");
         false
       }
@@ -197,20 +216,4 @@ fn handle_async_event(
     AsyncEvent::VisualizerFrame(lines) => app.handle_visualizer_frame(lines),
     AsyncEvent::Library(event) => app.handle_library_event(event),
   }
-}
-
-/// Panics on the UI thread restore the terminal before the message is
-/// printed (otherwise it lands on the alternate screen and vanishes).
-/// Panics on worker threads are logged instead: writing them to stderr
-/// would scribble over the running TUI.
-fn install_panic_hook() {
-  let default_hook = std::panic::take_hook();
-  std::panic::set_hook(Box::new(move |info| {
-    if std::thread::current().name() == Some("main") {
-      terminal::emergency_restore();
-      default_hook(info);
-    } else {
-      tracing::error!("background thread panicked: {info}");
-    }
-  }));
 }

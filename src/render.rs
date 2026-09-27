@@ -7,7 +7,9 @@ use std::{
 };
 
 use ansi_to_tui::IntoText;
-use img_tui::{NativeImageConfig, ProtocolPlacement, RenderMode, capability, native_image};
+use img_tui::{
+  NativeImageConfig, ProtocolImage, ProtocolImageSpec, RenderMode, capability, native_image,
+};
 use ratatui::text::Text;
 use sha2::{Digest, Sha256};
 use tokio::{process::Command, sync::mpsc};
@@ -191,7 +193,7 @@ impl CoverRenderStore {
 fn image_mode(image: &RenderedImage) -> &'static str {
   match image {
     RenderedImage::Symbols { mode, .. } => mode.label(),
-    RenderedImage::Protocol { mode, .. } => mode.label(),
+    RenderedImage::Protocol(image) => image.mode.label(),
   }
 }
 
@@ -221,99 +223,23 @@ async fn render_once(
   native_config: &NativeImageConfig,
   mode: RenderMode,
 ) -> Result<RenderedImage, String> {
-  let image_id = kitty_image_id(path, width, height, mode);
-  let placement_id = kitty_placement_id(path, image_id);
   if mode.is_protocol() {
     let prepared = native_image::prepare(path, width, height, native_config.cell_pixels)
       .await
       .map_err(|error| error.to_string())?;
-    if mode == RenderMode::Kitty && native_config.kitty_unicode_placeholders {
-      // yazi-style U=1: upload once (a=t), then a *virtual* placement
-      // (a=p,U=1,c=,r=) that fits the image to the pane rect. Display happens
-      // via U+10EEEE placeholder text cells managed by img-tui, so modal
-      // dialogs occlude the image per-cell and no re-transmit is needed.
-      let image_id = image_id.unwrap_or(1);
-      let upload = native_image::render_prepared_kitty_upload(&prepared, native_config, image_id)
-        .await
-        .map_err(|error| error.to_string())?;
-      let virtual_placement = String::from_utf8(native_image::render_kitty_virtual_placement(
-        native_config,
-        image_id,
-        width,
-        height,
-      ))
-      .map_err(|error| error.to_string())?;
-      let fingerprint = render_fingerprint(&upload.data);
-      let mut data = String::from_utf8(upload.data).map_err(|error| error.to_string())?;
-      data.push_str(&virtual_placement);
-      return Ok(RenderedImage::Protocol {
-        mode,
-        data,
-        refresh: Some(virtual_placement),
-        placement: Some(ProtocolPlacement::KittyUnicode { image_id }),
-        fingerprint,
-        erase: native_image::erase_sequence(
-          mode,
-          native_config.passthrough.as_deref(),
-          Some(image_id),
-        ),
-      });
-    }
-    if mode == RenderMode::Kitty
-      && let Some(placement_id) = placement_id
-    {
-      let viewport = native_image::NativeImageViewport {
-        full_width_cells: width,
-        full_height_cells: height,
-        visible_width_cells: width,
-        visible_height_cells: height,
-        left_cells: 0,
-        top_cells: 0,
-      };
-      let image_id = image_id.unwrap_or(1);
-      let upload = native_image::render_prepared_kitty_upload(&prepared, native_config, image_id)
-        .await
-        .map_err(|error| error.to_string())?;
-      let refresh = native_image::render_kitty_viewport_from_upload(
-        &upload,
-        viewport,
-        native_config,
-        placement_id,
-      )
-      .map_err(|error| error.to_string())?;
-      let fingerprint = render_fingerprint(&upload.data);
-      let data = String::from_utf8(upload.data).map_err(|error| error.to_string())?;
-      return Ok(RenderedImage::Protocol {
-        mode,
-        data,
-        refresh: Some(String::from_utf8(refresh).map_err(|error| error.to_string())?),
-        placement: Some(ProtocolPlacement::KittyPlacement {
-          image_id,
-          placement_id,
-        }),
-        fingerprint,
-        erase: native_image::erase_kitty_placement_sequence(
-          native_config.passthrough.as_deref(),
-          image_id,
-          placement_id,
-        ),
-      });
-    }
-    let data = native_image::render_prepared(&prepared, mode, native_config, image_id)
+    // With kitty Unicode placeholders (yazi-style U=1) the image is uploaded
+    // once and shown through placeholder text cells managed by img-tui, so
+    // modal dialogs occlude it per cell and no re-transmit is needed.
+    let image_id = kitty_image_id(path, width, height, mode);
+    let spec = ProtocolImageSpec {
+      image_id,
+      placement_id: kitty_placement_id(path, image_id),
+      ..ProtocolImageSpec::new(mode, width, height)
+    };
+    ProtocolImage::render(&prepared, &spec, native_config)
       .await
-      .map_err(|error| error.to_string())?;
-    let fingerprint = render_fingerprint(&data);
-    let data = String::from_utf8(data).map_err(|error| error.to_string())?;
-    let placement = None;
-    let erase = native_image::erase_sequence(mode, native_config.passthrough.as_deref(), image_id);
-    Ok(RenderedImage::Protocol {
-      mode,
-      data,
-      refresh: None,
-      placement,
-      fingerprint,
-      erase,
-    })
+      .map(RenderedImage::Protocol)
+      .map_err(|error| error.to_string())
   } else {
     let bytes = run_chafa(path, width, height, config, mode).await?;
     let text: Text<'static> = bytes.into_text().map_err(|error| error.to_string())?;
@@ -430,11 +356,4 @@ fn kitty_placement_id(path: &Path, image_id: Option<u32>) -> Option<u32> {
   let digest = hasher.finalize();
   let placement_id = u32::from_le_bytes(digest[..4].try_into().unwrap_or_default()) & 0x7fff_ffff;
   Some(placement_id.max(1))
-}
-
-fn render_fingerprint(bytes: &[u8]) -> u64 {
-  let mut hasher = Sha256::new();
-  hasher.update(bytes);
-  let digest = hasher.finalize();
-  u64::from_le_bytes(digest[..8].try_into().unwrap_or_default())
 }
