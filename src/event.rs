@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use crossterm::event::Event;
 use img_tui::{ProtocolImage, RenderMode};
 use mpd_client::responses::{SongInQueue, Status};
-use ratatui::text::Text;
+use ratatui::widgets::Paragraph;
 
 #[derive(Debug)]
 pub enum AsyncEvent {
@@ -86,9 +86,10 @@ pub struct RenderOutcome {
 
 #[derive(Debug, Clone)]
 pub enum RenderedImage {
+  /// Chafa output, wrapped once so drawing it each frame copies nothing.
   Symbols {
     mode: RenderMode,
-    text: Text<'static>,
+    paragraph: Box<Paragraph<'static>>,
   },
   Protocol(ProtocolImage),
 }

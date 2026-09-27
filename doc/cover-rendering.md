@@ -29,9 +29,10 @@ works:
 
 With `render.auto_detect = false`, only the character-art modes are used.
 
-The `GALLERY_TUI_RENDER_MODES` environment variable (read by img-tui)
-overrides the order: a comma-separated list of `kitty`, `sixel`, `iterm`,
-`symbols`, `ascii` (or `auto`). Inside tmux or GNU screen, image escapes are
+The `MUSIC_TUI_RENDER_MODES` environment variable overrides the order: a
+comma-separated list of `kitty`, `sixel`, `iterm`, `symbols`, `ascii` (or
+`auto`). Older versions read `GALLERY_TUI_RENDER_MODES` instead; that variable
+no longer affects music-tui. Inside tmux or GNU screen, image escapes are
 wrapped for the multiplexer automatically; `render.passthrough` (`tmux`,
 `screen`, or `none`) overrides the detection.
 

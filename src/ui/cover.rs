@@ -37,11 +37,8 @@ pub(super) fn draw_cover_art(
     .renderer
     .get(path, image_area.width, image_area.height)
   {
-    Some(RenderedImage::Symbols { text, .. }) => {
-      frame.render_widget(
-        Paragraph::new(text.clone()).wrap(Wrap { trim: false }),
-        image_area,
-      );
+    Some(RenderedImage::Symbols { paragraph, .. }) => {
+      frame.render_widget(paragraph.as_ref(), image_area);
     }
     Some(RenderedImage::Protocol(image)) => {
       // Keep the TUI from touching cells under the protocol image.

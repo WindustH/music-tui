@@ -10,7 +10,10 @@ use ansi_to_tui::IntoText;
 use img_tui::{
   NativeImageConfig, ProtocolImage, ProtocolImageSpec, RenderMode, capability, native_image,
 };
-use ratatui::text::Text;
+use ratatui::{
+  text::Text,
+  widgets::{Paragraph, Wrap},
+};
 use sha2::{Digest, Sha256};
 use tokio::{process::Command, sync::mpsc};
 use tracing::{debug, info, warn};
@@ -29,13 +32,15 @@ pub struct RenderSetup {
   pub protocol_reset: Option<String>,
 }
 
-/// Probe the terminal and pick the render modes: `GALLERY_TUI_RENDER_MODES`
-/// (img-tui's override variable) wins, then auto-detection when enabled,
-/// else character art only.
+/// Environment variable that forces the render modes, e.g. `sixel,symbols`.
+const RENDER_MODES_ENV: &str = "MUSIC_TUI_RENDER_MODES";
+
+/// Probe the terminal and pick the render modes: `MUSIC_TUI_RENDER_MODES`
+/// wins, then auto-detection when enabled, else character art only.
 pub fn setup(config: &RenderConfig) -> RenderSetup {
   let terminal = capability::detect();
   info!(capability = ?terminal, "detected terminal capability");
-  let modes = capability::render_modes_override_from_env()
+  let modes = capability::render_modes_override_from_env(RENDER_MODES_ENV)
     .or_else(|| {
       config.auto_detect.then(|| {
         let zellij_sixel = if config.zellij_sixel { "on" } else { "" };
@@ -243,7 +248,8 @@ async fn render_once(
   } else {
     let bytes = run_chafa(path, width, height, config, mode).await?;
     let text: Text<'static> = bytes.into_text().map_err(|error| error.to_string())?;
-    Ok(RenderedImage::Symbols { mode, text })
+    let paragraph = Box::new(Paragraph::new(text).wrap(Wrap { trim: false }));
+    Ok(RenderedImage::Symbols { mode, paragraph })
   }
 }
 
