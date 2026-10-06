@@ -26,7 +26,6 @@ lofty = "0.22.4"
 mpd_client = "1.4.1"
 ratatui = "0.30.2"
 rusqlite = { version = "0.32", default-features = false, features = ["column_decltype"] }
-rustfft = "6.4"
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.11.0"
 tokio = { version = "1.52.3", features = ["full"] }
@@ -37,6 +36,7 @@ unicode-width = "0.2.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+rustfft = "6.4"
 
 [target.'cfg(windows)'.dependencies]
 dirs = "5"
