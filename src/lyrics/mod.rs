@@ -193,14 +193,11 @@ pub fn load(
   }
 
   let tagged = read_from_path(file).map_err(|error| format!("failed to read tags: {error}"))?;
-  if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
-    for key in [ItemKey::Lyrics] {
-      if let Some(body) = tag.get_string(&key)
-        && !body.trim().is_empty()
-      {
-        return parse(body);
-      }
-    }
+  if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag())
+    && let Some(body) = tag.get_string(&ItemKey::Lyrics)
+    && !body.trim().is_empty()
+  {
+    return parse(body);
   }
 
   Err("no lyrics found".to_string())
