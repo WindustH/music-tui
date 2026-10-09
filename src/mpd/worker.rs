@@ -109,8 +109,22 @@ impl Session<'_> {
     if command_touches_queue(&command) {
       self.restore.disarm();
     }
+    let volume = matches!(
+      command,
+      MpdCommand::SetVolume(_) | MpdCommand::NudgeVolume(_)
+    );
     let dedup = self.dedup.load(Ordering::Relaxed);
-    super::commands::run(self.client, command, self.config, cache, index, dedup).await;
+    let outcome =
+      super::commands::run(self.client, command, self.config, cache, index, dedup).await;
+    // A volume key that silently does nothing is the usual sign of an
+    // output without a working mixer; say why.
+    if let Err(error) = outcome
+      && volume
+    {
+      let _ = self.events.send(AsyncEvent::Mpd(MpdEvent::Notice(format!(
+        "MPD can't change the volume: {error}"
+      ))));
+    }
   }
 
   /// Fetch the status, restore a finished interrupt preview, re-fetch the

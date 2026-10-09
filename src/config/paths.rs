@@ -15,14 +15,14 @@ pub fn app_state_dir() -> PathBuf {
 }
 
 #[cfg(unix)]
-fn platform_state_dir() -> PathBuf {
+pub(super) fn platform_state_dir() -> PathBuf {
   env_path("XDG_STATE_HOME")
     .or_else(|| env_path("HOME").map(|home| home.join(".local/state")))
     .unwrap_or_else(|| PathBuf::from(".local/state"))
 }
 
 #[cfg(windows)]
-fn platform_state_dir() -> PathBuf {
+pub(super) fn platform_state_dir() -> PathBuf {
   dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 

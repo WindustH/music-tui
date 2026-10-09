@@ -14,10 +14,13 @@ config exists yet (`~/.config/mpd/mpd.conf`, `~/.mpd/mpd.conf`, or
 `~/.mpdconf`), it also generates a minimal one that listens on the Unix
 socket `~/.config/mpd/socket` and points music-tui there. The generated file
 is `~/.mpd/mpd.conf` on macOS and `$XDG_CONFIG_HOME/mpd/mpd.conf`
-(`~/.config/mpd/mpd.conf`) elsewhere; it sets no `music_directory` and no
-extra outputs. Existing MPD configs and a host you already configured are
-never replaced. Start MPD with your service manager; music-tui reconnects
-automatically. (Windows has no automatic setup — see [Windows](windows.md).)
+(`~/.config/mpd/mpd.conf`) elsewhere. It sets no `music_directory` and
+keeps MPD's database, state, sticker, and log files in `~/.local/state/mpd`.
+On macOS it also adds a CoreAudio output with a software mixer and a fixed
+format (see [Troubleshooting](troubleshooting.md#macos-audio)). Existing MPD
+configs and a host you already configured are never replaced. Start MPD
+with your service manager; music-tui reconnects automatically. (Windows
+has no automatic setup — see [Windows](windows.md).)
 
 ## Music directory
 
