@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "music-tui"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
