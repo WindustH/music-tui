@@ -31,7 +31,18 @@ impl App {
   fn apply_snapshot(&mut self, status: Status, queue: Option<Arc<[SongInQueue]>>) {
     let previous_url = self.current_song_url();
     let previous_position = self.playing_position();
+    // MPD's player error (an output that failed to open, say) otherwise
+    // only shows as playback that never starts.
+    let previous_error = self.status.as_ref().and_then(|old| old.error.as_ref());
+    let new_error = status
+      .error
+      .as_ref()
+      .filter(|error| previous_error != Some(*error))
+      .map(|error| format!("MPD: {error}"));
     self.status = Some(status);
+    if let Some(error) = new_error {
+      self.set_message(error);
+    }
     let queue_changed = queue.is_some();
     if let Some(queue) = queue {
       self.queue = queue;

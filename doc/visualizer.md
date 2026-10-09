@@ -7,8 +7,10 @@ and macOS but not on Windows.
 
 ## MPD setup
 
-Add a fifo output to `mpd.conf` (the config music-tui generates on first
-run has none):
+Add a fifo output to `mpd.conf`. If the file has no other `audio_output`,
+MPD stops picking your sound device by itself once the fifo is added, so
+add an output for it too. The config music-tui generates on macOS already
+has one.
 
 ```conf
 audio_output {

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use mpd_client::{
   Client,
+  client::CommandError,
   commands::{
     self, Add, ClearQueue, Command, Delete, Play, Previous, Seek, SeekMode, SetConsume, SetPause,
     SetRandom, SetRepeat, SetSingle, SetVolume, Shuffle, SongId, Stop,
@@ -89,6 +90,8 @@ async fn exec<C: Command>(client: &Client, command: C) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+/// Run one app command; failures are logged here and returned so the
+/// caller can surface the ones the user should see.
 pub(super) async fn run(
   client: &Client,
   command: MpdCommand,
@@ -96,7 +99,7 @@ pub(super) async fn run(
   cache: &mut Cache,
   index: &mut QueueIndex,
   dedup: bool,
-) {
+) -> Result<(), String> {
   let outcome = match command {
     MpdCommand::PlaySong(id) => exec(client, Play::song(id)).await,
     MpdCommand::PlayPauseToggle => match client.command(commands::Status).await {
@@ -107,11 +110,11 @@ pub(super) async fn run(
     MpdCommand::Stop => exec(client, Stop).await,
     MpdCommand::Next => exec(client, commands::Next).await,
     MpdCommand::Previous => exec(client, Previous).await,
-    MpdCommand::SetVolume(volume) => exec(client, SetVolume(volume.min(100))).await,
+    MpdCommand::SetVolume(volume) => set_volume(client, volume).await,
     MpdCommand::NudgeVolume(delta) => match client.command(commands::Status).await {
       Ok(status) => {
         let next = (i32::from(status.volume) + i32::from(delta)).clamp(0, 100) as u8;
-        exec(client, SetVolume(next)).await
+        set_volume(client, next).await
       }
       Err(error) => Err(error.to_string()),
     },
@@ -157,8 +160,19 @@ pub(super) async fn run(
     MpdCommand::UpdateUri(uri) => exec(client, commands::Update::new().uri(&uri)).await,
     MpdCommand::ArmInterrupt(_) => Ok(()),
   };
-  if let Err(error) = outcome {
+  if let Err(error) = &outcome {
     warn!(%error, "mpd command failed");
+  }
+  outcome
+}
+
+/// `setvol`, failing with MPD's own reason (such as "No mixer") so the
+/// notice stays short.
+async fn set_volume(client: &Client, volume: u8) -> Result<(), String> {
+  match client.command(SetVolume(volume.min(100))).await {
+    Ok(()) => Ok(()),
+    Err(CommandError::ErrorResponse { error, .. }) => Err(error.message.into()),
+    Err(error) => Err(error.to_string()),
   }
 }
 

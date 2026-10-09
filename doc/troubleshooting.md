@@ -11,6 +11,67 @@
   pressed while it is offline are dropped with a "mpd is not connected"
   notice rather than replayed later.
 
+## MPD stopped starting after a cache cleanup
+
+Before 0.1.11, the MPD config music-tui generates kept MPD's database,
+state, sticker, and log files in the cache directory (`~/.cache/mpd`, or
+`~/Library/Caches/mpd` on macOS). MPD refuses to start once a cleaner
+removes that directory, and the state (queue) and sticker (ratings) files
+are lost with it. Move them to `~/.local/state/mpd`, which newer versions
+use:
+
+```sh
+mkdir -p ~/.local/state/mpd
+mv ~/Library/Caches/mpd/* ~/.local/state/mpd/   # or ~/.cache/mpd/*
+```
+
+then point `db_file`, `log_file`, `state_file`, and `sticker_file` in
+`mpd.conf` at the new directory and restart MPD. If the directory is
+already gone, MPD rebuilds its database on the next update, but the saved
+queue and ratings are lost.
+
+## Volume keys have no effect
+
+music-tui sets MPD's volume, which needs a mixer on an enabled output.
+Without one, the volume keys show "MPD can't change the volume: No mixer"
+(or the mixer's error), and the footer reads `vol:0%`. Set
+`mixer_type "software"` on the output; MPD then scales its own output and
+works with any device. On macOS, see also the next section.
+
+In a config without any `audio_output`, MPD picks an output itself. Adding
+an output block (a mixer fix, or the visualizer's fifo) turns that off, so
+list every output you want.
+
+## macOS audio
+
+MPD's CoreAudio output has a few quirks; the config music-tui generates
+on macOS works around the first and last:
+
+```conf
+audio_output {
+  type        "osx"
+  name        "CoreAudio"
+  mixer_type  "software"
+  format      "44100:16:2"
+}
+```
+
+- **Volume keys change the wrong device.** MPD's CoreAudio mixer sets the
+  system volume of the device that was the default when MPD started, so
+  after a switch to headphones, AirPods, or a display the keys keep
+  changing the old device, and a device without a volume control has no
+  mixer at all. `mixer_type "software"` avoids both.
+- **No sound after reconnecting Bluetooth headphones.** MPD keeps the
+  device it found at startup. Once that device goes away, opening the
+  output fails with `OSStatus error 560947818` (shown in music-tui as an
+  "MPD:" notice) until MPD restarts: `brew services restart mpd`.
+- **Bluetooth headphones switch to call quality.** The output sets the
+  device to each song's sample rate and channels. Headphones only take a
+  low-rate mono file, such as a voice recording, in call (HFP) mode, so
+  they drop to 16 kHz mono. A fixed `format` makes MPD resample instead.
+
+Restart MPD after editing its config (`brew services restart mpd`).
+
 ## Covers or lyrics missing
 
 - Songs queued as `file://` over a Unix socket resolve without a music
