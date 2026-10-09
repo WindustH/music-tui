@@ -2,16 +2,18 @@
 //! requested mode, then hand an optional interrupt session to the TUI.
 
 use std::collections::HashSet;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use mpd_client::{
   Client,
-  commands::{Add, ClearQueue, Play, Queue, SetSingle, Status, Update},
+  client::CommandError,
+  commands::{Add, Delete, DeletePlaylist, Play, Queue, SetSingle, Status, Update},
   commands::{SingleMode, SongPosition},
   responses::PlayState,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
   cli::{OpenArgs, OpenMode},
@@ -98,8 +100,14 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
     OpenMode::Interrupt if !args.no_play => {
       // Snapshot state, replace the queue with the single song, arm restore.
       let session = capture_interrupt_session(&client).await?;
-      client.command(ClearQueue).await?;
-      client.command(Add::uri(&uri)).await?;
+      if let Err(error) = replace_queue(&client, std::slice::from_ref(&uri), &name).await {
+        // The queue is untouched: drop the snapshot instead of leaving a
+        // stray preview playlist behind.
+        if let Some(playlist) = &session.playlist {
+          let _ = client.command(DeletePlaylist(playlist.as_str())).await;
+        }
+        return Err(error);
+      }
       client.command(SetSingle(SingleMode::Oneshot)).await?;
       client.command(Play::current()).await?;
       info!(playlist = ?session.playlist, "interrupt preview started");
@@ -118,20 +126,28 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       if uris.is_empty() {
         bail!("no playable audio files under {}", folder.display());
       }
-      client.command(ClearQueue).await?;
-      for file_uri in &uris {
-        client.command(Add::uri(file_uri)).await?;
-      }
+      let queued = replace_queue(
+        &client,
+        &uris,
+        format_args!("the files in {}", folder.display()),
+      )
+      .await?;
+      let skipped = queued.skipped_clause();
       if args.no_play {
         format!(
-          "queued the folder of {name} ({} songs, not playing)",
-          uris.len()
+          "queued the folder of {name} ({} songs, not playing{skipped})",
+          queued.added()
         )
       } else {
-        client
-          .command(Play::song(SongPosition(target.unwrap_or(0))))
-          .await?;
-        format!("playing {name} from folder queue ({} songs)", uris.len())
+        // The chosen file may be one MPD refused; then play from the top.
+        let position = target
+          .and_then(|index| queued.positions[index])
+          .unwrap_or(0);
+        client.command(Play::song(SongPosition(position))).await?;
+        format!(
+          "playing {name} from folder queue ({} songs{skipped})",
+          queued.added()
+        )
       }
     }
     OpenMode::Next => {
@@ -140,9 +156,9 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
       } else {
         let status = client.command(Status).await?;
         if let Some((position, _)) = status.current_song {
-          client.command(Add::uri(&uri).at(position.0 + 1)).await?;
+          add_one(&client, Add::uri(&uri).at(position.0 + 1), &name).await?;
         } else {
-          client.command(Add::uri(&uri)).await?;
+          add_one(&client, Add::uri(&uri), &name).await?;
           if !args.no_play {
             maybe_start_if_idle(&client).await?;
           }
@@ -155,7 +171,7 @@ pub async fn run_open(args: &OpenArgs, settings: &Settings) -> Result<OpenOutcom
     OpenMode::Append | OpenMode::Interrupt => {
       let queued = dedup && queue_has(&client, &uri).await?;
       if !queued {
-        client.command(Add::uri(&uri)).await?;
+        add_one(&client, Add::uri(&uri), &name).await?;
       }
       if !args.no_play {
         maybe_start_if_idle(&client).await?;
@@ -207,38 +223,38 @@ async fn open_playlist(
   if uris.is_empty() {
     return Ok(format!("all entries from {name} already queued"));
   }
-  let skipped = entries.len() - uris.len();
-  let notice = if replace {
-    client.command(ClearQueue).await?;
-    for uri in &uris {
-      client.command(Add::uri(uri)).await?;
-    }
+  let what = format_args!("the entries of {name}");
+  let (queued, notice) = if replace {
+    let queued = replace_queue(client, &uris, what).await?;
     if !args.no_play {
       client.command(Play::song(SongPosition(0))).await?;
     }
-    format!("queued {} song(s) from {name}", uris.len())
+    let notice = format!("queued {} song(s) from {name}", queued.added());
+    (queued, notice)
   } else if args.mode == OpenMode::Next {
     let status = client.command(Status).await?;
     let start = status
       .current_song
       .map(|(position, _)| position.0 + 1)
       .unwrap_or(0);
-    for (offset, uri) in uris.iter().enumerate() {
-      client.command(Add::uri(uri).at(start + offset)).await?;
-    }
+    let queued = add_playable(client, &uris, Some(start))
+      .await?
+      .require_any(what)?;
     if !args.no_play {
       maybe_start_if_idle(client).await?;
     }
-    format!("queued {} song(s) from {name} next", uris.len())
+    let notice = format!("queued {} song(s) from {name} next", queued.added());
+    (queued, notice)
   } else {
-    for uri in &uris {
-      client.command(Add::uri(uri)).await?;
-    }
+    let queued = add_playable(client, &uris, None).await?.require_any(what)?;
     if !args.no_play {
       maybe_start_if_idle(client).await?;
     }
-    format!("appended {} song(s) from {name}", uris.len())
+    let notice = format!("appended {} song(s) from {name}", queued.added());
+    (queued, notice)
   };
+  // Missing, non-audio, already queued, or refused by MPD.
+  let skipped = entries.len() - queued.added();
   let mut notice = notice;
   if skipped > 0 {
     notice.push_str(&format!(
@@ -371,11 +387,18 @@ async fn open_folder(
     bail!("no audio files found under {}", folder.display());
   }
   let uris = resolve_open_uris(client, &files, mpd_config, music_dir).await?;
-  client.command(ClearQueue).await?;
-  for uri in &uris {
-    client.command(Add::uri(uri)).await?;
-  }
-  let notice = format!("queued {} song(s) from {}", uris.len(), folder.display());
+  let queued = replace_queue(
+    client,
+    &uris,
+    format_args!("the files in {}", folder.display()),
+  )
+  .await?;
+  let notice = format!(
+    "queued {} song(s) from {}{}",
+    queued.added(),
+    folder.display(),
+    queued.skipped_note()
+  );
   if !no_play {
     client.command(Play::song(SongPosition(0))).await?;
   }
@@ -407,14 +430,111 @@ async fn open_folder_append(
       folder.display()
     ));
   }
-  for uri in &uris {
-    client.command(Add::uri(uri)).await?;
-  }
-  let notice = format!("appended {} song(s) from {}", uris.len(), folder.display());
+  let queued = add_playable(client, &uris, None)
+    .await?
+    .require_any(format_args!("the files in {}", folder.display()))?;
+  let notice = format!(
+    "appended {} song(s) from {}{}",
+    queued.added(),
+    folder.display(),
+    queued.skipped_note()
+  );
   if !no_play {
     maybe_start_if_idle(client).await?;
   }
   Ok(notice)
+}
+
+/// Songs added by [`add_playable`].
+struct Queued {
+  /// For each requested uri, its position among the added songs, or `None`
+  /// when MPD refused it.
+  positions: Vec<Option<usize>>,
+}
+
+impl Queued {
+  fn added(&self) -> usize {
+    self.positions.iter().flatten().count()
+  }
+
+  fn skipped(&self) -> usize {
+    self.positions.len() - self.added()
+  }
+
+  /// Fail when MPD refused every file, describing them as `what`.
+  fn require_any(self, what: impl Display) -> Result<Self> {
+    if self.added() == 0 {
+      bail!("MPD can't play {what}");
+    }
+    Ok(self)
+  }
+
+  /// `, skipped N files MPD can't play`, or nothing when none were.
+  fn skipped_clause(&self) -> String {
+    match self.skipped() {
+      0 => String::new(),
+      1 => ", skipped 1 file MPD can't play".to_string(),
+      skipped => format!(", skipped {skipped} files MPD can't play"),
+    }
+  }
+
+  /// [`Self::skipped_clause`] as a parenthesized notice suffix.
+  fn skipped_note(&self) -> String {
+    match self.skipped_clause().strip_prefix(", ") {
+      Some(clause) => format!(" ({clause})"),
+      None => String::new(),
+    }
+  }
+}
+
+/// Add `uris` in order, at the end of the queue or from position `at`,
+/// skipping files MPD refuses: a video-only `.mp4` has no audio for MPD to
+/// decode (`ACK [50] No such song`). Other failures, such as a lost
+/// connection, still abort.
+async fn add_playable(client: &Client, uris: &[String], at: Option<usize>) -> Result<Queued> {
+  let mut positions = Vec::with_capacity(uris.len());
+  let mut added = 0;
+  for uri in uris {
+    let add = match at {
+      Some(start) => Add::uri(uri).at(start + added),
+      None => Add::uri(uri),
+    };
+    match client.command(add).await {
+      Ok(_) => {
+        positions.push(Some(added));
+        added += 1;
+      }
+      Err(error @ CommandError::ErrorResponse { .. }) => {
+        warn!(uri, %error, "MPD refused a file; skipping it");
+        positions.push(None);
+      }
+      Err(error) => return Err(error.into()),
+    }
+  }
+  Ok(Queued { positions })
+}
+
+/// Replace the queue with `uris`. The new songs go behind the current queue
+/// and the old songs are removed only once MPD accepted at least one, so
+/// files MPD can't play leave the queue as it was.
+async fn replace_queue(client: &Client, uris: &[String], what: impl Display) -> Result<Queued> {
+  let old_len = client.command(Status).await?.playlist_length;
+  let queued = add_playable(client, uris, None).await?.require_any(what)?;
+  if old_len > 0 {
+    client
+      .command(Delete::range(SongPosition(0)..SongPosition(old_len)))
+      .await?;
+  }
+  Ok(queued)
+}
+
+/// Add one song, naming it when MPD refuses it.
+async fn add_one(client: &Client, add: Add<'_>, name: &str) -> Result<()> {
+  client
+    .command(add)
+    .await
+    .with_context(|| format!("MPD can't play {name}"))?;
+  Ok(())
 }
 
 pub(crate) async fn maybe_start_if_idle(client: &Client) -> Result<()> {

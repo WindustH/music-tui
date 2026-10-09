@@ -26,6 +26,11 @@ For a single audio file:
 For a folder, `append` adds its audio files to the queue; every other mode
 replaces the queue with them and plays from the first.
 
+Files MPD can't play — a video-only `.mp4` next to the audio, say — are
+skipped, and the notice counts them. Modes that replace the queue add the new
+songs before removing the old ones, so when MPD can play none of the files,
+`open` reports an error and the queue stays as it was.
+
 `-r`/`--recursive` includes subfolders (for folders and `folder` mode).
 `--no-play` never starts playback; with `interrupt` it simply appends the
 file. Without it, `append` and `next` start playback only when MPD is
