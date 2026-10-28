@@ -13,6 +13,11 @@ pub(super) fn draw_footer(
   hint_rows: u16,
   hint_columns: usize,
 ) -> Option<(u16, u16)> {
+  frame.render_widget(ratatui::widgets::Clear, area);
+  frame.render_widget(
+    Block::default().style(Style::default().bg(app.settings.theme.overlay_background())),
+    area,
+  );
   let theme = &app.settings.theme;
   let [hints_area, status_line, input_line, band_line] = Layout::vertical([
     Constraint::Length(hint_rows),

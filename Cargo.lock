@@ -879,7 +879,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "framework-tui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "img-tui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
@@ -1466,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "music-tui"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "clap",

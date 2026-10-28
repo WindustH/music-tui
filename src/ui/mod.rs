@@ -63,7 +63,7 @@ pub fn draw(
     frame.render_widget(Block::default().style(Style::default().bg(base_bg)), area);
   }
 
-  // Footer height grows with the pending which-key hints (pdf-tui style).
+  // Hints and controls float over a stable pane viewport.
   let hints: &[framework_tui::KeyHint] = if app.show_help {
     &[]
   } else {
@@ -80,12 +80,15 @@ pub fn draw(
   };
   let hints = hints.to_vec();
 
-  let [tab_bar, content, footer] = Layout::vertical([
-    Constraint::Length(1),
-    Constraint::Min(0),
-    Constraint::Length(3 + hint_rows),
-  ])
-  .areas(area);
+  let [tab_bar, content] =
+    Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+  let footer_height = (3 + hint_rows).min(content.height);
+  let footer = Rect::new(
+    content.x,
+    content.bottom().saturating_sub(footer_height),
+    content.width,
+    footer_height,
+  );
 
   app.hit.clear_panes();
   draw_tab_bar(frame, app, tab_bar);
@@ -103,7 +106,7 @@ pub fn draw(
   // Modal rects replace kitty U=1 placeholder cells. Uncovered cells keep
   // displaying the image, and the regular text diff restores placeholders
   // when a modal closes.
-  let mut occluders = Vec::new();
+  let mut occluders = vec![footer];
   if let Some(popup) = draw_completion_popup(frame, app, footer) {
     occluders.push(popup);
   }
@@ -116,6 +119,7 @@ pub fn draw(
     }
   }
 
+  app.hit.overlays.clone_from(&occluders);
   FrameOutput {
     overlays: images.overlays,
     protocol_writes: Vec::new(),

@@ -16,6 +16,29 @@ impl App {
         _ => false,
       };
     }
+    if self
+      .hit
+      .overlays
+      .iter()
+      .any(|area| area.contains((mouse.column, mouse.row).into()))
+    {
+      // The progress band is an interactive overlay; it takes precedence over panes.
+      if self.mouse_on_band(mouse) {
+        return match mouse.kind {
+          MouseEventKind::Down(MouseButton::Left) => {
+            self.drag = Some(Drag::Band);
+            self.seek_to_band_column(mouse.column)
+          }
+          MouseEventKind::Drag(MouseButton::Left) => self.left_drag(mouse),
+          MouseEventKind::Up(MouseButton::Left) => self.drag.take().is_some(),
+          _ => false,
+        };
+      }
+      if matches!(mouse.kind, MouseEventKind::Up(_)) {
+        self.drag = None;
+      }
+      return false;
+    }
     match mouse.kind {
       MouseEventKind::Down(MouseButton::Left) => self.left_click(mouse),
       MouseEventKind::Drag(MouseButton::Left) => self.left_drag(mouse),

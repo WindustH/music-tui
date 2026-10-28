@@ -66,6 +66,7 @@ pub(crate) use library::FilterTarget;
 /// are hit-testable).
 #[derive(Debug, Default)]
 pub(crate) struct HitAreas {
+  pub overlays: Vec<Rect>,
   /// Tab labels in the tab bar (click to switch).
   pub tabs: Vec<Rect>,
   /// Inner areas of queue panes (click to select, again to play).
