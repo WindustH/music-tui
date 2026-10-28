@@ -13,13 +13,13 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let title = match app.queue_filter.as_deref() {
     Some(filter) => format!(
       "queue {}/{} · /{filter}",
-      app.queue_filter_matches.len(),
+      app.queue_rows().len(),
       app.queue.len()
     ),
-    None if app.queue_dedup && app.queue_filter_matches.len() < app.queue.len() => {
+    None if app.queue_dedup && app.queue_rows().len() < app.queue.len() => {
       format!(
         "queue {}/{} · dedup",
-        app.queue_filter_matches.len(),
+        app.queue_rows().len(),
         app.queue.len()
       )
     }
@@ -50,7 +50,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     return;
   }
-  if app.queue_filter_matches.is_empty() {
+  if app.queue_rows().is_empty() {
     let hint = format!(
       "no matches for /{}",
       app.queue_filter.as_deref().unwrap_or_default()
@@ -65,7 +65,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   let playing = app.playing_position();
   // Build only the rows on screen: a long queue must not cost a label per
   // song on every redraw (progress ticks redraw several times a second).
-  let len = app.queue_filter_matches.len();
+  let len = app.queue_rows().len();
   let selected = app.queue_state.selected().map(|row| row.min(len - 1));
   let (start, end) = visible_window(
     len,
@@ -73,7 +73,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     app.queue_state.offset(),
     selected,
   );
-  let items: Vec<ListItem> = app.queue_filter_matches[start..end]
+  let items: Vec<ListItem> = app.queue_rows()[start..end]
     .iter()
     .map(|position| match app.queue.get(*position) {
       Some(song) => ListItem::new(queue_line(app, *position, song, playing)),
@@ -96,7 +96,7 @@ pub(super) fn draw_queue_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   // and doubles as a mouse drag target.
   let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
     .style(Style::default().fg(theme.color(&theme.base.border)));
-  let mut state = ratatui::widgets::ScrollbarState::new(app.queue_filter_matches.len())
+  let mut state = ratatui::widgets::ScrollbarState::new(app.queue_rows().len())
     .position(app.queue_state.offset())
     .viewport_content_length(inner.height as usize);
   frame.render_stateful_widget(scrollbar, area, &mut state);

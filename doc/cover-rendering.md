@@ -38,8 +38,21 @@ wrapped for the multiplexer automatically; `render.passthrough` (`tmux`,
 
 ## Cache
 
-Extracted embedded covers are stored in the `covers/` folder of the cache
-directory (`~/.cache/music-tui/covers/`), named by a hash of the picture;
-it is safe to delete. Rendered covers are kept in memory for the last few
-path/size combinations, so switching tabs or songs back and forth does not
-re-render.
+`img-tui` stores extracted covers and compressed rendered output as BLOBs in
+`cache.sqlite3` in the cache directory (normally `~/.cache/music-tui/`).
+The old `covers/` directory is deleted on first use of the new backend; its
+contents are not migrated or eagerly rebuilt. Original sibling images are
+never deleted. File-only consumers use temporary copies removed on normal
+cache-session shutdown.
+
+The in-memory render cache uses moka's LRU policy with byte weights, controlled
+by `render.raw_memory_cache_max_bytes` (64 MiB). Persistent payloads have a
+`render.disk_cache_max_bytes` budget (512 MiB). Both accept `0` for unlimited.
+Disk eviction is independent of memory eviction. Live payload bytes exclude
+SQLite page/WAL overhead and temporary active images; a single oversized
+result may exceed a budget. Cache keys include source identity, size, mtime,
+render dimensions, mode and settings.
+
+The music library (`library.db`), playback state and configuration are separate
+from this disposable cache. To manually remove the SQLite cache, first close
+music-tui, then delete `cache.sqlite3` and its `-wal`/`-shm` companions.

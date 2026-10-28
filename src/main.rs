@@ -1,19 +1,22 @@
 //! music-tui: a terminal music player backed by MPD.
 
+use img_tui::cache::paths::NamespaceSpec;
+
 mod app;
 mod cli;
 mod config;
 mod cover;
+mod enqueue;
 mod event;
 mod fsutil;
 mod keymap;
 mod layout;
-mod library;
 mod library_db;
 mod logging;
 mod lyrics;
 mod metadata;
 mod mpd;
+mod music_files;
 mod open;
 mod playlist;
 mod render;
@@ -81,6 +84,15 @@ async fn run_tui(
   initial_notice: Option<String>,
   interrupt: Option<InterruptSession>,
 ) -> Result<()> {
+  let image_cache = img_tui::cache::paths::CachePaths::new(
+    &settings.cache_dir,
+    &[
+      NamespaceSpec::new("covers", "covers", true),
+      NamespaceSpec::new("render", "render", false),
+    ],
+    settings.config.render.disk_cache_max_bytes,
+  )?;
+  discard_legacy_cache(&settings.cache_dir)?;
   let render_setup = render::setup(&settings.config.render);
 
   let (tx, mut rx) = mpsc::unbounded_channel::<AsyncEvent>();
@@ -106,6 +118,7 @@ async fn run_tui(
   })?;
 
   let mut renderer = CoverRenderStore::new(
+    image_cache.clone(),
     settings.config.render.clone(),
     render_setup.native_config,
     render_setup.modes,
@@ -216,4 +229,19 @@ fn handle_async_event(
     AsyncEvent::VisualizerFrame(lines) => app.handle_visualizer_frame(lines),
     AsyncEvent::Library(event) => app.handle_library_event(event),
   }
+}
+
+/// Obsolete payloads are disposable; no import or eager regeneration.
+fn discard_legacy_cache(root: &std::path::Path) -> anyhow::Result<()> {
+  let marker = root.join("legacy-files-removed-v1");
+  if marker.exists() {
+    return Ok(());
+  }
+  match std::fs::remove_dir_all(root.join("covers")) {
+    Ok(()) => {}
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    Err(e) => return Err(e.into()),
+  }
+  framework_tui::fs::atomic_write_bytes(&marker, b"done")?;
+  Ok(())
 }

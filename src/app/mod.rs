@@ -27,10 +27,10 @@ use crate::{
     AsyncEvent, CoverOutcome, LyricsOutcome, MetadataOutcome, MetadataWriteOutcome, MpdEvent,
   },
   layout::{PaneKind, PaneLayout, PaneSource, TabLayout, parse_detail, parse_tabs},
-  library::{resolve_music_dir, uri_to_path},
   lyrics::{self, Lyrics},
   metadata,
   mpd::{InterruptSession, MpdCommand, MpdHandle},
+  music_files::{resolve_music_dir, uri_to_path},
 };
 
 pub enum EditorRequest {
@@ -134,7 +134,7 @@ pub struct App {
   /// visible; the playing copy stays visible) — from [behavior] config.
   pub(crate) queue_dedup: bool,
   /// Queue positions matching the filter; selection indexes this list.
-  pub(crate) queue_filter_matches: Vec<usize>,
+  queue_filter_matches: Vec<usize>,
   /// Volume to restore when unmuting.
   pre_mute_volume: Option<u8>,
 
@@ -208,6 +208,9 @@ pub struct App {
 }
 
 impl App {
+  pub(crate) fn queue_rows(&self) -> &[usize] {
+    &self.queue_filter_matches
+  }
   pub fn new(
     settings: Settings,
     mpd: MpdHandle,
@@ -465,7 +468,7 @@ impl App {
     }
   }
 
-  fn mpdc(&self, command: MpdCommand) {
+  fn send_mpd(&self, command: MpdCommand) {
     self.mpd.send(command);
   }
 
@@ -474,10 +477,10 @@ impl App {
     let volume = self.status.as_ref().map(|status| status.volume);
     if volume == Some(0) {
       let restore = self.pre_mute_volume.take().filter(|volume| *volume > 0);
-      self.mpdc(MpdCommand::SetVolume(restore.unwrap_or(50)));
+      self.send_mpd(MpdCommand::SetVolume(restore.unwrap_or(50)));
     } else {
       self.pre_mute_volume = volume;
-      self.mpdc(MpdCommand::SetVolume(0));
+      self.send_mpd(MpdCommand::SetVolume(0));
     }
   }
 

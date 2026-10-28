@@ -226,7 +226,7 @@ pub async fn connect(
 async fn connect_inner(
   config: &MpdConfig,
 ) -> anyhow::Result<(Client, mpd_client::client::ConnectionEvents)> {
-  let host = crate::config::expand_home(&config.host);
+  let host = framework_tui::paths::expand_home(&config.host);
 
   #[cfg(unix)]
   if host.to_string_lossy().starts_with('/') {
@@ -246,7 +246,7 @@ async fn connect_inner(
 
 fn describe_address(config: &MpdConfig) -> String {
   #[cfg(unix)]
-  if crate::library::is_socket_host(&config.host) {
+  if crate::music_files::is_socket_host(&config.host) {
     return config.host.clone();
   }
   format!("{}:{}", config.host, config.port)

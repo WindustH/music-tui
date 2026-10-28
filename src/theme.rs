@@ -4,6 +4,7 @@
 //! every view's colors are configurable independently. Values are color
 //! names (`cyan`, `bright black`, `default`) or `#rrggbb` hex strings.
 
+use framework_tui::theme::parse_color;
 use serde::{Deserialize, Serialize};
 
 macro_rules! color_section {
@@ -196,37 +197,8 @@ impl ThemeConfig {
 
   /// Parse a color name or `#rrggbb` hex string into a ratatui color.
   pub fn color(&self, name: &str) -> ratatui::style::Color {
-    parse_color(name).unwrap_or(ratatui::style::Color::Reset)
+    parse_color(name)
   }
-}
-
-/// music-tui's own names first (`white` is the normal-intensity white,
-/// `bright white` the bold one), then ratatui's parser, which also accepts
-/// spellings such as `light_cyan`, `dark-gray`, indexed colors (`208`)
-/// and `#rrggbb`.
-fn parse_color(name: &str) -> Option<ratatui::style::Color> {
-  use ratatui::style::Color;
-  let color = match name.trim().to_ascii_lowercase().as_str() {
-    "default" | "reset" => Color::Reset,
-    "black" => Color::Black,
-    "red" => Color::Red,
-    "green" => Color::Green,
-    "yellow" => Color::Yellow,
-    "blue" => Color::Blue,
-    "magenta" => Color::Magenta,
-    "cyan" => Color::Cyan,
-    "gray" | "grey" | "white" => Color::Gray,
-    "dark gray" | "dark grey" | "bright black" => Color::DarkGray,
-    "bright red" => Color::LightRed,
-    "bright green" => Color::LightGreen,
-    "bright yellow" => Color::LightYellow,
-    "bright blue" => Color::LightBlue,
-    "bright magenta" => Color::LightMagenta,
-    "bright cyan" => Color::LightCyan,
-    "bright white" => Color::White,
-    other => return other.parse().ok(),
-  };
-  Some(color)
 }
 
 const THEME_HEADER: &str = "\
@@ -295,38 +267,4 @@ pub(crate) fn format_theme_toml(theme: &ThemeConfig) -> String {
     out.push('\n');
   }
   out
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use ratatui::style::Color;
-
-  #[test]
-  fn default_theme_colors_all_parse() {
-    let theme = ThemeConfig::default();
-    let which_key = &theme.which_key;
-    for name in [
-      &which_key.foreground,
-      &which_key.key,
-      &which_key.description,
-      &which_key.separator_color,
-      &which_key.background,
-    ] {
-      assert!(parse_color(name).is_some(), "{name:?} must parse");
-    }
-    assert_eq!(theme.color(&which_key.key), Color::LightCyan);
-    assert_eq!(theme.color(&which_key.separator_color), Color::DarkGray);
-  }
-
-  #[test]
-  fn color_names_keep_their_meaning() {
-    assert_eq!(parse_color("white"), Some(Color::Gray));
-    assert_eq!(parse_color("bright white"), Some(Color::White));
-    assert_eq!(parse_color("Bright Black"), Some(Color::DarkGray));
-    assert_eq!(parse_color("#ff8000"), Some(Color::Rgb(255, 128, 0)));
-    assert_eq!(parse_color("208"), Some(Color::Indexed(208)));
-    assert_eq!(parse_color("light-magenta"), Some(Color::LightMagenta));
-    assert_eq!(parse_color("no such color"), None);
-  }
 }

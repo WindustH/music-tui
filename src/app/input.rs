@@ -57,7 +57,7 @@ impl App {
     // overlapping borrows of `self`.
     let mut dispatcher = std::mem::take(&mut self.dispatcher);
     let queue = self.pane_bindings();
-    let outcome = dispatcher.dispatch_priority(&queue, KeyContext::Browser, token);
+    let outcome = dispatcher.dispatch_priority(&queue, KeyContext::Active, token);
     self.dispatcher = dispatcher;
     match outcome {
       MatchResult::Action(action) => {

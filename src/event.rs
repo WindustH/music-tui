@@ -26,19 +26,6 @@ pub enum AsyncEvent {
 }
 
 #[derive(Debug)]
-pub enum LibraryEvent {
-  /// Periodic progress while scanning (scanned files, changed files).
-  Scanning { scanned: usize, changed: usize },
-  /// Scan finished; carries the full track list.
-  Loaded(Vec<crate::library_db::LibraryTrack>),
-  /// Scan failed; `tracks` holds what the database still had, if readable.
-  Failed {
-    error: String,
-    tracks: Option<Vec<crate::library_db::LibraryTrack>>,
-  },
-}
-
-#[derive(Debug)]
 pub enum MpdEvent {
   Connected(String),
   /// Fresh status; `queue` is only set when the queue itself changed (MPD's
@@ -90,6 +77,15 @@ pub enum RenderedImage {
   Symbols {
     mode: RenderMode,
     paragraph: Box<Paragraph<'static>>,
+    bytes: u64,
   },
   Protocol(ProtocolImage),
+}
+
+pub use crate::library_db::LibraryEvent;
+
+impl From<LibraryEvent> for AsyncEvent {
+  fn from(value: LibraryEvent) -> Self {
+    Self::Library(value)
+  }
 }

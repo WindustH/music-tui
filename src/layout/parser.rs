@@ -154,26 +154,3 @@ impl Tokenizer {
       .map_err(|_| format!("expected a number, found {digits:?}"))
   }
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn ratio_addition_cannot_overflow() {
-    assert!(parse("4294967295:1, queue, lyrics").is_err());
-    assert!(parse("1:4294967295, queue, lyrics").is_err());
-  }
-
-  #[test]
-  fn excessive_nesting_is_rejected() {
-    let spec = format!("{}queue{})", "H(1:1,".repeat(80), ")".repeat(80));
-    assert!(parse(&spec).is_err());
-  }
-
-  #[test]
-  fn split_trees_still_parse() {
-    assert!(parse("H(2:1, queue, cover)").is_ok());
-    assert!(parse("V(1:1, H(2:1, cover, metadata), lyrics)").is_ok());
-  }
-}

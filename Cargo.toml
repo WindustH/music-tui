@@ -1,7 +1,8 @@
 [package]
 name = "music-tui"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2024"
+rust-version = "1.90"
 license = "MIT"
 description = "Terminal music player client for MPD built with framework-tui and img-tui"
 
@@ -14,14 +15,13 @@ members = [
 resolver = "3"
 
 [dependencies]
-ansi-to-tui = "8.0.1"
 anyhow = "1.0.103"
 clap = { version = "4.6.1", features = ["derive"] }
 crossterm = "0.29.0"
 framework-tui = { path = "crates/framework-tui", features = ["serde"] }
 hex = "0.4.3"
 image = "0.25.10"
-img-tui = { path = "crates/img-tui" }
+img-tui = { path = "crates/img-tui", features = ["cache", "terminal", "chafa"] }
 lofty = "0.22.4"
 mpd_client = "1.4.1"
 ratatui = "0.30.2"
@@ -39,6 +39,18 @@ libc = "0.2"
 rustfft = "6.4"
 
 [target.'cfg(windows)'.dependencies]
-dirs = "5"
 rusqlite = { version = "0.32", default-features = false, features = ["column_decltype", "bundled"] }
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+
+[[bin]]
+name = "music-tui"
+path = "src/main.rs"
+test = false
+
+[patch."https://github.com/WindustH/framework-tui"]
+framework-tui = { path = "crates/framework-tui" }

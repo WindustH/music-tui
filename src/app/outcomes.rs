@@ -70,8 +70,8 @@ impl App {
     }
     // Ask MPD to re-read the file so its database (and the queue labels)
     // pick up the corrected tags without a manual :update.
-    if crate::library::local_uri_to_path(&outcome.song_url).is_none() {
-      self.mpdc(MpdCommand::UpdateUri(outcome.song_url));
+    if crate::music_files::local_uri_to_path(&outcome.song_url).is_none() {
+      self.send_mpd(MpdCommand::UpdateUri(outcome.song_url));
     }
     true
   }

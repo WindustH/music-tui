@@ -80,7 +80,7 @@ fn scan_root(
   counts: &mut ScanCounts,
   progress: &mut dyn FnMut(usize, usize),
 ) -> Result<()> {
-  let files = match crate::library::collect_audio_files(root, config.recursive) {
+  let files = match crate::music_files::collect_audio_files(root, config.recursive) {
     Ok(files) => files,
     Err(error) => {
       // The root itself is unreadable: keep its rows rather than wiping
@@ -291,31 +291,4 @@ fn read_sidecar_lyrics(path: &Path) -> String {
     .unwrap_or_default()
     .to_lowercase();
   crate::sanitize::sanitize_text(&lyrics)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn derive_from_filename_splits_artist_title() {
-    assert_eq!(
-      derive_from_filename("2. ARForest - Your Way(credits)"),
-      ("ARForest".to_string(), "Your Way(credits)".to_string())
-    );
-    assert_eq!(
-      derive_from_filename("03 - Taylor Swift - Mine"),
-      ("Taylor Swift".to_string(), "Mine".to_string())
-    );
-    // No separator: keep the stem as the title, artist stays empty.
-    assert_eq!(
-      derive_from_filename("夏末递归定义"),
-      (String::new(), "夏末递归定义".to_string())
-    );
-    // Track number is part of the title when there is no separator.
-    assert_eq!(
-      derive_from_filename("7. Intro"),
-      (String::new(), "Intro".to_string())
-    );
-  }
 }

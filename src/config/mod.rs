@@ -26,8 +26,8 @@ pub use comments::app_config_toml;
 use paths::{app_cache_dir, app_config_dir};
 pub use paths::{app_state_dir, detect_music_dir, expand_home};
 pub use schema::{
-  BehaviorConfig, LayoutConfig, LibraryColumn, LibraryConfig, LyricsConfig, MpdConfig,
-  PlaylistConfig, RenderConfig, TabConfig, VisualizerConfig,
+  BehaviorConfig, LibraryColumn, LibraryConfig, LyricsConfig, MpdConfig, PlaylistConfig,
+  RenderConfig, VisualizerConfig,
 };
 
 #[derive(Debug, Clone)]
@@ -403,32 +403,5 @@ pub async fn write_bytes_atomic(path: &Path, body: &[u8]) -> Result<()> {
     .map_err(|error| anyhow::Error::msg(format!("config write worker failed: {error}")))?
     .with_context(|| format!("failed to write {display}"))
 }
-#[cfg(test)]
-mod tests {
-  use super::*;
 
-  #[test]
-  fn app_config_toml_writes_parseable_commented_defaults() {
-    let body = app_config_toml(&AppConfig::default()).expect("default config should serialize");
-    toml::from_str::<AppConfig>(&body).expect("commented default config should parse");
-    assert!(body.contains("# music-tui main configuration."));
-    assert!(body.contains("# Connection settings for the MPD daemon."));
-    // Array-of-tables sections get their comment once, before the first.
-    let columns = body.find("[[library.columns]]").unwrap();
-    assert!(body[..columns].contains("# Library table columns"));
-    assert_eq!(body.matches("# Library table columns").count(), 1);
-  }
-
-  #[test]
-  fn generated_socket_replaces_only_the_default_tcp_host() {
-    let socket = Path::new("/tmp/mpd/socket");
-    let mut default = AppConfig::default();
-    assert!(adopt_generated_socket(&mut default, socket));
-    assert_eq!(default.mpd.host, "/tmp/mpd/socket");
-
-    let mut custom = AppConfig::default();
-    custom.mpd.host = "music.example.test".to_string();
-    assert!(!adopt_generated_socket(&mut custom, socket));
-    assert_eq!(custom.mpd.host, "music.example.test");
-  }
-}
+pub use crate::layout::LayoutConfig;

@@ -107,7 +107,7 @@ Restart MPD after editing its config (`brew services restart mpd`).
 
 - Log: `music-tui.log` in the cache directory (`~/.cache/music-tui/`);
   set `RUST_LOG=debug` for more detail.
-- Cover cache: `covers/` in the cache directory (safe to delete).
+- Image cache: `cache.sqlite3` in the cache directory (close music-tui before manually deleting it and its WAL/SHM companions).
 - State: `library.db`, `state.toml`, and `:save` playlists in the state
   directory (`~/.local/state/music-tui/`).
 - Errors inside background workers are logged there instead of being
@@ -117,7 +117,7 @@ Restart MPD after editing its config (`brew services restart mpd`).
 
 Several music-tui processes can share one MPD and one config:
 
-- state, cover-cache and config writes go through temp files and atomic
+- state and config writes go through temp files and atomic
   renames, so nothing is left half-written;
 - `library.db` is shared: scans commit in small batches and wait for each
   other instead of failing;

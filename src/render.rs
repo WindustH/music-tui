@@ -2,11 +2,10 @@
 //! modes via chafa. Multi-entry store keyed by (path, size).
 
 use std::{
-  collections::{HashMap, HashSet, VecDeque},
+  collections::{HashMap, HashSet},
   path::Path,
 };
 
-use ansi_to_tui::IntoText;
 use img_tui::{
   NativeImageConfig, ProtocolImage, ProtocolImageSpec, RenderMode, capability, native_image,
 };
@@ -15,7 +14,7 @@ use ratatui::{
   widgets::{Paragraph, Wrap},
 };
 use sha2::{Digest, Sha256};
-use tokio::{process::Command, sync::mpsc};
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -43,7 +42,7 @@ pub fn setup(config: &RenderConfig) -> RenderSetup {
   let modes = capability::render_modes_override_from_env(RENDER_MODES_ENV)
     .or_else(|| {
       config.auto_detect.then(|| {
-        let zellij_sixel = if config.zellij_sixel { "on" } else { "" };
+        let zellij_sixel = config.zellij_sixel.as_str();
         terminal.preferred_render_modes(zellij_sixel)
       })
     })
@@ -82,11 +81,12 @@ pub fn setup(config: &RenderConfig) -> RenderSetup {
 }
 
 pub struct CoverRenderStore {
+  cache: std::sync::Arc<img_tui::cache::paths::CachePaths>,
   config: RenderConfig,
   native_config: NativeImageConfig,
   modes: Vec<RenderMode>,
-  entries: HashMap<String, RenderedImage>,
-  order: VecDeque<String>,
+  entries: img_tui::cache::MemoryCache<String, RenderedImage>,
+  current: Option<std::sync::Arc<RenderedImage>>,
   in_flight: HashSet<String>,
   /// Renders that failed in every mode, with the error. Remembered so a
   /// broken cover (or a missing `chafa`) is not re-rendered on every
@@ -94,22 +94,24 @@ pub struct CoverRenderStore {
   failed: HashMap<String, String>,
 }
 
-const MAX_ENTRIES: usize = 8;
 /// Failure memo bound; cleared wholesale when exceeded.
 const MAX_FAILURES: usize = 64;
 
 impl CoverRenderStore {
   pub fn new(
+    cache: std::sync::Arc<img_tui::cache::paths::CachePaths>,
     config: RenderConfig,
     native_config: NativeImageConfig,
     modes: Vec<RenderMode>,
   ) -> Self {
+    let memory_budget = config.raw_memory_cache_max_bytes;
     Self {
+      cache,
       config,
       native_config,
       modes,
-      entries: HashMap::new(),
-      order: VecDeque::new(),
+      entries: img_tui::cache::MemoryCache::new(memory_budget),
+      current: None,
       in_flight: HashSet::new(),
       failed: HashMap::new(),
     }
@@ -137,13 +139,23 @@ impl CoverRenderStore {
       return false;
     }
     self.in_flight.insert(cache_key.clone());
+    let cache = self.cache.clone();
     let config = self.config.clone();
     let native_config = self.native_config.clone();
     let modes = self.modes.clone();
     let path = path.to_path_buf();
     let tx = tx.clone();
     tokio::spawn(async move {
-      let result = render_cover(&path, width, height, &config, &native_config, &modes).await;
+      let result = render_cover(
+        &cache,
+        &path,
+        width,
+        height,
+        &config,
+        &native_config,
+        &modes,
+      )
+      .await;
       let _ = tx.send(AsyncEvent::Render(RenderOutcome { cache_key, result }));
     });
     true
@@ -156,9 +168,10 @@ impl CoverRenderStore {
   }
 
   /// Cover already rendered for this path and size, if any.
-  pub fn get(&self, path: &Path, width: u16, height: u16) -> Option<&RenderedImage> {
+  pub fn get(&mut self, path: &Path, width: u16, height: u16) -> Option<&RenderedImage> {
     let cache_key = render_cache_key(path, width, height, &self.native_config);
-    self.entries.get(&cache_key)
+    self.current = self.entries.get(&cache_key);
+    self.current.as_deref()
   }
 
   /// Why rendering this cover at this size failed, if it did.
@@ -174,13 +187,12 @@ impl CoverRenderStore {
     match outcome.result {
       Ok(image) => {
         debug!(cache_key = %outcome.cache_key, mode = image_mode(&image), "cover rendered");
-        self.order.push_back(outcome.cache_key.clone());
-        self.entries.insert(outcome.cache_key.clone(), image);
-        while self.order.len() > MAX_ENTRIES {
-          if let Some(oldest) = self.order.pop_front() {
-            self.entries.remove(&oldest);
-          }
-        }
+        let bytes = match &image {
+          RenderedImage::Protocol(image) => image.payload_len() as u64,
+          // Symbol output is bounded by the cell dimensions and span overhead.
+          RenderedImage::Symbols { bytes, .. } => *bytes,
+        };
+        self.entries.insert(outcome.cache_key.clone(), image, bytes);
         true
       }
       Err(error) => {
@@ -203,6 +215,7 @@ fn image_mode(image: &RenderedImage) -> &'static str {
 }
 
 async fn render_cover(
+  cache: &img_tui::cache::paths::CachePaths,
   path: &Path,
   width: u16,
   height: u16,
@@ -212,7 +225,7 @@ async fn render_cover(
 ) -> Result<RenderedImage, String> {
   let mut errors = Vec::new();
   for mode in modes {
-    match render_once(path, width, height, config, native_config, *mode).await {
+    match render_once(cache, path, width, height, config, native_config, *mode).await {
       Ok(image) => return Ok(image),
       Err(error) => errors.push(format!("{}: {error}", mode.label())),
     }
@@ -221,6 +234,7 @@ async fn render_cover(
 }
 
 async fn render_once(
+  cache: &img_tui::cache::paths::CachePaths,
   path: &Path,
   width: u16,
   height: u16,
@@ -228,28 +242,97 @@ async fn render_once(
   native_config: &NativeImageConfig,
   mode: RenderMode,
 ) -> Result<RenderedImage, String> {
-  if mode.is_protocol() {
-    let prepared = native_image::prepare(path, width, height, native_config.cell_pixels)
+  use img_tui::cache::payload::{CacheHeader, RenderedBytes, decode_cache_file, encode_cache_file};
+  let image_id = kitty_image_id(path, width, height, mode);
+  let spec = ProtocolImageSpec {
+    image_id,
+    placement_id: kitty_placement_id(path, image_id),
+    ..ProtocolImageSpec::new(mode, width, height)
+  };
+  let header = CacheHeader {
+    width,
+    height,
+    cell_pixels: native_config.cell_pixels,
+    mode,
+    image_id,
+    placement_id: spec.placement_id,
+  };
+  let key = format!(
+    "{}:{mode:?}:{config:?}:{native_config:?}",
+    render_cache_key(path, width, height, native_config)
+  );
+  let db = cache.database.clone();
+  let lookup_key = key.clone();
+  let cached = tokio::task::spawn_blocking(move || db.get("render", &lookup_key))
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten();
+  let cached = if let Some(bytes) = cached {
+    decode_cache_file(&bytes, &header)
       .await
-      .map_err(|error| error.to_string())?;
-    // With kitty Unicode placeholders (yazi-style U=1) the image is uploaded
-    // once and shown through placeholder text cells managed by img-tui, so
-    // modal dialogs occlude it per cell and no re-transmit is needed.
-    let image_id = kitty_image_id(path, width, height, mode);
-    let spec = ProtocolImageSpec {
-      image_id,
-      placement_id: kitty_placement_id(path, image_id),
-      ..ProtocolImageSpec::new(mode, width, height)
-    };
-    ProtocolImage::render(&prepared, &spec, native_config)
-      .await
-      .map(RenderedImage::Protocol)
-      .map_err(|error| error.to_string())
+      .ok()
+      .map(|v| v.payload)
   } else {
-    let bytes = run_chafa(path, width, height, config, mode).await?;
-    let text: Text<'static> = bytes.into_text().map_err(|error| error.to_string())?;
-    let paragraph = Box::new(Paragraph::new(text).wrap(Wrap { trim: false }));
-    Ok(RenderedImage::Symbols { mode, paragraph })
+    None
+  };
+  let bytes = if let Some(bytes) = cached {
+    bytes
+  } else {
+    let bytes = if mode.is_protocol() {
+      let prepared = native_image::prepare(path, width, height, native_config.cell_pixels)
+        .await
+        .map_err(|e| e.to_string())?;
+      let encoded = native_image::encode_protocol(&prepared, &spec, native_config)
+        .await
+        .map_err(|e| e.to_string())?;
+      RenderedBytes {
+        data: encoded.data,
+        refresh: encoded.refresh,
+      }
+    } else {
+      RenderedBytes {
+        data: run_chafa(path, width, height, config, mode).await?,
+        refresh: None,
+      }
+    };
+    if let Ok(encoded) = encode_cache_file(&bytes, &header, 1, 0).await {
+      let db = cache.database.clone();
+      let budget = config.disk_cache_max_bytes;
+      let _ =
+        tokio::task::spawn_blocking(move || db.put_bounded("render", &key, &encoded, budget)).await;
+    }
+    bytes
+  };
+  if mode.is_protocol() {
+    ProtocolImage::from_encoded(
+      img_tui::EncodedProtocolImage {
+        data: bytes.data,
+        refresh: bytes.refresh,
+      },
+      &spec,
+      native_config,
+    )
+    .map(RenderedImage::Protocol)
+    .map_err(|e| e.to_string())
+  } else {
+    let text: Text<'static> = img_tui::chafa::decode(&bytes.data)?;
+    let size = text
+      .lines
+      .iter()
+      .map(|line| {
+        32 + line
+          .spans
+          .iter()
+          .map(|span| 32 + span.content.len() as u64)
+          .sum::<u64>()
+      })
+      .sum::<u64>();
+    Ok(RenderedImage::Symbols {
+      mode,
+      bytes: size,
+      paragraph: Box::new(Paragraph::new(text).wrap(Wrap { trim: false })),
+    })
   }
 }
 
@@ -260,68 +343,18 @@ async fn run_chafa(
   config: &RenderConfig,
   mode: RenderMode,
 ) -> Result<Vec<u8>, String> {
-  let mut command = Command::new(&config.chafa_bin);
-  let mut args: Vec<String> = config
-    .chafa_args
-    .iter()
-    .filter(|arg| {
-      !arg.starts_with("--format=")
-        && !arg.starts_with("--colors=")
-        && !arg.starts_with("--symbols=")
-        && !arg.starts_with("--passthrough=")
-        && !arg.starts_with("--probe=")
-        && !arg.starts_with("--relative=")
-    })
-    .cloned()
-    .collect();
-  args.push(format!("--format={}", mode.chafa_format()));
-  args.push("--probe=off".to_string());
-  args.push("--relative=off".to_string());
-  args.push("--passthrough=none".to_string());
-  if !args.iter().any(|arg| arg.starts_with("--scale=")) {
-    args.push("--scale=max".to_string());
-  }
-  if config.chafa_threads > 0
-    && !config
-      .chafa_args
-      .iter()
-      .any(|arg| arg.starts_with("--threads="))
-  {
-    args.push(format!("--threads={}", config.chafa_threads));
-  }
-  match mode {
-    RenderMode::Symbols => {
-      for arg in &config.chafa_args {
-        if arg.starts_with("--colors=") || arg.starts_with("--symbols=") {
-          args.push(arg.clone());
-        }
-      }
-    }
-    RenderMode::Ascii => {
-      args.push("--colors=none".to_string());
-      args.push("--symbols=ascii".to_string());
-    }
-    _ => {}
-  }
-  command
-    .args(args)
-    .arg("--size")
-    .arg(format!("{width}x{height}"));
-  command.arg(image_path);
-
-  let chafa_bin = config.chafa_bin.clone();
-  let output = command
-    .output()
-    .await
-    .map_err(|error| format!("failed to run {chafa_bin}: {error}"))?;
-  if !output.status.success() {
-    return Err(format!(
-      "{chafa_bin} exited with {}: {}",
-      output.status,
-      String::from_utf8_lossy(&output.stderr).trim()
-    ));
-  }
-  Ok(output.stdout)
+  img_tui::chafa::run(
+    image_path,
+    width,
+    height,
+    &img_tui::chafa::ChafaConfig {
+      chafa_bin: &config.chafa_bin,
+      chafa_args: &config.chafa_args,
+      chafa_threads: config.chafa_threads,
+    },
+    mode,
+  )
+  .await
 }
 
 fn render_cache_key(
@@ -332,7 +365,20 @@ fn render_cache_key(
 ) -> String {
   let mut hasher = Sha256::new();
   hasher.update(b"music-tui-cover-render-v1");
-  hasher.update(path.to_string_lossy().as_bytes());
+  hasher.update(
+    img_tui::cache::paths::identity(path)
+      .as_os_str()
+      .as_encoded_bytes(),
+  );
+  if let Ok(metadata) = std::fs::metadata(path) {
+    hasher.update(metadata.len().to_le_bytes());
+    if let Ok(time) = metadata.modified().and_then(|t| {
+      t.duration_since(std::time::UNIX_EPOCH)
+        .map_err(std::io::Error::other)
+    }) {
+      hasher.update(time.as_nanos().to_le_bytes());
+    }
+  }
   hasher.update(width.to_le_bytes());
   hasher.update(height.to_le_bytes());
   let (cell_w, cell_h) = native_config.cell_pixels.unwrap_or((0, 0));
@@ -347,7 +393,20 @@ fn kitty_image_id(path: &Path, width: u16, height: u16, mode: RenderMode) -> Opt
   }
   let mut hasher = Sha256::new();
   hasher.update(b"music-tui-kitty-image-v1");
-  hasher.update(path.to_string_lossy().as_bytes());
+  hasher.update(
+    img_tui::cache::paths::identity(path)
+      .as_os_str()
+      .as_encoded_bytes(),
+  );
+  if let Ok(metadata) = std::fs::metadata(path) {
+    hasher.update(metadata.len().to_le_bytes());
+    if let Ok(time) = metadata.modified().and_then(|t| {
+      t.duration_since(std::time::UNIX_EPOCH)
+        .map_err(std::io::Error::other)
+    }) {
+      hasher.update(time.as_nanos().to_le_bytes());
+    }
+  }
   hasher.update(width.to_le_bytes());
   hasher.update(height.to_le_bytes());
   let digest = hasher.finalize();
@@ -357,7 +416,20 @@ fn kitty_image_id(path: &Path, width: u16, height: u16, mode: RenderMode) -> Opt
 fn kitty_placement_id(path: &Path, image_id: Option<u32>) -> Option<u32> {
   let mut hasher = Sha256::new();
   hasher.update(b"music-tui-kitty-placement-v1");
-  hasher.update(path.to_string_lossy().as_bytes());
+  hasher.update(
+    img_tui::cache::paths::identity(path)
+      .as_os_str()
+      .as_encoded_bytes(),
+  );
+  if let Ok(metadata) = std::fs::metadata(path) {
+    hasher.update(metadata.len().to_le_bytes());
+    if let Ok(time) = metadata.modified().and_then(|t| {
+      t.duration_since(std::time::UNIX_EPOCH)
+        .map_err(std::io::Error::other)
+    }) {
+      hasher.update(time.as_nanos().to_le_bytes());
+    }
+  }
   hasher.update(image_id.unwrap_or_default().to_le_bytes());
   let digest = hasher.finalize();
   let placement_id = u32::from_le_bytes(digest[..4].try_into().unwrap_or_default()) & 0x7fff_ffff;

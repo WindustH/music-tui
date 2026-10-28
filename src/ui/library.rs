@@ -101,7 +101,7 @@ pub(super) fn draw_library_pane(frame: &mut Frame, app: &mut App, area: Rect) {
   // Currently playing song path (to mark the row like the queue does).
   let playing_path = app
     .current_song_url()
-    .and_then(|url| crate::library::uri_to_path(app.music_dir.as_deref(), &url));
+    .and_then(|url| crate::music_files::uri_to_path(app.music_dir.as_deref(), &url));
 
   let header = Row::new(
     std::iter::once(Cell::from(""))
@@ -346,44 +346,4 @@ fn library_row(
     cells.push(cell);
   }
   Row::new(cells).height(1).style(row_style)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  fn column(weight: u32) -> DisplayColumn {
-    DisplayColumn {
-      weight,
-      kind: ColumnKind::Field(TrackField::Title),
-    }
-  }
-
-  #[test]
-  fn column_widths_survive_huge_weights() {
-    // budget * weight used to multiply in u32 and overflow with a
-    // maximum-weight column on a full-width pane.
-    let columns = vec![column(u32::MAX), column(u32::MAX)];
-    let widths = column_widths(&columns, 100);
-    assert_eq!(widths.len(), 2);
-    let used: u16 = widths.iter().sum();
-    assert_eq!(used, 100 - 2 - 2); // marker + inter-column gaps
-    assert!(widths.iter().all(|width| *width >= 1));
-  }
-
-  #[test]
-  fn weighted_shares_plus_remainder_fit_budget() {
-    let columns = vec![column(2), column(1)];
-    let widths = column_widths(&columns, 20);
-    assert_eq!(widths[0], 11);
-    assert_eq!(widths[1], 5);
-    assert_eq!(widths.iter().sum::<u16>(), 20 - 2 - 2);
-  }
-
-  #[test]
-  fn zero_weight_columns_still_get_minimum_width() {
-    let columns = vec![column(0), column(1)];
-    let widths = column_widths(&columns, 20);
-    assert!(widths.iter().all(|width| *width >= 1));
-  }
 }

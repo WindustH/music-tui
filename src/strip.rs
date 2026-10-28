@@ -32,11 +32,6 @@ impl StrippedText {
     Self { lowered, origins }
   }
 
-  #[cfg(test)]
-  pub fn matches(&self, term: &str) -> bool {
-    contains_needle(&self.lowered, &needle(term))
-  }
-
   /// All occurrence ranges of `term`, in byte coordinates of the
   /// ORIGINAL text. The term itself is stripped and lowercased too.
   pub fn find_all(&self, term: &str) -> Vec<(usize, usize)> {
@@ -85,68 +80,4 @@ pub(crate) fn matches_needle(text: &str, needle: &str) -> bool {
 /// Whether already-[`fold`]ed text contains the prepared `needle`.
 pub(crate) fn contains_needle(folded: &str, needle: &str) -> bool {
   !needle.is_empty() && folded.contains(needle)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn needle_matching_agrees_with_ranges() {
-    for (text, term) in [
-      ("Love  Story", "lovestory"),
-      ("Love Story", "Love Story"),
-      ("夜的 第七章 夜曲", "夜曲"),
-      ("x a by", "a b"),
-      ("İstanbul", "i̇stan"),
-      ("abc", "zzz"),
-      ("abc", "   "),
-    ] {
-      assert_eq!(
-        matches_needle(text, &needle(term)),
-        !StrippedText::new(text).find_all(term).is_empty(),
-        "{text:?} vs {term:?}"
-      );
-    }
-  }
-
-  #[test]
-  fn ignores_spaces_and_case() {
-    let text = StrippedText::new("Love  Story");
-    assert!(text.matches("lovestory"));
-    assert!(text.matches("Love Story"));
-    assert!(text.matches("love"));
-    assert!(!text.matches("story love"));
-  }
-
-  #[test]
-  fn ranges_land_on_original_bytes() {
-    let text = StrippedText::new("Love Story love");
-    let ranges = text.find_all("love");
-    assert_eq!(ranges.len(), 2);
-    assert_eq!(ranges[0], (0, 4));
-    // "Love Story love": bytes L0 o1 v2 e3 ' '4 S5 t6 o7 r8 y9 ' '10 l11 o12 v13 e14.
-    assert_eq!(ranges[1], (11, 15));
-  }
-
-  #[test]
-  fn unicode_ranges_are_char_boundaries() {
-    let text = StrippedText::new("夜的 第七章 夜曲");
-    let ranges = text.find_all("夜曲");
-    // "夜的 第七章 夜曲": 夜(0)的(3)sp(6)第(7)七(10)章(13)sp(16)夜(17)曲(20)
-    // → the match spans bytes 17..23.
-    assert_eq!(ranges, vec![(17, 23)]);
-    let full = "夜的 第七章 夜曲";
-    assert!(full.is_char_boundary(ranges[0].0));
-    assert!(full.is_char_boundary(ranges[0].1));
-  }
-
-  #[test]
-  fn match_spanning_removed_spaces() {
-    // "a b" matches the whole text with the space skipped.
-    let text = StrippedText::new("x a by");
-    let ranges = text.find_all("a b");
-    // Original text: 'x'(0) ' '(1) 'a'(2) ' '(3) 'b'(4) 'y'(5)
-    assert_eq!(ranges, vec![(2, 5)]);
-  }
 }

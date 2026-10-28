@@ -69,8 +69,13 @@ separator_color = "dark_gray"
 columns = 3                   # most columns of hints (fewer when narrow)
 ```
 
-`white` is the terminal's normal white and `bright white` its bright one;
-the `bright …` names and ratatui's `light_…` names are interchangeable.
+`white` and `bright white` both select bright white; `gray` selects normal white.
+The `bright …` names and `light_…` names are interchangeable.
 
 A `theme.toml` that no longer parses (for example an old flat-format file)
 is backed up as `theme.toml.bak.<timestamp>` and replaced with the defaults.
+
+Color names use the shared framework-tui parser: case and spaces, underscores,
+and hyphens are ignored. `light_red` and `bright red` are equivalent;
+`default`/`reset`, `ansi:236` (or `236`) and `#rrggbb` are supported.
+`white` means bright white consistently; use `gray` for normal-intensity white.

@@ -104,29 +104,29 @@ impl App {
       }
       "queue_play" => self.play_selected_queue_row(),
       "play_pause" => {
-        self.mpdc(MpdCommand::PlayPauseToggle);
+        self.send_mpd(MpdCommand::PlayPauseToggle);
         true
       }
       "next" => {
-        self.mpdc(MpdCommand::Next);
+        self.send_mpd(MpdCommand::Next);
         true
       }
       "previous" => {
-        self.mpdc(MpdCommand::Previous);
+        self.send_mpd(MpdCommand::Previous);
         true
       }
       "stop" => {
-        self.mpdc(MpdCommand::Stop);
+        self.send_mpd(MpdCommand::Stop);
         true
       }
       "queue_delete" => self.delete_selected_queue_row(),
       "queue_clear" => {
-        self.mpdc(MpdCommand::ClearQueue);
+        self.send_mpd(MpdCommand::ClearQueue);
         self.set_message("queue cleared");
         true
       }
       "queue_shuffle" => {
-        self.mpdc(MpdCommand::Shuffle);
+        self.send_mpd(MpdCommand::Shuffle);
         self.set_message("queue shuffled");
         true
       }
@@ -143,11 +143,11 @@ impl App {
         true
       }
       "volume_up" => {
-        self.mpdc(MpdCommand::NudgeVolume(5));
+        self.send_mpd(MpdCommand::NudgeVolume(5));
         true
       }
       "volume_down" => {
-        self.mpdc(MpdCommand::NudgeVolume(-5));
+        self.send_mpd(MpdCommand::NudgeVolume(-5));
         true
       }
       "volume_mute" => {
@@ -155,27 +155,27 @@ impl App {
         true
       }
       "seek_forward" => {
-        self.mpdc(MpdCommand::NudgeSeek(5));
+        self.send_mpd(MpdCommand::NudgeSeek(5));
         true
       }
       "seek_back" => {
-        self.mpdc(MpdCommand::NudgeSeek(-5));
+        self.send_mpd(MpdCommand::NudgeSeek(-5));
         true
       }
       "seek_forward_long" => {
-        self.mpdc(MpdCommand::NudgeSeek(30));
+        self.send_mpd(MpdCommand::NudgeSeek(30));
         true
       }
       "seek_back_long" => {
-        self.mpdc(MpdCommand::NudgeSeek(-30));
+        self.send_mpd(MpdCommand::NudgeSeek(-30));
         true
       }
       "toggle_repeat" => {
-        self.mpdc(MpdCommand::SetRepeat(self.toggle_flag("repeat")));
+        self.send_mpd(MpdCommand::SetRepeat(self.toggle_flag("repeat")));
         true
       }
       "toggle_random" => {
-        self.mpdc(MpdCommand::SetRandom(self.toggle_flag("random")));
+        self.send_mpd(MpdCommand::SetRandom(self.toggle_flag("random")));
         true
       }
       "cycle_single" => {
@@ -184,11 +184,11 @@ impl App {
           Some(SingleMode::Enabled) => SingleMode::Oneshot,
           _ => SingleMode::Disabled,
         };
-        self.mpdc(MpdCommand::SetSingle(next));
+        self.send_mpd(MpdCommand::SetSingle(next));
         true
       }
       "toggle_consume" => {
-        self.mpdc(MpdCommand::SetConsume(self.toggle_flag("consume")));
+        self.send_mpd(MpdCommand::SetConsume(self.toggle_flag("consume")));
         true
       }
       "scroll_up" => {

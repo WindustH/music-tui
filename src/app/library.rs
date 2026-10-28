@@ -214,7 +214,7 @@ impl App {
     };
     let path = track.path.clone();
     let title = title_of(track);
-    self.mpdc(MpdCommand::PlayLibrary { path, append });
+    self.send_mpd(MpdCommand::PlayLibrary { path, append });
     self.set_message(if append {
       format!("queued {title}")
     } else {

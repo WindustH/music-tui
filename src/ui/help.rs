@@ -59,7 +59,7 @@ pub(super) fn draw_help_dialog(
   };
   let entries =
     framework_tui::merge_help_entries(app.pane_bindings().iter().flat_map(|bindings| {
-      bindings.help_entries_filtered(framework_tui::KeyContext::Browser, |_| true)
+      bindings.help_entries_filtered(framework_tui::KeyContext::Active, |_| true)
     }));
   let popup = draw_key_help_dialog_scrolled(
     frame,

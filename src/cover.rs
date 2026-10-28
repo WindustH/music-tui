@@ -76,16 +76,16 @@ fn extract_embedded_cover(file: &Path, covers_cache_dir: &Path) -> Result<PathBu
   hasher.update(data);
   let digest = hex::encode(&hasher.finalize()[..16]);
   let path = covers_cache_dir.join(format!("{digest}.{ext}"));
-  if !path.exists() {
+  if !img_tui::cache::paths::contains(&path) {
     std::fs::create_dir_all(covers_cache_dir)
       .map_err(|error| format!("failed to create covers cache: {error}"))?;
     // Publish atomically: another instance (or a reader in this one) must
     // never observe a half-written image. Same digest → same bytes, so a
     // racing writer's replace is harmless.
-    crate::fsutil::atomic_write_bytes(&path, data)
+    img_tui::cache::paths::write_sync(&path, data)
       .map_err(|error| format!("failed to write cover cache: {error}"))?;
   }
-  Ok(path)
+  img_tui::cache::paths::materialize(&path).map_err(|e| e.to_string())
 }
 
 fn sniff_image_extension(data: &[u8]) -> Option<&'static str> {

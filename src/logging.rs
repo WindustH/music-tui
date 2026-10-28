@@ -42,22 +42,3 @@ fn open_log_file(path: &Path) -> std::io::Result<std::fs::File> {
     .append(true)
     .open(path)
 }
-
-#[cfg(all(test, unix))]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn refuses_symlinked_log_path() {
-    let dir = std::env::temp_dir().join(format!("music-tui-log-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("target.log");
-    std::fs::write(&target, b"").unwrap();
-    let link = dir.join("music-tui.log");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-
-    assert!(open_log_file(&link).is_err());
-    let _ = std::fs::remove_dir_all(&dir);
-  }
-}

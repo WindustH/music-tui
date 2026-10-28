@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 use super::{MpdCommand, worker::Cache};
 use crate::{
   config::MpdConfig,
-  library::{SongKey, song_key},
+  music_files::{SongKey, song_key},
 };
 
 /// Longest absolute seek target accepted from the UI (sanity bound).
@@ -211,8 +211,8 @@ async fn play_library_file(
   index: &mut QueueIndex,
   dedup: bool,
 ) -> Result<(), String> {
-  let music_dir = crate::library::resolve_music_dir(config).ok();
-  let uri = crate::open::resolve_open_uri(client, path, config, music_dir.as_deref())
+  let music_dir = crate::music_files::resolve_music_dir(config).ok();
+  let uri = crate::enqueue::resolve_open_uri(client, path, config, music_dir.as_deref())
     .await
     .map_err(|error| error.to_string())?;
   let key = song_key(&uri);
@@ -220,7 +220,7 @@ async fn play_library_file(
   if dedup && let Some(id) = index.lookup(client, &cache.queue, &key).await? {
     // Already queued: skip the add and reuse the existing entry.
     if append {
-      return crate::open::maybe_start_if_idle(client)
+      return crate::enqueue::maybe_start_if_idle(client)
         .await
         .map_err(|error| error.to_string());
     }
@@ -233,7 +233,7 @@ async fn play_library_file(
       .await
       .map_err(|error| error.to_string())?;
     index.record_add(key, id);
-    return crate::open::maybe_start_if_idle(client)
+    return crate::enqueue::maybe_start_if_idle(client)
       .await
       .map_err(|error| error.to_string());
   }

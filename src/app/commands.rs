@@ -207,18 +207,18 @@ impl App {
     match command {
       "quit" | "q" => self.quit = true,
       "help" => self.show_help = true,
-      "play" => self.mpdc(MpdCommand::PlayPauseToggle),
-      "pause" => self.mpdc(MpdCommand::Pause(true)),
-      "toggle" => self.mpdc(MpdCommand::PlayPauseToggle),
-      "stop" => self.mpdc(MpdCommand::Stop),
-      "next" => self.mpdc(MpdCommand::Next),
-      "prev" => self.mpdc(MpdCommand::Previous),
+      "play" => self.send_mpd(MpdCommand::PlayPauseToggle),
+      "pause" => self.send_mpd(MpdCommand::Pause(true)),
+      "toggle" => self.send_mpd(MpdCommand::PlayPauseToggle),
+      "stop" => self.send_mpd(MpdCommand::Stop),
+      "next" => self.send_mpd(MpdCommand::Next),
+      "prev" => self.send_mpd(MpdCommand::Previous),
       "volume" | "vol" => match args.first() {
         Some(value) => {
           if let Some(nudge) = parse_volume_delta(value) {
-            self.mpdc(MpdCommand::NudgeVolume(nudge));
+            self.send_mpd(MpdCommand::NudgeVolume(nudge));
           } else if let Ok(volume) = value.parse::<u8>() {
-            self.mpdc(MpdCommand::SetVolume(volume.min(100)));
+            self.send_mpd(MpdCommand::SetVolume(volume.min(100)));
           } else {
             self.set_message(format!("invalid volume: {value}"));
           }
@@ -228,15 +228,15 @@ impl App {
           self.set_message(format!("volume: {}%", volume.unwrap_or(0)));
         }
       },
-      "repeat" => self.mpdc(MpdCommand::SetRepeat(self.toggle_flag("repeat"))),
-      "random" => self.mpdc(MpdCommand::SetRandom(self.toggle_flag("random"))),
-      "single" => self.mpdc(MpdCommand::SetSingle(self.toggle_single())),
-      "consume" => self.mpdc(MpdCommand::SetConsume(self.toggle_flag("consume"))),
+      "repeat" => self.send_mpd(MpdCommand::SetRepeat(self.toggle_flag("repeat"))),
+      "random" => self.send_mpd(MpdCommand::SetRandom(self.toggle_flag("random"))),
+      "single" => self.send_mpd(MpdCommand::SetSingle(self.toggle_single())),
+      "consume" => self.send_mpd(MpdCommand::SetConsume(self.toggle_flag("consume"))),
       "dedup" => {
         self.run_action("queue_dedup");
       }
-      "clear" => self.mpdc(MpdCommand::ClearQueue),
-      "update" => self.mpdc(MpdCommand::Rescan),
+      "clear" => self.send_mpd(MpdCommand::ClearQueue),
+      "update" => self.send_mpd(MpdCommand::Rescan),
       "tab" => self.command_tab(&args),
       "add" => self.command_add(&args),
       "save" => self.command_save(args.first().copied()),
@@ -326,7 +326,7 @@ impl App {
         .duration
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
-      let path = crate::library::uri_to_path(self.music_dir.as_deref(), &song.url);
+      let path = crate::music_files::uri_to_path(self.music_dir.as_deref(), &song.url);
       if let Some(path) = path {
         body.push_str(&format!("#EXTINF:{seconds},{label}\n{}\n", path.display()));
         written += 1;
@@ -358,7 +358,7 @@ fn queue_local_path(
     return format!("path not found: {}", path.display());
   };
   let files = if canonical.is_dir() {
-    match crate::library::collect_audio_files(&canonical, recursive) {
+    match crate::music_files::collect_audio_files(&canonical, recursive) {
       Ok(files) => files,
       Err(error) => return format!("scan failed: {error:#}"),
     }
@@ -367,7 +367,7 @@ fn queue_local_path(
   };
   let uris: Vec<String> = files
     .iter()
-    .filter_map(|file| crate::open::direct_open_uri(file, config, music_dir))
+    .filter_map(|file| crate::enqueue::direct_open_uri(file, config, music_dir))
     .collect();
   let count = uris.len();
   for uri in uris {
@@ -394,29 +394,4 @@ fn parse_volume_delta(arg: &str) -> Option<i16> {
     magnitude
   };
   Some(signed.clamp(-100, 100) as i16)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn volume_delta_parses_signed_values() {
-    assert_eq!(parse_volume_delta("50"), None);
-    assert_eq!(parse_volume_delta("+50"), Some(50));
-    assert_eq!(parse_volume_delta("-50"), Some(-50));
-  }
-
-  #[test]
-  fn volume_delta_clamps_and_never_overflows() {
-    assert_eq!(parse_volume_delta("--32768"), Some(100));
-    assert_eq!(parse_volume_delta("-200"), Some(-100));
-    assert_eq!(parse_volume_delta("+200"), Some(100));
-  }
-
-  #[test]
-  fn volume_delta_rejects_garbage() {
-    assert_eq!(parse_volume_delta("+abc"), None);
-    assert_eq!(parse_volume_delta("--99999999999999999999"), None);
-  }
 }

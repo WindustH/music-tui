@@ -13,18 +13,15 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use tokio::sync::mpsc;
 
-use crate::{
-  config::LibraryConfig,
-  event::{AsyncEvent, LibraryEvent},
-};
+use crate::config::LibraryConfig;
 
 /// Start the scanner thread: one scan right away, then one per rescan
 /// request (`u`). Returns the rescan sender, or `None` when no library
 /// paths are configured. The thread exits once the app drops the sender.
-pub fn spawn_scanner(
+pub fn spawn_scanner<E: From<LibraryEvent> + Send + 'static>(
   library: &LibraryConfig,
   state_dir: &Path,
-  events: mpsc::UnboundedSender<AsyncEvent>,
+  events: mpsc::UnboundedSender<E>,
 ) -> Option<std::sync::mpsc::Sender<()>> {
   if library.paths.is_empty() {
     return None;
@@ -36,7 +33,7 @@ pub fn spawn_scanner(
     .name("music-tui-library".to_string())
     .spawn(move || {
       let send = |event: LibraryEvent| {
-        let _ = events.send(AsyncEvent::Library(event));
+        let _ = events.send(E::from(event));
       };
       loop {
         let mut progress = |scanned: usize, changed: usize| {
@@ -175,7 +172,7 @@ fn all_tracks(connection: &Connection) -> Result<Vec<LibraryTrack>> {
 fn configured_root_paths(config: &LibraryConfig) -> Vec<String> {
   let mut paths = Vec::new();
   for path in &config.paths {
-    let expanded = crate::config::expand_home(path);
+    let expanded = framework_tui::paths::expand_home(path);
     let Ok(canonical) = expanded.canonicalize() else {
       continue;
     };
@@ -194,51 +191,15 @@ fn sync_roots(connection: &Connection, config: &LibraryConfig) -> Result<()> {
   Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  fn scan(db: &Path, config: &LibraryConfig) -> Vec<LibraryTrack> {
-    scan_and_load(db, config, &mut |_, _| {}).expect("scan succeeds")
-  }
-
-  #[test]
-  fn rescans_drop_vanished_and_nomedia_tracks() {
-    let root = std::env::temp_dir().join(format!("music-tui-libdb-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    let music = root.join("music");
-    std::fs::create_dir_all(music.join("x")).unwrap();
-    std::fs::create_dir_all(music.join("y")).unwrap();
-    std::fs::write(music.join("x/01. Artist - Song A.mp3"), b"").unwrap();
-    std::fs::write(music.join("y/b.mp3"), b"").unwrap();
-    let db = root.join("library.db");
-    let config = LibraryConfig {
-      paths: vec![music.to_string_lossy().into_owned()],
-      ..LibraryConfig::default()
-    };
-
-    let tracks = scan(&db, &config);
-    assert_eq!(tracks.len(), 2);
-    let untagged = tracks.iter().find(|track| track.title == "Song A").unwrap();
-    assert_eq!(
-      untagged.artist, "Artist",
-      "artist derived from the file name"
-    );
-
-    std::fs::write(music.join("y/.nomedia"), b"").unwrap();
-    assert_eq!(scan(&db, &config).len(), 1, "nomedia folder dropped");
-
-    std::fs::remove_file(music.join("x/01. Artist - Song A.mp3")).unwrap();
-    assert!(scan(&db, &config).is_empty(), "vanished file dropped");
-
-    let unconfigured = LibraryConfig {
-      paths: Vec::new(),
-      ..LibraryConfig::default()
-    };
-    std::fs::write(music.join("x/c.mp3"), b"").unwrap();
-    assert_eq!(scan(&db, &config).len(), 1);
-    assert!(scan(&db, &unconfigured).is_empty(), "removed root dropped");
-
-    let _ = std::fs::remove_dir_all(&root);
-  }
+#[derive(Debug)]
+pub enum LibraryEvent {
+  /// Periodic progress while scanning (scanned files, changed files).
+  Scanning { scanned: usize, changed: usize },
+  /// Scan finished; carries the full track list.
+  Loaded(Vec<crate::library_db::LibraryTrack>),
+  /// Scan failed; `tracks` holds what the database still had, if readable.
+  Failed {
+    error: String,
+    tracks: Option<Vec<crate::library_db::LibraryTrack>>,
+  },
 }

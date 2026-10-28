@@ -182,7 +182,7 @@ impl App {
     let Some(time_secs) = lines.get(index).map(|line| line.time_secs) else {
       return false;
     };
-    self.mpdc(MpdCommand::SeekCurrent(time_secs.max(0.0)));
+    self.send_mpd(MpdCommand::SeekCurrent(time_secs.max(0.0)));
     self.lyrics_follow = true;
     self.lyrics_cursor = None;
     self.set_message(format!("seek to {}", format_time(time_secs)));

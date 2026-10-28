@@ -36,7 +36,7 @@ need one. music-tui takes `mpd.music_dir` from `config.toml`, or else reads
 | --- | --- | --- |
 | `config.toml`, `keymap.toml`, `theme.toml` | `$XDG_CONFIG_HOME/music-tui` (`~/.config/music-tui`) | `%APPDATA%\music-tui` |
 | `library.db`, `state.toml`, `playlists/` | `$XDG_STATE_HOME/music-tui` (`~/.local/state/music-tui`) | `%APPDATA%\music-tui` |
-| `music-tui.log`, `covers/` | `$XDG_CACHE_HOME/music-tui` (`~/.cache/music-tui`) | `%LOCALAPPDATA%\music-tui` |
+| `music-tui.log`, `cache.sqlite3` | `$XDG_CACHE_HOME/music-tui` (`~/.cache/music-tui`) | `%LOCALAPPDATA%\music-tui` |
 
 `state.toml` remembers the active tab, the queue selection, and the lyrics
 follow mode between runs.

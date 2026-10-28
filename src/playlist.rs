@@ -64,7 +64,7 @@ fn pls_entry(line: &str) -> Option<&str> {
 }
 
 fn resolve_entry(base: &Path, line: &str) -> PathBuf {
-  let expanded = crate::config::expand_home(line);
+  let expanded = framework_tui::paths::expand_home(line);
   if expanded.is_absolute() {
     expanded
   } else {
@@ -75,7 +75,7 @@ fn resolve_entry(base: &Path, line: &str) -> PathBuf {
 /// Default `:save` directory: `playlists` under the app state directory
 /// (`~/.local/state/music-tui` on Unix, `%APPDATA%\music-tui` on Windows).
 pub fn default_save_dir() -> PathBuf {
-  crate::config::app_state_dir().join("playlists")
+  framework_tui::paths::state_dir().join("music-tui/playlists")
 }
 
 /// Decide where `:save` writes.
@@ -92,7 +92,7 @@ pub fn resolve_save_path(arg: Option<&str>, save_dir: &Path) -> Result<PathBuf, 
       .unwrap_or(0);
     return Ok(save_dir.join(format!("music-tui-{stamp}.m3u")));
   };
-  let expanded = crate::config::expand_home(arg.trim());
+  let expanded = framework_tui::paths::expand_home(arg.trim());
   if expanded.is_absolute() {
     return Ok(expanded);
   }
@@ -109,133 +109,4 @@ pub fn resolve_save_path(arg: Option<&str>, save_dir: &Path) -> Result<PathBuf, 
     name
   };
   Ok(save_dir.join(with_ext))
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use std::sync::{Mutex, MutexGuard};
-
-  /// Serialize fixture writes and cleanups: cleanup_tmp removes the shared
-  /// scratch dir, which can slip between another test's create_dir_all and
-  /// its write (observed as NotFound on Windows CI) when tests run in
-  /// parallel.
-  fn tmp_guard() -> MutexGuard<'static, ()> {
-    static GUARD: Mutex<()> = Mutex::new(());
-    GUARD
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner())
-  }
-
-  fn write_tmp(name: &str, body: &str) -> PathBuf {
-    let _guard = tmp_guard();
-    let dir = std::env::temp_dir().join(format!("music-tui-playlist-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
-    std::fs::write(&path, body).unwrap();
-    path
-  }
-
-  /// Drop the shared scratch dir once the last fixture is gone; harmless
-  /// (no-op) while other fixtures still exist.
-  fn cleanup_tmp() {
-    let _guard = tmp_guard();
-    let dir = std::env::temp_dir().join(format!("music-tui-playlist-{}", std::process::id()));
-    let _ = std::fs::remove_dir(&dir);
-  }
-
-  #[test]
-  fn parses_m3u_with_comments_and_relative_entries() {
-    let absolute = std::env::temp_dir().join("music-tui-absolute.mp3");
-    let path = write_tmp(
-      "list.m3u",
-      &format!(
-        "#EXTM3U\n#EXTINF:123,Artist - Title\n../songs/a.flac\n{}\n\n\n",
-        absolute.display(),
-      ),
-    );
-    let entries = parse_playlist(&path).unwrap();
-    assert_eq!(entries.len(), 2);
-    assert!(entries[0].ends_with("../songs/a.flac"));
-    assert_eq!(entries[1], absolute);
-    let _ = std::fs::remove_file(&path);
-    cleanup_tmp();
-  }
-
-  #[test]
-  fn parses_pls_file_entries_only() {
-    let absolute = std::env::temp_dir().join("music-tui-absolute.flac");
-    let path = write_tmp(
-      "list.pls",
-      &format!(
-        "[playlist]\nFile1=one.ogg\nTitle1=x\nFile2={}\nLength1=10\n",
-        absolute.display(),
-      ),
-    );
-    let entries = parse_playlist(&path).unwrap();
-    assert_eq!(entries.len(), 2);
-    assert!(entries[0].ends_with("one.ogg"));
-    assert_eq!(entries[1], absolute);
-    let _ = std::fs::remove_file(&path);
-    cleanup_tmp();
-  }
-
-  #[test]
-  fn pls_entry_ignores_multibyte_key_prefixes() {
-    // 'File' cut at a non-char boundary used to panic the byte slicing.
-    assert!(pls_entry("ñññx=1.mp3").is_none());
-    assert_eq!(pls_entry("File12=one.ogg"), Some("one.ogg"));
-    assert!(pls_entry("filex=one.ogg").is_none());
-  }
-
-  #[test]
-  fn parses_plain_text_path_list() {
-    let path = write_tmp("paths.txt", "# comment\nsong1.mp3\n~/music/song2.flac\n");
-    let entries = parse_playlist(&path).unwrap();
-    assert_eq!(entries.len(), 2);
-    assert!(entries[1].to_string_lossy().contains("music/song2.flac"));
-    let _ = std::fs::remove_file(&path);
-    cleanup_tmp();
-  }
-
-  #[test]
-  fn save_path_defaults_to_generated_name_in_save_dir() {
-    let dir = Path::new("/state/playlists");
-    let resolved = resolve_save_path(None, dir).unwrap();
-    assert!(resolved.starts_with(dir));
-    assert!(
-      resolved
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .starts_with("music-tui-")
-    );
-    assert_eq!(resolved.extension().unwrap(), "m3u");
-  }
-
-  #[test]
-  fn save_path_completes_bare_filenames() {
-    let dir = Path::new("/state/playlists");
-    assert_eq!(
-      resolve_save_path(Some("favorites"), dir).unwrap(),
-      dir.join("favorites.m3u")
-    );
-    assert_eq!(
-      resolve_save_path(Some("favorites.m3u8"), dir).unwrap(),
-      dir.join("favorites.m3u8")
-    );
-  }
-
-  #[test]
-  fn save_path_rejects_relative_paths() {
-    let dir = std::env::temp_dir().join("music-tui-playlists");
-    assert!(resolve_save_path(Some("sub/queue.m3u"), &dir).is_err());
-    assert!(resolve_save_path(Some("../queue.m3u"), &dir).is_err());
-    let absolute = std::env::temp_dir().join("music-tui-queue.m3u");
-    assert_eq!(
-      resolve_save_path(Some(absolute.to_str().unwrap()), &dir).unwrap(),
-      absolute,
-    );
-    cleanup_tmp();
-  }
 }

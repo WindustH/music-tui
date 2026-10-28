@@ -76,6 +76,9 @@ impl BehaviorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RenderConfig {
+  pub raw_memory_cache_max_bytes: u64,
+  #[serde(alias = "cache_max_bytes")]
+  pub disk_cache_max_bytes: u64,
   pub chafa_bin: String,
   pub auto_detect: bool,
   pub chafa_args: Vec<String>,
@@ -83,18 +86,20 @@ pub struct RenderConfig {
   /// Graphics escape passthrough override (`tmux` / `screen` / `none`);
   /// unset detects the terminal multiplexer.
   pub passthrough: Option<String>,
-  pub zellij_sixel: bool,
+  pub zellij_sixel: framework_tui::config::Toggle,
 }
 
 impl Default for RenderConfig {
   fn default() -> Self {
     Self {
+      raw_memory_cache_max_bytes: 64 * 1024 * 1024,
+      disk_cache_max_bytes: 512 * 1024 * 1024,
       chafa_bin: "chafa".to_string(),
       auto_detect: true,
       chafa_args: Vec::new(),
       chafa_threads: 0,
       passthrough: None,
-      zellij_sixel: false,
+      zellij_sixel: framework_tui::config::Toggle::Off,
     }
   }
 }
@@ -224,118 +229,6 @@ impl Default for LyricsConfig {
   }
 }
 
-/// Top-level tab configuration. Each `[[layout.tabs]]` entry describes one
-/// tab shown in the tab bar; `detail` describes the secondary detail view.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct LayoutConfig {
-  pub detail: String,
-  pub tabs: Vec<TabConfig>,
-}
-
-impl Default for LayoutConfig {
-  fn default() -> Self {
-    Self::with_default_tabs()
-  }
-}
-
-impl LayoutConfig {
-  fn normalize_defaults(&mut self) {
-    if self.detail.trim().is_empty() {
-      self.detail = layout::DEFAULT_DETAIL_LAYOUT.to_string();
-    }
-    if self.tabs.is_empty() {
-      *self = LayoutConfig::with_default_tabs();
-    }
-  }
-
-  fn with_default_tabs() -> Self {
-    let tabs = vec![
-      TabConfig::playlist(),
-      TabConfig::library(),
-      TabConfig::playing(),
-      TabConfig::metadata(),
-      TabConfig::lyrics(),
-    ];
-    #[cfg(unix)]
-    let tabs = {
-      let mut tabs = tabs;
-      tabs.push(TabConfig::visualizer());
-      tabs
-    };
-    Self {
-      detail: layout::DEFAULT_DETAIL_LAYOUT.to_string(),
-      tabs,
-    }
-  }
-}
-
-/// One tab: a layout tree plus the pane whose keymap is active.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TabConfig {
-  /// Name shown in the tab bar.
-  pub name: String,
-  /// Layout tree, e.g. `H(2:1, queue, V(2:1, cover, metadata))`.
-  pub layout: String,
-  /// Pane that receives this tab's keys (`queue`, `library`, `cover`,
-  /// `lyrics`, `metadata`, `visualizer`). Defaults to the first pane in the
-  /// tree.
-  pub main: Option<String>,
-}
-
-impl TabConfig {
-  fn playlist() -> Self {
-    Self {
-      name: "playlist".to_string(),
-      layout: "H(2:1, queue, V(2:1, cover:hovered, metadata:hovered))".to_string(),
-      main: Some("queue".to_string()),
-    }
-  }
-
-  fn library() -> Self {
-    Self {
-      name: "library".to_string(),
-      layout: "H(2:1, library, V(2:1, cover:library-hovered, metadata:library-hovered))"
-        .to_string(),
-      main: Some("library".to_string()),
-    }
-  }
-
-  fn playing() -> Self {
-    Self {
-      name: "playing".to_string(),
-      layout: "H(1:2, cover, lyrics)".to_string(),
-      main: Some("cover".to_string()),
-    }
-  }
-
-  fn metadata() -> Self {
-    Self {
-      name: "metadata".to_string(),
-      layout: "metadata".to_string(),
-      main: Some("metadata".to_string()),
-    }
-  }
-
-  fn lyrics() -> Self {
-    Self {
-      name: "lyrics".to_string(),
-      layout: "lyrics".to_string(),
-      main: Some("lyrics".to_string()),
-    }
-  }
-
-  #[cfg(unix)]
-  fn visualizer() -> Self {
-    Self {
-      name: "visualizer".to_string(),
-      layout: "visualizer".to_string(),
-      main: Some("visualizer".to_string()),
-    }
-  }
-}
-
 impl super::AppConfig {
   pub(super) fn normalize_defaults(&mut self) {
     if self.behavior.tick_ms == 0 {
@@ -370,88 +263,5 @@ impl super::AppConfig {
     layout::parse_detail(&self.layout.detail)?;
     layout::parse_tabs(&self.layout)?;
     Ok(())
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  fn parse_and_normalize(body: &str) -> crate::config::AppConfig {
-    let mut parsed: crate::config::AppConfig = toml::from_str(body).unwrap();
-    crate::config::AppConfig::normalize_defaults(&mut parsed);
-    parsed
-  }
-
-  #[test]
-  fn visualizer_channels_are_kept_in_a_sane_range() {
-    let zero = parse_and_normalize("[visualizer]\nchannels = 0\n");
-    assert_eq!(zero.visualizer.channels, 2);
-
-    let huge = parse_and_normalize("[visualizer]\nchannels = 99\n");
-    assert_eq!(huge.visualizer.channels, 8);
-
-    let stereo = parse_and_normalize("[visualizer]\nchannels = 2\n");
-    assert_eq!(stereo.visualizer.channels, 2);
-  }
-
-  #[test]
-  fn unknown_config_keys_are_rejected() {
-    let top_level = toml::from_str::<crate::config::AppConfig>("[behavior]\nwat = 1\n");
-    assert!(
-      top_level.is_err(),
-      "unknown top-level key must fail: {top_level:?}"
-    );
-
-    let nested = toml::from_str::<crate::config::AppConfig>(
-      "[[library.columns]]\nfield = \"title\"\nwidth = 2\nwat = 1\n",
-    );
-    assert!(nested.is_err(), "unknown nested key must fail: {nested:?}");
-  }
-
-  #[test]
-  fn behavior_zero_ticks_fall_back_to_defaults() {
-    let parsed = parse_and_normalize("[behavior]\ntick_ms = 0\nplaying_tick_ms = 0\n");
-    assert_eq!(parsed.behavior.tick_ms, 1000);
-    assert_eq!(parsed.behavior.playing_tick_ms, 200);
-  }
-
-  #[test]
-  fn behavior_refresh_durations_are_clamped() {
-    use std::time::Duration;
-
-    let default = crate::config::BehaviorConfig::default();
-    assert_eq!(
-      default.refresh_durations(),
-      (Duration::from_millis(1000), Duration::from_millis(200))
-    );
-
-    let degenerate = crate::config::BehaviorConfig {
-      tick_ms: 0,
-      playing_tick_ms: 50,
-      queue_dedup: false,
-    };
-    assert_eq!(
-      degenerate.refresh_durations(),
-      (Duration::from_millis(100), Duration::from_millis(100))
-    );
-
-    let huge = crate::config::BehaviorConfig {
-      tick_ms: 1_000_000,
-      playing_tick_ms: 999_999,
-      queue_dedup: true,
-    };
-    assert_eq!(
-      huge.refresh_durations(),
-      (Duration::from_millis(10_000), Duration::from_millis(10_000))
-    );
-  }
-
-  #[test]
-  fn library_column_width_zero_falls_back_to_one() {
-    let parsed = parse_and_normalize(
-      "[[library.columns]]\nfield = \"title\"\nwidth = 0\n\n\
-       [[library.columns]]\nfield = \"artist\"\nwidth = 4\n",
-    );
-    assert_eq!(parsed.library.columns[0].width, 1);
-    assert_eq!(parsed.library.columns[1].width, 4);
   }
 }

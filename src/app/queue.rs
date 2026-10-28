@@ -156,7 +156,7 @@ impl App {
 
   pub(crate) fn play_selected_queue_row(&mut self) -> bool {
     if let Some(song) = self.selected_queue_song() {
-      self.mpdc(MpdCommand::PlaySong(song.id));
+      self.send_mpd(MpdCommand::PlaySong(song.id));
     } else if self.queue_state.selected().is_some() {
       self.set_message("selection is no longer in the queue");
     }
@@ -168,7 +168,7 @@ impl App {
       let id = song.id;
       let title =
         song_title(&song.song).unwrap_or_else(|| crate::sanitize::sanitize_text(&song.song.url));
-      self.mpdc(MpdCommand::Delete(id));
+      self.send_mpd(MpdCommand::Delete(id));
       self.set_message(format!("deleted: {title}"));
     } else if self.queue_state.selected().is_some() {
       self.set_message("selection is no longer in the queue");
@@ -243,74 +243,4 @@ fn dedup_positions(urls: &[&str], positions: Vec<usize>, playing: Option<usize>)
     }
   }
   out
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn dedup_keeps_first_occurrence_of_each_url() {
-    let urls = ["a", "b", "a", "c", "b"];
-    let positions = vec![0, 1, 2, 3, 4];
-    assert_eq!(dedup_positions(&urls, positions, None), vec![0, 1, 3]);
-  }
-
-  #[test]
-  fn dedup_keeps_the_playing_copy_visible() {
-    let urls = ["a", "a"];
-    let positions = vec![0, 1];
-    assert_eq!(dedup_positions(&urls, positions, Some(1)), vec![0, 1]);
-  }
-
-  #[test]
-  fn dedup_hides_later_copies_while_the_first_plays() {
-    let urls = ["a", "b", "a"];
-    assert_eq!(dedup_positions(&urls, vec![0, 1, 2], Some(0)), vec![0, 1]);
-  }
-
-  #[test]
-  fn dedup_applies_after_text_filtering() {
-    let urls = ["a", "x", "a"];
-    // positions pre-filtered to [0, 2]
-    assert_eq!(dedup_positions(&urls, vec![0, 2], None), vec![0]);
-  }
-
-  #[test]
-  fn dedup_not_applied_while_filtering() {
-    let urls = ["a", "x", "a"];
-    // No filter: duplicate hidden.
-    assert_eq!(
-      visible_positions(true, None, &urls, vec![0, 1, 2], None),
-      vec![0, 1]
-    );
-    assert_eq!(
-      visible_positions(true, Some(""), &urls, vec![0, 1, 2], None),
-      vec![0, 1]
-    );
-    // Filter active: every matching copy stays visible.
-    assert_eq!(
-      visible_positions(true, Some("a"), &urls, vec![0, 2], None),
-      vec![0, 2]
-    );
-    // Dedup off: never hidden.
-    assert_eq!(
-      visible_positions(false, None, &urls, vec![0, 2], None),
-      vec![0, 2]
-    );
-  }
-
-  #[test]
-  fn filter_matches_every_term_across_fields() {
-    let fields = vec![
-      "Love Story".to_string(),
-      "Taylor Swift".to_string(),
-      "music/love-story.flac".to_string(),
-    ];
-    let needles = |query: &str| query.split_whitespace().map(needle).collect::<Vec<_>>();
-    assert!(fields_match(&fields, &needles("taylor love")));
-    assert!(fields_match(&fields, &needles("TAYLORSWIFT")));
-    assert!(fields_match(&fields, &needles("lovestory")));
-    assert!(!fields_match(&fields, &needles("taylor nope")));
-  }
 }

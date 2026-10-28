@@ -1,6 +1,6 @@
 //! Config/cache directory discovery, `~` expansion and mpd.conf parsing.
 
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
 
 pub(super) fn app_config_dir() -> PathBuf {
   platform_config_dir().join("music-tui")
@@ -14,61 +14,11 @@ pub fn app_state_dir() -> PathBuf {
   platform_state_dir().join("music-tui")
 }
 
-#[cfg(unix)]
-pub(super) fn platform_state_dir() -> PathBuf {
-  env_path("XDG_STATE_HOME")
-    .or_else(|| env_path("HOME").map(|home| home.join(".local/state")))
-    .unwrap_or_else(|| PathBuf::from(".local/state"))
-}
-
-#[cfg(windows)]
-pub(super) fn platform_state_dir() -> PathBuf {
-  dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
-}
-
-#[cfg(unix)]
-pub(super) fn platform_config_dir() -> PathBuf {
-  env_path("XDG_CONFIG_HOME")
-    .or_else(|| env_path("HOME").map(|home| home.join(".config")))
-    .unwrap_or_else(|| PathBuf::from(".config"))
-}
-
-#[cfg(windows)]
-pub(super) fn platform_config_dir() -> PathBuf {
-  dirs::config_dir().unwrap_or_else(|| PathBuf::from("."))
-}
-
-#[cfg(unix)]
-pub(super) fn platform_cache_dir() -> PathBuf {
-  env_path("XDG_CACHE_HOME")
-    .or_else(|| env_path("HOME").map(|home| home.join(".cache")))
-    .unwrap_or_else(|| PathBuf::from(".cache"))
-}
-
-#[cfg(windows)]
-pub(super) fn platform_cache_dir() -> PathBuf {
-  dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."))
-}
-
-pub(super) fn env_path(name: &str) -> Option<PathBuf> {
-  env::var_os(name)
-    .filter(|value| !value.is_empty())
-    .map(PathBuf::from)
-}
-
-pub fn expand_home(path: &str) -> PathBuf {
-  if let Some(rest) = path.strip_prefix("~/") {
-    #[cfg(unix)]
-    if let Some(home) = env_path("HOME") {
-      return home.join(rest);
-    }
-    #[cfg(windows)]
-    if let Some(home) = env_path("USERPROFILE") {
-      return home.join(rest);
-    }
-  }
-  PathBuf::from(path)
-}
+pub use framework_tui::paths::expand_home;
+pub(super) use framework_tui::paths::{
+  cache_dir as platform_cache_dir, config_dir as platform_config_dir, env_path,
+  state_dir as platform_state_dir,
+};
 
 /// Try to read `music_directory` from the user's mpd.conf.
 pub fn detect_music_dir() -> Option<PathBuf> {

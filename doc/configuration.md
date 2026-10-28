@@ -36,6 +36,8 @@ chafa_bin = "chafa"     # character-art fallback renderer
 auto_detect = true      # probe the terminal's image protocols
 chafa_args = []         # extra Chafa arguments, e.g. ["--colors=256"]
 chafa_threads = 0       # 0 = Chafa's default
+raw_memory_cache_max_bytes = 67108864  # 64 MiB; 0 = unlimited
+disk_cache_max_bytes = 536870912      # 512 MiB of SQLite payloads; 0 = unlimited
 # passthrough = "tmux"  # force tmux/screen escape wrapping, or "none"
 zellij_sixel = false    # also allow Sixel inside Zellij
 
@@ -148,3 +150,7 @@ one `metadata` pane.
 detail = "H(2:1, cover, metadata)"    # default: cover left, tags right
 # detail = "V(2:1, cover, metadata)"  # stacked instead
 ```
+
+Shared rendering settings accept `zellij_sixel = true`, `false`, or `"auto"`.
+Legacy `"on"`/`"off"` values remain readable. `render.disk_cache_max_bytes`
+is the canonical disk budget; `cache_max_bytes` remains a read alias.

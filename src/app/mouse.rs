@@ -105,7 +105,7 @@ impl App {
   /// library and lyrics panes scroll their viewports.
   fn handle_pane_wheel(&mut self, mouse: MouseEvent, delta: i32) -> bool {
     if self.mouse_on_band(mouse) {
-      self.mpdc(MpdCommand::NudgeSeek(i64::from(delta.signum() * 5)));
+      self.send_mpd(MpdCommand::NudgeSeek(i64::from(delta.signum() * 5)));
       true
     } else if viewport::hit_pane(&self.hit.queue_panes, mouse).is_some() {
       self.scroll_queue_viewport(delta)
@@ -148,7 +148,7 @@ impl App {
     };
     let ratio = (f64::from(column.saturating_sub(area.x)) + 0.5) / f64::from(area.width);
     let position = (ratio.clamp(0.0, 1.0) * duration).max(0.0);
-    self.mpdc(MpdCommand::SeekCurrent(position));
+    self.send_mpd(MpdCommand::SeekCurrent(position));
     true
   }
 }

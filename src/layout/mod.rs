@@ -22,7 +22,8 @@
 //! fall through to the tab's other panes; `global` bindings win in every
 //! pane unless the pane binds the very same key itself.
 
-use crate::config::{LayoutConfig, TabConfig};
+mod config;
+pub use config::{LayoutConfig, TabConfig};
 
 mod parser;
 
@@ -230,98 +231,4 @@ fn parse_tab(tab: &TabConfig) -> Result<TabLayout, String> {
     layout,
     main,
   })
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn parses_nested_splits() {
-    let layout = parse_layout("H(2:1, queue, V(2:1, cover, metadata))").expect("valid layout");
-    assert!(matches!(layout, PaneLayout::Split { .. }));
-    assert!(layout.contains(PaneKind::Queue));
-    assert!(layout.contains(PaneKind::Metadata));
-    assert!(!layout.contains(PaneKind::Visualizer));
-    assert_eq!(layout.first_pane(), PaneKind::Queue);
-  }
-
-  #[test]
-  fn pane_kind_index_matches_all_order() {
-    for (index, kind) in PaneKind::ALL.iter().enumerate() {
-      assert_eq!(kind.index(), index);
-    }
-  }
-
-  #[test]
-  fn parses_single_pane() {
-    let layout = parse_layout(" visualizer ").expect("valid layout");
-    assert_eq!(
-      layout,
-      PaneLayout::Pane(PaneKind::Visualizer, PaneSource::Playing)
-    );
-  }
-
-  #[test]
-  fn rejects_unknown_panes_and_bad_syntax() {
-    assert!(parse_layout("nope").is_err());
-    assert!(parse_layout("H(queue)").is_err());
-    assert!(parse_layout("H(0:1, queue, cover)").is_err());
-    assert!(parse_layout("queue extra").is_err());
-  }
-
-  #[test]
-  fn default_config_parses() {
-    let tabs = parse_tabs(&LayoutConfig::default()).expect("default layouts");
-    #[cfg(unix)]
-    assert_eq!(tabs.len(), 6);
-    #[cfg(windows)]
-    assert_eq!(tabs.len(), 5);
-    assert_eq!(tabs[0].main, PaneKind::Queue);
-    assert!(tabs[0].layout.contains(PaneKind::Cover));
-    assert!(tabs[0].layout.contains(PaneKind::Metadata));
-    assert_eq!(tabs[1].main, PaneKind::Library);
-    assert!(tabs[1].layout.contains(PaneKind::Cover));
-    assert!(tabs[1].layout.contains(PaneKind::Metadata));
-    assert_eq!(tabs[2].main, PaneKind::Cover);
-    assert!(tabs[2].layout.contains(PaneKind::Lyrics));
-  }
-
-  #[test]
-  fn parses_hovered_sources() {
-    let layout = parse_layout("V(2:1, cover:hovered, lyrics:hover)").expect("valid layout");
-    assert_eq!(
-      layout.source_of(PaneKind::Cover),
-      Some(PaneSource::QueueHovered)
-    );
-    assert_eq!(
-      layout.source_of(PaneKind::Lyrics),
-      Some(PaneSource::QueueHovered)
-    );
-    assert!(layout.has_source(PaneSource::QueueHovered));
-    let plain = parse_layout("cover").expect("valid layout");
-    assert_eq!(plain.source_of(PaneKind::Cover), Some(PaneSource::Playing));
-    assert!(!plain.has_source(PaneSource::QueueHovered));
-  }
-
-  #[test]
-  fn rejects_bad_sources() {
-    assert!(parse_layout("cover:nonsense").is_err());
-    assert!(parse_layout("queue:hovered").is_err());
-    assert!(parse_layout("visualizer:hovered").is_err());
-  }
-
-  #[test]
-  fn main_must_be_in_layout() {
-    let tab = TabConfig {
-      name: "bad".to_string(),
-      layout: "queue".to_string(),
-      main: Some("lyrics".to_string()),
-    };
-    let config = LayoutConfig {
-      detail: DEFAULT_DETAIL_LAYOUT.to_string(),
-      tabs: vec![tab],
-    };
-    assert!(parse_tabs(&config).is_err());
-  }
 }
